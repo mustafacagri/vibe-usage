@@ -7,205 +7,104 @@
 </head>
 <body>
  <header class="titlebar">
-  <div class="brand">Vibe Usage<span data-i18n="liveTracker">Live Tracker</span></div>
+  <div class="brand">Vibe Usage<span data-i18n="liveTracker"></span></div>
   <div class="window-actions">
-   <button id="pin" aria-label="Pin window" aria-pressed="false" title="Pin window" data-i18n-title="pinWindow">📌</button>
-   <button id="settings-button" aria-label="Settings" title="Settings" data-i18n-title="settings">⚙️</button>
-   <button id="hide" aria-label="Hide to tray" title="Hide to tray" data-i18n-title="hideToTray">−</button>
+   <button id="pin" aria-pressed="false" data-i18n-title="pinWindow" data-i18n-aria="pinWindow">📌</button>
+   <button id="settings-button" data-i18n-title="settings" data-i18n-aria="settings">⚙️</button>
+   <button id="hide" data-i18n-title="hideToTray" data-i18n-aria="hideToTray">−</button>
   </div>
  </header>
  <main>
   <div class="summary">
-   <span id="overall-status" data-i18n="preparingAccounts">Preparing accounts…</span>
+   <span id="overall-status" data-i18n="preparingAccounts"></span>
    <div class="summary-actions">
-    <button id="smart-launch-btn" class="summary-btn smart-btn" title="Smart Launch" data-i18n="smartLaunch">⚡️ Smart Launch</button>
-    <button id="handover-btn" class="summary-btn handover-btn" title="Handover" data-i18n="handover">🔄 Handover</button>
-    <button id="refresh" class="text-button" title="Refresh quotas" data-i18n-title="refreshQuotas">↻</button>
+    <button id="smart-launch-btn" class="summary-btn smart-btn" data-i18n="smartLaunch"></button>
+    <button id="handover-btn" class="summary-btn handover-btn" data-i18n="handover"></button>
+    <button id="refresh" class="text-button" data-i18n-title="refreshQuotas" data-i18n-aria="refreshQuotas">↻</button>
    </div>
   </div>
   <div id="providers" aria-live="polite"></div>
-  <p class="local-note" data-i18n="safeLocalNote">Data is read securely from local sessions on this device.</p>
+  <p class="local-note" data-i18n="safeLocalNote"></p>
  </main>
- <footer><span id="platform-label"></span><span id="refresh-label">Auto refresh · 2m</span></footer>
- 
+ <footer><span id="platform-label"></span><span id="refresh-label"></span></footer>
+
  <dialog id="settings-dialog">
-  <form method="dialog"><header><h2 data-i18n="settingsTitle">Settings</h2><button class="text-button" aria-label="Close" data-i18n-aria="closeSettings">✕</button></header></form>
-  
+  <form method="dialog"><header><h2 data-i18n="settingsTitle"></h2><button class="text-button" data-i18n-aria="closeSettings">✕</button></header></form>
   <div class="settings-content">
-   <div class="settings-card language-card">
-    <div class="card-header">
-     <span class="card-icon">🌐</span>
-     <strong class="card-title" data-i18n="languageLabel">Language</strong>
-    </div>
-    <div class="field field-tight">
-     <select id="language-select">
-      <option value="en">English (US)</option>
-      <option value="tr">Türkçe</option>
-      <option value="de">Deutsch</option>
-      <option value="es">Español</option>
-      <option value="fr">Français</option>
-      <option value="it">Italiano</option>
-      <option value="pt">Português</option>
-      <option value="nl">Nederlands</option>
-      <option value="pl">Polski</option>
-      <option value="ja">日本語</option>
-      <option value="ko">한국어</option>
-      <option value="zh">简体中文</option>
-      <option value="ru">Русский</option>
-     </select>
-    </div>
+   <div class="settings-card">
+    <div class="card-header"><strong class="card-title" data-i18n="languageLabel"></strong></div>
+    <div class="field field-tight"><select id="language-select" data-i18n-aria="languageLabel"></select></div>
    </div>
 
-   <div class="settings-card fallback-priority-card">
-    <div class="card-header">
-     <span class="card-icon">🔄</span>
-     <strong class="card-title" data-i18n="fallbackPriorityTitle">Fallback Priority</strong>
-    </div>
-    <p class="card-subtitle" data-i18n="fallbackPrioritySubtitle">Providers that take over sequentially when primary quota is exhausted (all 4 AI tools included):</p>
-    <div class="fallback-priority-grid">
-     <div class="fallback-slot">
-      <label for="fallback-slot-0"><span class="fallback-slot-badge">1</span> <span class="slot-text" data-slot="0">1. Account / Tool</span></label>
-      <select id="fallback-slot-0" class="fallback-select" data-slot="0">
-       <option value="claude">◈ Claude Code</option>
-       <option value="codex">✺ Codex</option>
-       <option value="cursor">✦ Cursor</option>
-       <option value="antigravity">▲ Antigravity</option>
-      </select>
-     </div>
-     <div class="fallback-slot">
-      <label for="fallback-slot-1"><span class="fallback-slot-badge">2</span> <span class="slot-text" data-slot="1">2. Account / Tool</span></label>
-      <select id="fallback-slot-1" class="fallback-select" data-slot="1">
-       <option value="codex">✺ Codex</option>
-       <option value="claude">◈ Claude Code</option>
-       <option value="cursor">✦ Cursor</option>
-       <option value="antigravity">▲ Antigravity</option>
-      </select>
-     </div>
-     <div class="fallback-slot">
-      <label for="fallback-slot-2"><span class="fallback-slot-badge">3</span> <span class="slot-text" data-slot="2">3. Account / Tool</span></label>
-      <select id="fallback-slot-2" class="fallback-select" data-slot="2">
-       <option value="cursor">✦ Cursor</option>
-       <option value="claude">◈ Claude Code</option>
-       <option value="codex">✺ Codex</option>
-       <option value="antigravity">▲ Antigravity</option>
-      </select>
-     </div>
-     <div class="fallback-slot">
-      <label for="fallback-slot-3"><span class="fallback-slot-badge">4</span> <span class="slot-text" data-slot="3">4. Account / Tool</span></label>
-      <select id="fallback-slot-3" class="fallback-select" data-slot="3">
-       <option value="antigravity">▲ Antigravity</option>
-       <option value="claude">◈ Claude Code</option>
-       <option value="codex">✺ Codex</option>
-       <option value="cursor">✦ Cursor</option>
-      </select>
-     </div>
-    </div>
+   <div class="settings-card">
+    <div class="card-header"><span class="card-icon">🔄</span><strong class="card-title" data-i18n="fallbackPriorityTitle"></strong></div>
+    <p class="card-subtitle" data-i18n="fallbackPrioritySubtitle"></p>
+    <div id="provider-order" class="fallback-priority-grid"></div>
    </div>
 
-   <div class="settings-card preferred-models-card">
-    <div class="card-header">
-     <span class="card-icon">🎯</span>
-     <strong class="card-title" data-i18n="preferredModelsTitle">Preferred Default Models (Dynamic)</strong>
-    </div>
-    <p class="card-subtitle" data-i18n="preferredModelsSubtitle">Models selected during handover or smart launch:</p>
-    <div class="model-dropdown-row"><label for="preferred-codex"><span class="badge-icon-mini codex-color">✺</span> Codex:</label><select id="preferred-codex" class="model-select"></select></div>
-    <div class="model-dropdown-row"><label for="preferred-claude"><span class="badge-icon-mini claude-color">◈</span> Claude:</label><select id="preferred-claude" class="model-select"></select></div>
-    <div class="model-dropdown-row"><label for="preferred-cursor"><span class="badge-icon-mini cursor-color">✦</span> Cursor:</label><select id="preferred-cursor" class="model-select"></select></div>
-    <div class="model-dropdown-row"><label for="preferred-antigravity"><span class="badge-icon-mini antigravity-color">▲</span> Antigravity:</label><select id="preferred-antigravity" class="model-select"></select></div>
+   <div class="settings-card">
+    <div class="card-header"><span class="card-icon">🎯</span><strong class="card-title" data-i18n="preferredModelsTitle"></strong></div>
+    <p class="card-subtitle" data-i18n="preferredModelsSubtitle"></p>
+    <div id="preferred-models"></div>
    </div>
 
-   <div class="settings-card general-settings-card">
-    <div class="card-header">
-     <span class="card-icon">⏱️</span>
-     <strong class="card-title" data-i18n="refreshIntervalTitle">Refresh Interval</strong>
-    </div>
-    <div class="field field-tight">
-     <select id="interval">
-      <option value="60" data-i18n="interval1m">1 minute</option>
-      <option value="120" data-i18n="interval2m">2 minutes</option>
-      <option value="300" data-i18n="interval5m">5 minutes</option>
-      <option value="600" data-i18n="interval10m">10 minutes</option>
-     </select>
-    </div>
+   <div class="settings-card">
+    <div class="card-header"><span class="card-icon">⏱️</span><strong class="card-title" data-i18n="refreshIntervalTitle"></strong></div>
+    <div class="field field-tight"><select id="interval" data-i18n-aria="refreshIntervalTitle"></select></div>
    </div>
 
    <div class="connected-accounts-section">
     <div class="section-title-bar">
-     <div class="section-title-left">
-      <span class="section-title-icon">👥</span>
-      <h3 data-i18n="connectedAccountsTitle">Connected Accounts</h3>
-     </div>
+     <div class="section-title-left"><span class="section-title-icon">👥</span><h3 data-i18n="connectedAccountsTitle"></h3></div>
     </div>
     <div id="account-settings"></div>
-    <button id="add-profile" class="secondary-button gap-top-sm" data-i18n="addProfileBtn">+ Add saved profile directory</button>
-    <p class="help" data-i18n="settingsHelp">Initial login for each account is done in a separate profile. 1st priority tool manages home layout and smart launch.</p>
+    <button id="add-profile" class="secondary-button gap-top-sm" data-i18n="addProfileBtn"></button>
+    <p class="help" data-i18n="settingsHelp"></p>
     <div id="settings-message" role="status"></div>
    </div>
   </div>
  </dialog>
 
  <dialog id="handover-dialog">
-  <form method="dialog"><header><h2 data-i18n="handoverTitle">🔄 Handover Task</h2><button class="text-button" aria-label="Close">✕</button></header></form>
+  <form method="dialog"><header><h2 data-i18n="handoverTitle"></h2><button class="text-button" data-i18n-aria="cancel">✕</button></header></form>
   <div class="dialog-body">
-   <p class="dialog-desc" data-i18n="handoverDesc">Compiles current session terminal/project logs, git status, and modified files to hand over to the selected AI tool.</p>
-   <label class="field"><span data-i18n="projectDirectory">Project Directory</span>
+   <p class="dialog-desc" data-i18n="handoverDesc"></p>
+   <label class="field"><span data-i18n="projectDirectory"></span>
     <div class="project-dir-row">
-     <input id="handover-project-input" type="text" readonly placeholder="/path/to/project" />
-     <button id="handover-browse-btn" class="secondary-button" type="button" data-i18n="browseFolder">Browse…</button>
+     <input id="handover-project-input" type="text" readonly>
+     <button id="handover-browse-btn" class="secondary-button" type="button" data-i18n="browseFolder"></button>
     </div>
    </label>
-   <label class="field"><span data-i18n="sourceProvider">Source Provider</span>
-    <select id="handover-from">
-     <option value="auto" data-i18n="autoDetectSession">Auto Detect (Most Recent Active Session)</option>
-     <option value="claude">Claude Code</option>
-     <option value="codex">Codex</option>
-     <option value="cursor">Cursor</option>
-     <option value="antigravity">Antigravity</option>
-    </select>
-   </label>
-   <label class="field" id="handover-session-label"><span data-i18n="sessionToHandover">Session / Task to Handover</span>
-    <select id="handover-session-select">
-     <option value="auto" data-i18n="mostRecentSession">Auto Detect (Most Recent Active Session)</option>
-    </select>
-   </label>
-   <label class="field"><span data-i18n="targetProvider">Target Provider</span>
-    <select id="handover-to">
-     <option value="codex">Codex</option>
-     <option value="claude">Claude Code</option>
-     <option value="cursor">Cursor</option>
-     <option value="antigravity">Antigravity</option>
-    </select>
-   </label>
-   <label class="field"><span data-i18n="targetModel">Target Model</span>
-    <select id="handover-model" class="model-select full-width"></select>
-   </label>
-   <div class="handover-note" data-i18n="handoverNote">
-    Target tool will be launched after writing VIBE_HANDOVER.md briefing to selected project directory.
-   </div>
+   <label class="field"><span data-i18n="sourceProvider"></span><select id="handover-from"></select></label>
+   <label class="field"><span data-i18n="sessionToHandover"></span><select id="handover-session-select"></select></label>
+   <label class="field"><span data-i18n="targetProvider"></span><select id="handover-to"></select></label>
+   <label class="field" id="handover-model-field"><span data-i18n="targetModel"></span><select id="handover-model" class="model-select full-width"></select></label>
+   <div class="handover-note" data-i18n="handoverNote"></div>
    <div class="dialog-actions">
-    <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
-    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="executeHandoverBtn">Transfer Task ↗</button>
+    <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
+    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="executeHandoverBtn"></button>
    </div>
   </div>
  </dialog>
 
  <dialog id="smart-launch-dialog">
-  <form method="dialog"><header><h2 data-i18n="smartLaunchTitle">⚡️ Smart Launch Briefing</h2><button class="text-button" aria-label="Close">✕</button></header></form>
+  <form method="dialog"><header><h2 data-i18n="smartLaunchTitle"></h2><button class="text-button" data-i18n-aria="cancel">✕</button></header></form>
   <div class="dialog-body">
    <div class="smart-preview-card">
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slRecommendedTool">Recommended Tool:</span><strong id="sl-provider" class="smart-value">-</strong></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slQuotaStatus">Quota Status:</span><span id="sl-quota" class="smart-value">-</span></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSelectedModel">Selected Model:</span><strong id="sl-model" class="smart-value">-</strong></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision">Smart Decision:</span><span id="sl-reason" class="smart-value smart-value-small">-</span></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slRecommendedTool"></span><strong id="sl-provider" class="smart-value"></strong></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slQuotaStatus"></span><span id="sl-quota" class="smart-value"></span></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSelectedModel"></span><strong id="sl-model" class="smart-value"></strong></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision"></span><span id="sl-reason" class="smart-value smart-value-small"></span></div>
    </div>
    <div class="dialog-actions gap-top-md">
-    <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
-    <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch">Select Project & Launch ↗</button>
+    <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
+    <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch"></button>
    </div>
   </div>
  </dialog>
 
  <div id="toast" role="status" hidden></div>
+ <script src="../catalog.cjs"></script>
  <script src="../shared.cjs"></script>
  <script src="i18n.js"></script>
  <script src="app.js"></script>

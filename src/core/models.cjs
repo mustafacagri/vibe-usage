@@ -62,163 +62,117 @@ async function refreshCursorModels({ cacheDir = modelCacheDir, force = false, bi
   return models;
 }
 
-const DEFAULT_MODELS = {
-  claude: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-3-7-sonnet'],
-  codex: ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-reserve', 'o3-mini'],
-  // Cursor's catalogue changes often, so it comes only from `cursor-agent --list-models`
-  // (see refreshCursorModels). 'auto' is the CLI's own default and needs no discovery.
-  cursor: ['auto'],
-  antigravity: ['gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash']
-};
+// Aliases Claude Code resolves to the newest model of a family (documented in `claude --help`).
+const CLAUDE_MODEL_ALIASES = ['opus', 'sonnet', 'fable'];
+const CLAUDE_RECENT_SESSIONS_PER_PROJECT = 3;
+const CLAUDE_TRANSCRIPT_HEAD_LINES = 40;
+const SYNTHETIC_MODEL = '<synthetic>';
+// The Codex model cache marks models the picker should show with this visibility.
+const CODEX_LISTED_VISIBILITY = 'list';
+// Cursor's default model, which the CLI accepts without a catalogue.
+const CURSOR_DEFAULT_MODEL = 'auto';
 
-function discoverModels(homeDir = os.homedir()) {
-  const result = {
-    claude: [...DEFAULT_MODELS.claude],
-    codex: [...DEFAULT_MODELS.codex],
-    cursor: [...DEFAULT_MODELS.cursor],
-    antigravity: [...DEFAULT_MODELS.antigravity]
-  };
+function readJsonFile(file) {
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+}
 
-  // Discover Codex models from cache
-  try {
-    const codexCachePath = path.join(homeDir, '.codex', 'models_cache.json');
-    if (fs.existsSync(codexCachePath)) {
-      const data = JSON.parse(fs.readFileSync(codexCachePath, 'utf8'));
-      if (Array.isArray(data.models)) {
-        const discovered = data.models
-          .map(m => typeof m === 'string' ? m : (m.slug || m.id || m.name))
-          .filter(m => m && typeof m === 'string' && !m.includes('auto-review'));
-        if (discovered.length > 0) result.codex = Array.from(new Set([...discovered, ...result.codex]));
-      }
-    }
-  } catch {}
-
-  // Discover Claude models from settings and project logs
-  try {
-    const discovered = new Set(result.claude);
-    const claudeSettings = path.join(homeDir, '.claude', 'settings.json');
-    if (fs.existsSync(claudeSettings)) {
+// Full model names used in recent Claude Code sessions, so a pinned version stays selectable.
+function recentClaudeModels(homeDir) {
+  const projects = path.join(homeDir, '.claude', 'projects');
+  const found = new Set();
+  let dirs;
+  try { dirs = fs.readdirSync(projects, { withFileTypes: true }).filter(d => d.isDirectory()); } catch { return []; }
+  for (const dir of dirs) {
+    const projectDir = path.join(projects, dir.name);
+    let files;
+    try { files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl')).slice(-CLAUDE_RECENT_SESSIONS_PER_PROJECT); } catch { continue; }
+    for (const file of files) {
       try {
-        const data = JSON.parse(fs.readFileSync(claudeSettings, 'utf8'));
-        if (data.model && typeof data.model === 'string' && !data.model.includes('sonnet')) discovered.add(data.model);
-        if (data.modelSettings && typeof data.modelSettings === 'object') {
-          for (const k of Object.keys(data.modelSettings)) discovered.add(k);
+        for (const line of fs.readFileSync(path.join(projectDir, file), 'utf8').split('\n').slice(0, CLAUDE_TRANSCRIPT_HEAD_LINES)) {
+          const match = line.match(/"model":"([^"]+)"/);
+          if (match && match[1] !== SYNTHETIC_MODEL) found.add(match[1]);
         }
       } catch {}
     }
-
-    const claudeProjects = path.join(homeDir, '.claude', 'projects');
-    if (fs.existsSync(claudeProjects)) {
-      for (const p of fs.readdirSync(claudeProjects)) {
-        const pPath = path.join(claudeProjects, p);
-        if (!fs.statSync(pPath).isDirectory()) continue;
-        for (const f of fs.readdirSync(pPath).filter(x => x.endsWith('.jsonl')).slice(-3)) {
-          try {
-            const lines = fs.readFileSync(path.join(pPath, f), 'utf8').split('\n').slice(0, 40);
-            for (const l of lines) {
-              const match = l.match(/"model":"([^"]+)"/);
-              if (match && !match[1].includes('<synthetic>')) discovered.add(match[1]);
-            }
-          } catch {}
-        }
-      }
-    }
-    result.claude = Array.from(discovered);
-  } catch {}
-
-  // Cursor: the CLI's live list (cached; a stale list still beats an invented one). Without
-  // it, only models the user actually selected in the CLI before are offered next to 'auto'.
-  const cursorCache = readCursorCache();
-  if (cursorCache) {
-    result.cursor = [...cursorCache.models];
-  } else {
-    try {
-      const data = JSON.parse(fs.readFileSync(path.join(homeDir, '.cursor', 'cli-config.json'), 'utf8'));
-      const used = [data.selectedModel?.modelId, ...(Array.isArray(data.modelSelectionHistory) ? data.modelSelectionHistory : [])]
-        .filter(m => typeof m === 'string' && m && m !== 'default');
-      result.cursor = Array.from(new Set([...result.cursor, ...used]));
-    } catch {}
   }
-
-  return result;
+  return [...found];
 }
 
-function resolveModelTier(modelName = '') {
-  const m = String(modelName).toLowerCase();
-  if (m.includes('opus') || m.includes('gpt-6') || m.includes('o1') || m.includes('o3') || m.includes('pro') || m.includes('terra') || m.includes('sol') || m.includes('fable') || m.includes('sonnet-5') || m.includes('grok-4') || m.includes('max') || m.includes('xhigh')) {
-    return 'flagship';
-  }
-  if (m.includes('haiku') || /(^|[^a-z])mini([^a-z]|$)/.test(m) || m.includes('lite') || m.includes('small') || m.includes('flash-lite') || m.includes('spark') || m.includes('nano')) {
-    return 'fast';
-  }
-  return 'balanced'; // sonnet, gpt-5, luna, flash, grok
+function claudeModels(homeDir) {
+  const settings = readJsonFile(path.join(homeDir, '.claude', 'settings.json'));
+  const configured = typeof settings?.model === 'string' ? [settings.model] : [];
+  return [...new Set([...CLAUDE_MODEL_ALIASES, ...configured, ...recentClaudeModels(homeDir)])];
 }
 
-const TIER_NAMES = {
-  flagship: 'Flagship & Derin Akıl Yürütme',
-  balanced: 'Dengeli & Günlük Kodlama',
-  fast: 'Hızlı & Düşük Maliyet'
+function codexModels(homeDir) {
+  const cache = readJsonFile(path.join(homeDir, '.codex', 'models_cache.json'));
+  if (!Array.isArray(cache?.models)) return [];
+  return cache.models.filter(m => m?.visibility === CODEX_LISTED_VISIBILITY && typeof m.slug === 'string').map(m => m.slug);
+}
+
+// The CLI's live list (a stale list still beats an invented one); without it, the default
+// plus models the user picked in the CLI before.
+function cursorModels(homeDir) {
+  const cache = readCursorCache();
+  if (cache) return [...cache.models];
+  const config = readJsonFile(path.join(homeDir, '.cursor', 'cli-config.json'));
+  const used = [config?.selectedModel?.modelId, ...(Array.isArray(config?.modelSelectionHistory) ? config.modelSelectionHistory : [])]
+    .filter(m => typeof m === 'string' && m && m !== 'default');
+  return [...new Set([CURSOR_DEFAULT_MODEL, ...used])];
+}
+
+// Models each handover target accepts, from that tool's own data. Providers whose launch
+// takes no model argument (catalog `acceptsModel: false`) get none.
+function discoverModels(homeDir = os.homedir()) {
+  return { claude: claudeModels(homeDir), codex: codexModels(homeDir), cursor: cursorModels(homeDir), antigravity: [] };
+}
+
+// Model families by capability tier, most preferred first. Matching is by name because no
+// provider publishes a tier; keep this table the only place that encodes that knowledge.
+const TIER_FAMILIES = {
+  flagship: ['opus', 'fable', 'terra', 'sol', 'pro', 'grok-4'],
+  balanced: ['sonnet', 'luna', 'flash', 'composer'],
+  fast: ['haiku', 'mini', 'nano', 'lite', 'spark']
 };
+const TIER_FALLBACK = { flagship: ['flagship', 'balanced', 'fast'], balanced: ['balanced', 'flagship', 'fast'], fast: ['fast', 'balanced', 'flagship'] };
+// Cursor lists every model per reasoning effort; `-high` (or no suffix) is the standard one.
+const VARIANT_SUFFIX = /-(thinking|fast|max|xhigh|low|medium|minimal|none)(-|$)/;
 
-// First live Cursor model in the family at the CLI's standard 'high' effort; else 'auto'.
-function cursorPick(list, families) {
-  for (const family of families) {
-    const hit = list.find(m => m.startsWith('claude-') && m.includes(family) && m.endsWith('-high') && !m.includes('thinking'));
-    if (hit) return hit;
-  }
-  return list.includes('auto') ? 'auto' : list[0];
+function nameMatchesFamily(name, family) {
+  return new RegExp(`(^|[^a-z])${family.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`).test(name.toLowerCase());
 }
 
-function getMappedModel(sourceModel, targetProvider, userOverrides = {}, homeDir = os.homedir()) {
-  if (userOverrides && userOverrides[targetProvider]) {
-    return {
-      tier: resolveModelTier(sourceModel),
-      tierName: 'Özel Kullanıcı Tercihi',
-      targetModel: userOverrides[targetProvider]
-    };
-  }
+function resolveModelTier(modelName) {
+  const name = String(modelName || '');
+  return Object.keys(TIER_FAMILIES).find(tier => TIER_FAMILIES[tier].some(family => nameMatchesFamily(name, family))) || 'balanced';
+}
 
-  const tier = resolveModelTier(sourceModel);
-  const models = discoverModels(homeDir);
-
-  // Cursor exposes most vendor models as '<id>-<effort>'; prefer the exact same model.
-  if (targetProvider === 'cursor' && sourceModel) {
-    // Antigravity reports display names such as 'Gemini 3.8 Flash (High)'.
-    const id = String(sourceModel).trim().toLowerCase().replace(/\s*\((\w+)\)$/, '-$1').replace(/\s+/g, '-');
-    const same = models.cursor.find(m => m === id) || models.cursor.find(m => m === `${id}-high`);
-    if (same) return { tier, tierName: TIER_NAMES[tier], targetModel: same };
-  }
-
-  const TIER_MAPPINGS = {
-    flagship: {
-      tierName: 'Flagship & Derin Akıl Yürütme',
-      claude: models.claude.find(m => m.includes('opus')) || models.claude[0],
-      codex: models.codex.find(m => m.includes('gpt-6') || m.includes('terra') || m.includes('o3') || m.includes('o1')) || models.codex[0],
-      cursor: cursorPick(models.cursor, ['opus', 'fable']),
-      antigravity: models.antigravity.find(m => m.includes('pro')) || models.antigravity[0]
-    },
-    balanced: {
-      tierName: 'Dengeli & Günlük Kodlama',
-      claude: models.claude.find(m => m.includes('sonnet')) || models.claude[1] || models.claude[0],
-      codex: models.codex.find(m => !m.includes('gpt-6') && !m.includes('terra') && (m.includes('luna') || m.includes('gpt-5'))) || models.codex[1] || models.codex[0],
-      cursor: cursorPick(models.cursor, ['sonnet']),
-      antigravity: models.antigravity.find(m => m.includes('flash') && !m.includes('lite')) || models.antigravity[0]
-    },
-    fast: {
-      tierName: 'Hızlı & Düşük Maliyet',
-      claude: models.claude.find(m => m.includes('haiku')) || models.claude[models.claude.length - 1],
-      codex: models.codex.find(m => m.includes('reserve') || m.includes('mini') || m.includes('small')) || models.codex[models.codex.length - 1],
-      cursor: cursorPick(models.cursor, ['haiku']),
-      antigravity: models.antigravity.find(m => m.includes('lite')) || models.antigravity[models.antigravity.length - 1]
+function pickByTier(models, tier) {
+  for (const candidateTier of TIER_FALLBACK[tier]) {
+    for (const family of TIER_FAMILIES[candidateTier]) {
+      const matches = models.filter(m => nameMatchesFamily(m, family));
+      const standard = matches.find(m => !VARIANT_SUFFIX.test(m));
+      if (standard || matches[0]) return standard || matches[0];
     }
-  };
+  }
+  return null;
+}
 
-  const info = TIER_MAPPINGS[tier] || TIER_MAPPINGS.balanced;
-  return {
-    tier,
-    tierName: info.tierName,
-    targetModel: info[targetProvider] || models[targetProvider]?.[0] || 'default'
-  };
+// 'Gemini 3.8 Flash (High)' → 'gemini-3.8-flash-high', the form CLI model ids use.
+function modelIdFromDisplayName(name) {
+  return String(name || '').trim().toLowerCase().replace(/\s*\((\w+)\)$/, '-$1').replace(/\s+/g, '-');
+}
+
+// Target model for a handover: the user's preference, else the same model if the target
+// offers it, else the target's closest tier. Null means "let the tool use its default".
+function getMappedModel(sourceModel, targetProvider, preferences = {}, homeDir = os.homedir()) {
+  const tier = resolveModelTier(sourceModel);
+  if (preferences?.[targetProvider]) return { tier, targetModel: preferences[targetProvider], source: 'preference' };
+  const models = discoverModels(homeDir)[targetProvider] || [];
+  const id = modelIdFromDisplayName(sourceModel);
+  const same = id && (models.find(m => m === id) || models.find(m => m === `${id}-high`));
+  if (same) return { tier, targetModel: same, source: 'same' };
+  return { tier, targetModel: pickByTier(models, tier), source: 'tier' };
 }
 
 module.exports = {
@@ -227,6 +181,5 @@ module.exports = {
   refreshCursorModels,
   parseCursorModelList,
   resolveModelTier,
-  getMappedModel,
-  DEFAULT_MODELS
+  getMappedModel
 };

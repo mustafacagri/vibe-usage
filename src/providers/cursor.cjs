@@ -1,64 +1,110 @@
 'use strict';
 const path = require('node:path');
 const os = require('node:os');
-const { normalizeWindow, safeText } = require('../core/model.cjs');
+const { normalizeWindow, safePlan } = require('../core/model.cjs');
 const common = require('./common.cjs');
+
+const USAGE_TIMEOUT_MS = 20000;
+const SQLITE_TIMEOUT_MS = 5000;
+// Percent-based plan scopes reported as `<scope>PercentUsed`.
+const PLAN_SCOPES = {
+  auto: { labelKey: 'labelAutoScope' },
+  api: { labelKey: 'labelApiScope', detailKey: 'cursorApiLimitNote' },
+  total: { labelKey: 'labelTotalUsage', detailKey: 'totalQuotaDesc', section: 'details' }
+};
+// Money pools reported in USD cents per usage group.
+const SPEND_POOLS = { onDemand: 'labelOnDemandSpend', overall: 'labelOverallSpend', pooled: 'labelPooledSpend' };
+const USAGE_GROUPS = ['individual', 'team'];
+
+function poolAmounts(pool) {
+  return { used: pool.used, limit: pool.limit, remaining: pool.remaining };
+}
+
+// Without a remaining amount the value says so; the UI words amounts it does have.
+function poolValueKey(pool) {
+  if (pool.enabled === false) return 'disabled';
+  return Number.isFinite(pool.remaining) ? undefined : 'amountNotReported';
+}
 
 function parseCursorUsage(summary) {
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new common.ProviderError('invalid_response');
-  const hasKnownFields = summary.individualUsage !== undefined || summary.teamUsage !== undefined || summary.membershipType !== undefined || summary.billingCycleEnd !== undefined;
-  if (!hasKnownFields || Object.keys(summary).length === 0) throw new common.ProviderError('invalid_response');
-  const plan = summary.individualUsage?.plan, windows = [];
+  const hasKnownFields = ['individualUsage', 'teamUsage', 'membershipType', 'billingCycleEnd'].some(k => summary[k] !== undefined);
+  if (!hasKnownFields) throw new common.ProviderError('invalid_response');
   const resetsAt = summary.billingCycleEnd;
+  const windows = [];
+  const plan = summary.individualUsage?.plan;
   if (plan) {
-    const planMeta = {
-      auto: { label: 'Auto kapsamı', labelKey: 'labelAutoScope' },
-      api: { label: 'API kapsamı', labelKey: 'labelApiScope', detailKey: 'cursorApiLimitNote', detail: 'Bu sınır hesabın bütün modellerde bittiği anlamına gelmez.' },
-      total: { label: 'Toplam kullanım', labelKey: 'labelTotalUsage', detailKey: 'totalQuotaDesc' }
-    };
-    for (const [key, m] of Object.entries(planMeta)) {
-      windows.push(normalizeWindow({ id: `plan:${key}`, label: m.label, labelKey: m.labelKey, detailKey: m.detailKey, usedPercent: plan[`${key}PercentUsed`], resetsAt, detail: m.detail || '' }));
+    for (const [scope, keys] of Object.entries(PLAN_SCOPES)) {
+      windows.push(normalizeWindow({ id: `plan:${scope}`, ...keys, usedPercent: plan[`${scope}PercentUsed`], resetsAt }));
     }
-    const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
-    const amounts = ['used', 'limit', 'remaining'].filter(k => typeof plan[k] === 'number' && Number.isFinite(plan[k])).map(k => `${names[k]}: ${plan[k]} cents`);
-    if (typeof plan.breakdown?.bonus === 'number') amounts.push(`Bonus kaydı: ${plan.breakdown.bonus} cents`);
-    const planAmounts = { used: plan.used, limit: plan.limit, remaining: plan.remaining, bonus: plan.breakdown?.bonus };
-    windows.push(normalizeWindow({ id: 'plan:spend', label: 'Dahil kullanım · tutar', labelKey: 'labelIncludedSpend', resetsAt, amounts: planAmounts, ...(typeof plan.remaining === 'number' ? {} : { valueKey: 'amountNotReported' }), valueText:typeof plan.remaining==='number'?`${plan.remaining} cent kalan`:'Tutar bildirilmedi', detail: amounts.join('; ') || 'Tutar bildirilmedi.' }));
+    windows.push(normalizeWindow({
+      id: 'plan:spend', labelKey: 'labelIncludedSpend', section: 'details', resetsAt,
+      amounts: { ...poolAmounts(plan), bonus: plan.breakdown?.bonus },
+      ...(poolValueKey(plan) ? { valueKey: poolValueKey(plan) } : {})
+    }));
   }
-  for (const [group, usage] of [['individual', summary.individualUsage], ['team', summary.teamUsage]]) {
-    for (const key of ['onDemand', 'overall', 'pooled']) {
-      const pool = usage?.[key]; if (!pool) continue;
-      const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
-      const detail = ['used', 'limit', 'remaining'].filter(k => typeof pool[k] === 'number' && Number.isFinite(pool[k])).map(k => `${names[k]}: ${pool[k]} cents`).join('; ');
-      const poolLabelKey = { onDemand: 'labelOnDemandSpend', overall: 'labelOverallSpend', pooled: 'labelPooledSpend' }[key];
-      const poolValueKey = pool.enabled === false ? 'disabled' : typeof pool.remaining === 'number' ? undefined : 'amountNotReported';
-      windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, labelKey: poolLabelKey, group, amounts: { used: pool.used, limit: pool.limit, remaining: pool.remaining }, ...(poolValueKey ? { valueKey: poolValueKey } : {}), resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
+  for (const group of USAGE_GROUPS) {
+    const usage = summary[`${group}Usage`];
+    for (const [key, labelKey] of Object.entries(SPEND_POOLS)) {
+      const pool = usage?.[key];
+      if (!pool) continue;
+      const valueKey = poolValueKey(pool);
+      windows.push(normalizeWindow({ id: `${group}:${key}`, labelKey, group, section: 'details', resetsAt, amounts: poolAmounts(pool), ...(valueKey ? { valueKey } : {}) }));
     }
   }
-  const result = { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };
+  const result = { windows };
+  const membership = safePlan(summary.membershipType);
+  if (membership) result.plan = membership;
   if (!windows.length) result.status = 'no_limits_reported';
   return result;
 }
-function createCursorProvider(options = {}) {
-  const home = options.home || os.homedir(), platform = options.platform || process.platform, env = options.env || process.env;
-  return { id: 'cursor', name: 'Cursor', discover: async () => [{ id: 'cursor:default', providerId: 'cursor', label: 'Mevcut hesap', primary: true, enabled: true }], async fetch(account) {
-    if (account.configDir) throw new common.ProviderError('unsupported_profile');
-    let token;
-    if (platform === 'win32') token = (await common.readJson(path.join(env.APPDATA || path.join(home, 'AppData/Roaming'), 'Cursor/auth.json'))).accessToken;
-    else if (platform === 'darwin') {
-      // Source: CodexBar CursorAppAuth.swift, resolveDefaultDBPath/loadSession.
-      // sqlite3 -readonly never mutates Cursor's database or copies its auth.
-      const db = path.join(home, 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
-      try { token = (await (options.runProcess || common.runProcess)('/usr/bin/sqlite3', ['-readonly', 'file:' + db + '?immutable=1', "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;"], { timeoutMs: 5000 })).trim(); }
-      catch { throw new common.ProviderError('auth_missing'); }
-    } else throw new common.ProviderError('unsupported_platform');
-    if (typeof token !== 'string' || !token.trim()) throw new common.ProviderError('auth_missing');
-    let claims;
-    try { if (token.split('.').length !== 3) throw new Error(); claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')); } catch { throw new common.ProviderError('auth_invalid'); }
-    const user = typeof claims.sub === 'string' ? claims.sub.split('|').at(-1) : '';
-    if (!/^[A-Za-z0-9._-]+$/.test(user) || !Number.isFinite(claims.exp)) throw new common.ProviderError('auth_invalid');
-    if (claims.exp * 1000 <= common.now(options.clock) + 60000) throw new common.ProviderError('auth_expired');
-    return parseCursorUsage(await (options.getJson || common.getJson)('https://cursor.com/api/usage-summary', { headers: { Accept: 'application/json', Cookie: `WorkosCursorSessionToken=${user}%3A%3A${token}` }, timeoutMs: 20000 }));
-  } };
+
+async function readAccessToken({ home, platform, env, runProcess }) {
+  if (platform === 'win32') {
+    return (await common.readJson(path.join(env.APPDATA || path.join(home, 'AppData/Roaming'), 'Cursor/auth.json'))).accessToken;
+  }
+  if (platform !== 'darwin') throw new common.ProviderError('unsupported_platform');
+  // Source: CodexBar CursorAppAuth.swift, resolveDefaultDBPath/loadSession. `immutable=1`
+  // reads Cursor's live database without locking or mutating it.
+  const db = path.join(home, 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
+  try {
+    const query = "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;";
+    return (await runProcess('/usr/bin/sqlite3', ['-readonly', `file:${db}?immutable=1`, query], { timeoutMs: SQLITE_TIMEOUT_MS })).trim();
+  } catch {
+    throw new common.ProviderError('auth_missing');
+  }
 }
+
+// The session cookie is `<user id>::<token>`; the user id is the last `|` segment of `sub`.
+function sessionCookie(token, clock) {
+  const claims = common.jwtClaims(token);
+  const user = typeof claims.sub === 'string' ? claims.sub.split('|').at(-1) : '';
+  if (!/^[A-Za-z0-9._-]+$/.test(user) || !Number.isFinite(claims.exp)) throw new common.ProviderError('auth_invalid');
+  if (common.isExpired(claims.exp * 1000, clock)) throw new common.ProviderError('auth_expired');
+  return `WorkosCursorSessionToken=${user}%3A%3A${token}`;
+}
+
+function createCursorProvider(options = {}) {
+  const context = {
+    home: options.home || os.homedir(),
+    platform: options.platform || process.platform,
+    env: options.env || process.env,
+    runProcess: options.runProcess || common.runProcess
+  };
+  return {
+    id: 'cursor',
+    discover: async () => [{ id: 'cursor:default', providerId: 'cursor', labelKey: 'defaultAccount', primary: true, enabled: true }],
+    async fetch(account) {
+      if (account.configDir) throw new common.ProviderError('unsupported_profile');
+      const token = await readAccessToken(context);
+      if (typeof token !== 'string' || !token.trim()) throw new common.ProviderError('auth_missing');
+      const usage = await (options.getJson || common.getJson)(common.QUOTA_ENDPOINTS.cursor, {
+        headers: { Accept: 'application/json', Cookie: sessionCookie(token, options.clock) },
+        timeoutMs: USAGE_TIMEOUT_MS
+      });
+      return parseCursorUsage(usage);
+    }
+  };
+}
+
 module.exports = { parseCursorUsage, createCursorProvider };

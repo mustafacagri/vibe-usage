@@ -1,38 +1,130 @@
 #!/usr/bin/env node
 'use strict';
-const path=require('node:path');const {spawn}=require('node:child_process');const {createService}=require('./core/service.cjs');const {selectClaudeAccount,launchEnvironment,launchWarnings,loadClaudeSettingsFiles}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');const {formatWindow,formatFreshness}=require('./shared.cjs');
-async function main(){
- const args=process.argv.slice(2),command=args.shift()||'status';
- if(command==='help'||command==='--help'){console.log('Vibe Usage\n  status [--json]\n  watch\n  run claude [--account ID] [--cwd PATH] [--model MODEL] [--dry-run]\n  handover [--from PROVIDER] [--to PROVIDER] [--cwd PATH]\nHerhangi bir sağlayıcıdan diğerine oturum ve görev devri yapar (Claude, Codex, Cursor, Antigravity).');return;}
- if(!['status','watch','run','handover'].includes(command))throw Error('Bilinmeyen komut. --help kullanın.');
- const service=await createService({settingsPath:process.env.VIBE_DATA_DIR?path.join(process.env.VIBE_DATA_DIR,'settings.json'):undefined});
- function render(snapshot){if(process.stdout.isTTY)process.stdout.write('\x1b[2J\x1b[H');console.log('vibe · kullanım hakları\n');for(const p of snapshot.providers){console.log(p.name.toUpperCase());for(const a of p.accounts){console.log(`  ${a.primary?'★ ':''}${a.label}${a.plan?' · '+a.plan:''} · ${formatFreshness(a.fetchedAt,a.status)}`);for(const w of a.windows){const v=formatWindow(w);console.log(`    ${w.label}${w.scope?' / '+w.scope:''}: ${v.value}${v.reset?' · '+v.reset:''}${v.note?' · '+v.note:''}`);}if(a.message)console.log('    '+a.message);}console.log('');}console.log('Ctrl+C: kapat · Bu ekran mevcut IDE hesaplarını değiştirmez.');}
- if(command==='status'){const result=await service.refresh();if(args.includes('--json'))console.log(JSON.stringify(result,null,2));else render(result);return;}
- if(command==='watch'){render(service.snapshot());render(await service.refresh());let busy=false;const timer=setInterval(async()=>{if(busy)return;busy=true;try{render(await service.refresh());}finally{busy=false;}},service.snapshot().settings.intervalSeconds*1000);process.once('SIGINT',()=>{clearInterval(timer);process.exit(0);});return;}
- if(command==='handover'){
-  let cwd=process.cwd();let toProvider='auto';let fromProvider='auto';
-  while(args.length){
-   const flag=args.shift();
-   if(flag==='--cwd'&&args.length)cwd=path.resolve(args.shift());
-   else if(flag==='--to'&&args.length)toProvider=args.shift().toLowerCase();
-   else if(flag==='--from'&&args.length)fromProvider=args.shift().toLowerCase();
+const path = require('node:path');
+const os = require('node:os');
+const { spawn } = require('node:child_process');
+const { createService } = require('./core/service.cjs');
+const { translate, hasKey } = require('./ui/i18n.js');
+const { describeWindow, formatFreshness, describeCode } = require('./shared.cjs');
+const { AUTO, isProviderId, providerById } = require('./catalog.cjs');
+const { AppError } = require('./core/errors.cjs');
+const { selectAccount, claudeLaunchWarnings } = require('./core/selection.cjs');
+const { launchPlan, applyEnvironment, environmentChanges, loadClaudeSettingsFiles } = require('./core/launch.cjs');
+const { executeHandover } = require('./core/handover.cjs');
+
+const COMMANDS = ['status', 'watch', 'run', 'handover'];
+const CLEAR_SCREEN = '\x1b[2J\x1b[H';
+const EXIT_INTERRUPTED = 130;
+const MODEL_ARGUMENT = /^[A-Za-z0-9_.[\]:/-]{1,100}$/;
+
+function parseFlags(args, allowed) {
+  const flags = {};
+  while (args.length) {
+    const flag = args.shift();
+    if (allowed[flag] === Boolean) { flags[flag] = true; continue; }
+    if (!allowed[flag] || !args.length) throw new AppError('invalid_argument');
+    flags[flag] = args.shift();
   }
-  const {executeHandover}=require('./core/launcher.cjs');
-  const snapshot=await service.refresh();
-  const res=await executeHandover({projectDir:cwd,dataDir:process.env.VIBE_DATA_DIR||path.join(require('node:os').homedir(),'.vibe-usage'),snapshot,fromProvider,toProvider});
-  console.log(`\x1b[32m✔ ${res.message}\x1b[0m`);
-  return;
- }
- if(args.shift()!=='claude')throw Error('Bu sürüm yalnız Claude Code başlatır.');
- const options={};let dryRun=false;while(args.length){const flag=args.shift();if(flag==='--dry-run'){dryRun=true;continue;}const keys={'--account':'accountId','--cwd':'cwd','--model':'model'};if(!keys[flag]||!args.length)throw Error('Geçersiz argüman');options[keys[flag]]=args.shift();}
- const snapshot=await service.refresh('claude');const account=selectClaudeAccount(snapshot,options);const cwd=path.resolve(options.cwd||process.cwd());const binary=await findBinary('claude');
- if(options.model&&!/^[A-Za-z0-9_.[\]:/-]{1,100}$/.test(options.model))throw Error('Geçersiz model');
- const settingsFiles=await loadClaudeSettingsFiles(cwd,account.configDir);
- const warnings=launchWarnings(snapshot,account,{...options,...settingsFiles});
- if(dryRun){console.log(JSON.stringify({provider:'claude',accountId:account.id,label:account.label,projectDir:cwd,model:options.model||'default',newProcessOnly:true,warnings},null,2));return;}
- for(const warning of warnings)console.log(warning);
- console.log(`Vibe · ${account.label} · yeni Claude Code süreci`);
- const env=launchEnvironment(account);
- const child=spawn(binary,options.model?['--model',options.model]:[],{cwd,env,shell:false,stdio:'inherit'});child.on('error',()=>{console.error('Claude Code başlatılamadı.');process.exitCode=1;});child.on('close',(code,signal)=>{process.exitCode=typeof code==='number'?code:signal==='SIGINT'?130:1;});
+  return flags;
 }
-main().catch(error=>{console.error(/Hesap|kota|komut|argüman|model|sürüm/.test(error.message)?error.message:'İşlem tamamlanamadı; yerel kurulum ve ayarları kontrol edin.');process.exitCode=1;});
+
+function renderSnapshot(snapshot, t, locale) {
+  const lines = [];
+  for (const provider of snapshot.providers) {
+    lines.push(provider.name.toUpperCase());
+    for (const account of provider.accounts) {
+      const label = account.label || t(account.labelKey);
+      lines.push(`  ${account.primary ? '★ ' : ''}${label}${account.plan ? ` · ${account.plan}` : ''} · ${formatFreshness(account.fetchedAt, account.status, { t, locale })}`);
+      for (const window of account.windows) {
+        const view = describeWindow(window, { t, locale });
+        lines.push(`    ${view.label}${window.scope ? ` / ${window.scope}` : ''}: ${[view.value, view.reset, view.detail].filter(Boolean).join(' · ')}`);
+      }
+      if (account.messageCode) lines.push(`    ${describeCode(account.messageCode, { t, has: hasKey })}`);
+    }
+    lines.push('');
+  }
+  lines.push(t('cliWatchFooter'));
+  return lines.join('\n');
+}
+
+// Runs a provider CLI in this terminal for the chosen (or best eligible) account.
+async function run(service, args, t) {
+  const providerId = args.shift();
+  if (!isProviderId(providerId)) throw new AppError('invalid_provider');
+  const flags = parseFlags(args, { '--account': String, '--cwd': String, '--model': String, '--dry-run': Boolean });
+  if (flags['--model'] && !MODEL_ARGUMENT.test(flags['--model'])) throw new AppError('invalid_argument');
+  const snapshot = await service.refresh(providerId);
+  // Without an explicit --account, only an account with verified quota is used.
+  const chosen = selectAccount(snapshot, providerId, { accountId: flags['--account'], model: flags['--model'] });
+  if (!chosen) throw new AppError('no_verified_quota');
+  const cwd = path.resolve(flags['--cwd'] || process.cwd());
+  const plan = await launchPlan(providerId, { account: chosen, model: flags['--model'] });
+  if (!plan) throw new AppError('no_cli', { tool: providerById(providerId).name });
+  const warnings = providerId === 'claude'
+    ? claudeLaunchWarnings(snapshot, chosen, { model: flags['--model'], settingsFiles: await loadClaudeSettingsFiles(cwd, chosen.configDir) })
+    : [];
+  const messages = warnings.map(w => t(w.key, w.params));
+  if (flags['--dry-run']) {
+    console.log(JSON.stringify({ provider: providerId, accountId: chosen.id, projectDir: cwd, command: [plan.binary, ...plan.args], warnings: messages }, null, 2));
+    return;
+  }
+  for (const message of messages) console.log(message);
+  const child = spawn(plan.binary, plan.args, { cwd, env: applyEnvironment(environmentChanges(plan.env)), shell: false, stdio: 'inherit' });
+  child.on('error', () => { console.error(describeCode('launch_failed', { t, has: hasKey })); process.exitCode = 1; });
+  child.on('close', (code, signal) => { process.exitCode = typeof code === 'number' ? code : signal === 'SIGINT' ? EXIT_INTERRUPTED : 1; });
+}
+
+async function handover(service, args, t) {
+  const flags = parseFlags(args, { '--from': String, '--to': String, '--cwd': String, '--session': String });
+  const result = await executeHandover({
+    projectDir: path.resolve(flags['--cwd'] || process.cwd()),
+    dataDir: process.env.VIBE_DATA_DIR || path.join(os.homedir(), '.vibe-usage'),
+    snapshot: await service.refresh(),
+    fromProvider: flags['--from']?.toLowerCase() || AUTO,
+    toProvider: flags['--to']?.toLowerCase() || AUTO,
+    sessionId: flags['--session'] || AUTO
+  });
+  const tool = providerById(result.to).name;
+  console.log(t(result.mode === 'app' ? 'handoverApp' : 'handoverTerminal', { tool: result.model ? `${tool} · ${result.model}` : tool }));
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  const command = args.shift() || 'status';
+  const service = await createService({ settingsPath: process.env.VIBE_DATA_DIR ? path.join(process.env.VIBE_DATA_DIR, 'settings.json') : undefined });
+  const language = service.snapshot().settings.language;
+  const t = (key, params) => translate(language, key, params);
+  const locale = language;
+  if (command === 'help' || command === '--help') { console.log(t('cliHelp')); return; }
+  if (!COMMANDS.includes(command)) throw new AppError('unknown_command');
+
+  try {
+    if (command === 'status') {
+      const snapshot = await service.refresh();
+      console.log(args.includes('--json') ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, t, locale));
+    } else if (command === 'watch') {
+      const draw = snapshot => process.stdout.write(`${process.stdout.isTTY ? CLEAR_SCREEN : ''}${renderSnapshot(snapshot, t, locale)}\n`);
+      draw(service.snapshot());
+      draw(await service.refresh());
+      let busy = false;
+      const timer = setInterval(async () => {
+        if (busy) return;
+        busy = true;
+        try { draw(await service.refresh()); } finally { busy = false; }
+      }, service.snapshot().settings.intervalSeconds * 1000);
+      process.once('SIGINT', () => { clearInterval(timer); process.exit(0); });
+    } else if (command === 'run') {
+      await run(service, args, t);
+    } else {
+      await handover(service, args, t);
+    }
+  } catch (error) {
+    console.error(describeCode(error.code, { t, has: hasKey }, error.params));
+    process.exitCode = 1;
+  }
+}
+
+main().catch(error => {
+  console.error(describeCode(error.code, { t: (key, params) => translate(undefined, key, params), has: hasKey }));
+  process.exitCode = 1;
+});

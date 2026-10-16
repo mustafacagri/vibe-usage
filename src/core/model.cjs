@@ -11,39 +11,35 @@ function isoDate(value, unixSeconds = false) {
 function safeText(value, fallback = '', max = 160) {
   return typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, max) : fallback;
 }
+// Quota window contract. Text we word ourselves travels as i18n keys (labelKey, detailKey,
+// valueKey + params); `label` and `scope` carry only names reported by the source (model or
+// group names), which are shown verbatim. Money stays numeric in `amounts` (USD cents).
+// `section: 'details'` marks secondary windows the UI collapses (spend, combined totals).
+const AMOUNT_FIELDS = ['used', 'limit', 'remaining', 'bonus'];
+const KEY_MAX = 60;
+// Plan names come from the provider and are shown as a badge; anything unusual is dropped.
+function safePlan(value) {
+  return typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(value) ? value : undefined;
+}
 function normalizeWindow(input = {}) {
   let usedPercent = percent(input.usedPercent), remainingPercent = percent(input.remainingPercent);
   if (usedPercent === null && remainingPercent !== null) usedPercent = 100 - remainingPercent;
   if (remainingPercent === null && usedPercent !== null) remainingPercent = 100 - usedPercent;
-  const result = { id: safeText(input.id, 'unknown'), label: safeText(input.label, safeText(input.id, 'Unknown')), usedPercent, remainingPercent, resetsAt: isoDate(input.resetsAt) };
-  if (typeof input.labelKey === 'string') result.labelKey = safeText(input.labelKey, '', 60);
-  if (typeof input.detailKey === 'string') result.detailKey = safeText(input.detailKey, '', 60);
+  const result = { id: safeText(input.id, 'unknown'), usedPercent, remainingPercent, resetsAt: isoDate(input.resetsAt) };
+  if (typeof input.label === 'string' && input.label) result.label = safeText(input.label);
+  for (const key of ['labelKey', 'detailKey', 'valueKey']) {
+    if (typeof input[key] === 'string' && input[key]) result[key] = safeText(input[key], '', KEY_MAX);
+  }
   if (input.labelParams && typeof input.labelParams === 'object') result.labelParams = input.labelParams;
   if (typeof input.durationMinutes === 'number' && Number.isFinite(input.durationMinutes)) result.durationMinutes = input.durationMinutes;
-  if (typeof input.scope === 'string') result.scope = safeText(input.scope);
+  if (typeof input.scope === 'string' && input.scope) result.scope = safeText(input.scope);
   if (typeof input.active === 'boolean') result.active = input.active;
-  if (typeof input.detail === 'string') result.detail = safeText(input.detail, '', 360);
-  if (typeof input.valueText === 'string') result.valueText = safeText(input.valueText, '', 100);
-  // Language-neutral fields; the UI words them (the Turkish label/detail/valueText remain for the CLI).
-  if (typeof input.valueKey === 'string') result.valueKey = safeText(input.valueKey, '', 60);
   if (input.group === 'team') result.group = 'team';
+  if (input.section === 'details') result.section = 'details';
   if (input.amounts && typeof input.amounts === 'object') {
-    const amounts = {};
-    for (const k of ['used', 'limit', 'remaining', 'bonus']) {
-      if (typeof input.amounts[k] === 'number' && Number.isFinite(input.amounts[k])) amounts[k] = input.amounts[k];
-    }
+    const amounts = Object.fromEntries(AMOUNT_FIELDS.filter(k => Number.isFinite(input.amounts[k])).map(k => [k, input.amounts[k]]));
     if (Object.keys(amounts).length) result.amounts = amounts;
   }
   return result;
 }
-// Passive/absent model metadata does not establish entitlement. This helper only
-// qualifies measured, active windows; callers still need a supported launch path.
-function isAccountEligible(account, model) {
-  if (!account || account.status !== 'ok' || !Array.isArray(account.windows) || account.windows.length === 0) return false;
-  const general = account.windows.filter(w => !w.scope);
-  const scoped = model ? account.windows.filter(w => w.scope?.toLowerCase() === model.toLowerCase()) : [];
-  if (model && scoped.length === 0) return false;
-  const relevant = [...general, ...scoped];
-  return relevant.length > 0 && relevant.every(w => !(w.scope && w.active === false) && !w.stale && percent(w.remainingPercent) !== null && w.remainingPercent > 0);
-}
-module.exports = { percent, isoDate, safeText, normalizeWindow, isAccountEligible };
+module.exports = { percent, isoDate, safeText, safePlan, normalizeWindow };

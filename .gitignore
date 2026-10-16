@@ -10,3 +10,4 @@ artifacts/
 node_modules/
 release/
 coverage/
+VIBE_HANDOVER.md

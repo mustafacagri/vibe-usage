@@ -1,145 +1,226 @@
-const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,dialog,screen,session,shell}=require('electron');
-const path=require('node:path');const fs=require('node:fs');const os=require('node:os');const crypto=require('node:crypto');const {pathToFileURL}=require('node:url');const {spawn}=require('node:child_process');
-const {createService}=require('./core/service.cjs');const {assertSender,validateRefresh}=require('./ipc-policy.cjs');
-const {launchExternal,loadClaudeSettingsFiles,launchWarnings,resolveClaudeProfile,smartLaunch,previewSmartLaunch,handoverToCodex,executeHandover,discoverModels,listSessions}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');const {setModelCacheDir,refreshCursorModels}=require('./core/models.cjs');
-app.setName('Vibe Usage');
-if(process.env.VIBE_DATA_DIR)app.setPath('userData',path.resolve(process.env.VIBE_DATA_DIR));
-let win,tray,service,poll,quitting=false,boundsTimer;
-const html=path.join(__dirname,'ui/index.html');const expectedUrl=pathToFileURL(html).href;
-function publish(){const snapshot=service.snapshot();if(win&&!win.isDestroyed())win.webContents.send('vibe:update',snapshot);return snapshot;}
-async function refresh(provider){const pending=service.refresh(provider);publish();try{await pending;}finally{publish();}return service.snapshot();}
-function schedule(){clearInterval(poll);poll=setInterval(()=>{refresh().catch(()=>{});},service.snapshot().settings.intervalSeconds*1000);}
-function show(){if(!win||win.isDestroyed())return;if(win.isMinimized())win.restore();win.show();win.focus();}
-function handler(name,fn){ipcMain.handle('vibe:'+name,async(event,...args)=>{assertSender(event,expectedUrl);return fn(...args);});}
-if(!app.requestSingleInstanceLock())app.quit();else{
- app.on('second-instance',show);
- app.whenReady().then(async()=>{
-  service=await createService({settingsPath:path.join(app.getPath('userData'),'settings.json')});
-  setModelCacheDir(app.getPath('userData'));
-  const settings=service.snapshot().settings;const area=screen.getPrimaryDisplay().workArea;
-  const saved=settings.window||{};const width=Math.min(Math.max(saved.width||430,340),Math.min(area.width,620));const height=Math.min(Math.max(saved.height||900,420),area.height-30);
-  const bounds={width,height};if(Number.isFinite(saved.x)&&Number.isFinite(saved.y)&&screen.getAllDisplays().some(d=>saved.x>=d.workArea.x&&saved.x+width<=d.workArea.x+d.workArea.width&&saved.y>=d.workArea.y&&saved.y+height<=d.workArea.y+d.workArea.height)){bounds.x=saved.x;bounds.y=saved.y;}
-  win=new BrowserWindow({...bounds,minWidth:340,minHeight:420,title:'Vibe Usage',frame:false,show:false,alwaysOnTop:!!settings.pinned,backgroundColor:'#171a1e',icon:path.join(__dirname,'../assets/icon.png'),webPreferences:{preload:path.join(__dirname,'preload.cjs'),nodeIntegration:false,contextIsolation:true,sandbox:true}});
-  session.defaultSession.setPermissionRequestHandler((_webContents,_permission,callback)=>callback(false));
-  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',event=>event.preventDefault());
-  win.on('close',event=>{if(!quitting){event.preventDefault();win.hide();}});
-  function saveBounds(){clearTimeout(boundsTimer);boundsTimer=setTimeout(()=>{if(!win.isDestroyed())service.updateSettings({window:win.getBounds()}).catch(()=>{});},500);}
-  win.on('resize',saveBounds);win.on('move',saveBounds);
-  const icon=nativeImage.createFromPath(path.join(__dirname,'../assets/tray.png'));tray=new Tray(icon);tray.setToolTip('Vibe Usage');
-  tray.setContextMenu(Menu.buildFromTemplate([{label:'Vibe Usage aç',click:show},{label:'Kotaları yenile',click:()=>refresh().catch(()=>{})},{type:'separator'},{label:'Çıkış',click:()=>{quitting=true;app.quit();}}]));tray.on('click',()=>win.isVisible()?win.hide():show());
-  handler('snapshot',()=>service.snapshot());handler('refresh',provider=>refresh(validateRefresh(provider)));
-  handler('settings',async patch=>{await service.updateSettings(patch);win.setAlwaysOnTop(!!service.snapshot().settings.pinned);schedule();return publish();});
-  handler('pin',async()=>{await service.updateSettings({pinned:!service.snapshot().settings.pinned});win.setAlwaysOnTop(!!service.snapshot().settings.pinned);return publish();});
-  handler('hide',()=>win.hide());
-  handler('dismiss-account',async id=>{
-   if(typeof id!=='string'||!/^[a-zA-Z0-9:@._+-]{1,120}$/.test(id))throw Error('Geçersiz hesap');
-   const accounts=service.snapshot().settings.accounts;
-   if(!accounts.some(a=>a.id===id))throw Error('Hesap bulunamadı');
-   await service.dismissAccount(id);
-   return publish();
-  });
-  handler('restore-dismissed-accounts',async()=>{
-   await service.restoreDismissedAccounts();
-   await refresh();
-   return publish();
-  });
-  handler('login-provider',async providerId=>{
-   if(!providerId||!['codex','claude','cursor','antigravity'].includes(providerId))throw Error('Geçersiz sağlayıcı');
-   if(providerId==='cursor'){
-    if(process.platform==='darwin'){
-     spawn('/usr/bin/open',['-a','Cursor'],{detached:true,stdio:'ignore'}).unref();
-    }else if(process.platform==='win32'){
-     shell.openExternal('cursor://').catch(()=>{});
-    }else{
-     shell.openExternal('https://cursor.com/login').catch(()=>{});
-    }
-   }else if(providerId==='claude'){
-    if(process.platform==='darwin'){
-     const launchDir=path.join(app.getPath('userData'),'launchers');
-     await fs.promises.mkdir(launchDir,{recursive:true});
-     const script=path.join(launchDir,'claude-login.command');
-     let binary='claude';
-     try{binary=await findBinary('claude');}catch{}
-     await fs.promises.writeFile(script,`#!/bin/zsh\n${binary} login\n`,{mode:0o700});
-     spawn('/usr/bin/open',['-a','Terminal',script],{detached:true,stdio:'ignore'}).unref();
-    }else{
-     shell.openExternal('https://claude.ai').catch(()=>{});
-    }
-   }else if(providerId==='codex'){
-    if(process.platform==='darwin'){
-     let binary='codex';
-     try{binary=await findBinary('codex');}catch{}
-     spawn('/usr/bin/open',['-a','Terminal',binary],{detached:true,stdio:'ignore'}).unref();
-    }else{
-     shell.openExternal('https://chatgpt.com').catch(()=>{});
-    }
-   }else if(providerId==='antigravity'){
-    if(process.platform==='darwin'){
-     spawn('/usr/bin/open',['-a','Antigravity'],{detached:true,stdio:'ignore'}).unref();
-    }
-   }
-   setTimeout(()=>{refresh(providerId).catch(()=>{});},3000);
-   return {success:true};
-  });
-  handler('add-profile',async()=>{
-   const choice=await dialog.showOpenDialog(win,{title:'Giriş yapılmış Claude profil klasörünü seç',properties:['openDirectory','showHiddenFiles']});if(choice.canceled)return {canceled:true};
-   const configDir=choice.filePaths[0];if(!fs.existsSync(path.join(configDir,'.credentials.json'))&&process.platform!=='darwin')return {message:'Bu klasörde kayıtlı Claude girişi bulunamadı.'};
-   const profile=resolveClaudeProfile(configDir);
-   const accounts=service.snapshot().settings.accounts;if(accounts.some(a=>a.providerId==='claude'&&(a.configDir===profile.configDir||a.id===profile.id)))return {message:'Bu profil zaten bağlı.'};
-   const currentDismissed=service.snapshot().settings.dismissedAccountIds||[];
-   const nextDismissed=currentDismissed.filter(id=>id!==profile.id);
-   await service.updateSettings({dismissedAccountIds:nextDismissed,accounts:[...accounts,{id:profile.id,providerId:'claude',configDir:profile.configDir,configDirExplicit:profile.configDirExplicit,label:profile.label,primary:!accounts.some(a=>a.providerId==='claude'),enabled:true}]});await refresh('claude');return {message:'Profil eklendi.'};
-  });
-  handler('launch',async options=>{
-   if(!options||typeof options.accountId!=='string')throw Error('Hesap gerekli');
-   const account=service.snapshot().settings.accounts.find(a=>a.id===options.accountId&&a.providerId==='claude'&&a.enabled!==false);if(!account)throw Error('Geçersiz hesap');
-   const choice=await dialog.showOpenDialog(win,{title:'Claude Code için proje klasörü',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
-   const projectDir=choice.filePaths[0];
-   const settingsFiles=await loadClaudeSettingsFiles(projectDir,account.configDir);
-   const warnings=launchWarnings(service.snapshot(),account,{...settingsFiles});
-   const riskWarnings=warnings.slice(2);
-   if(riskWarnings.length>0&&dialog.showMessageBox){
-    const choiceBtn=await dialog.showMessageBox(win,{type:'warning',buttons:['Başlat','İptal'],defaultId:0,cancelId:1,title:'Claude Code Başlatma Uyarısı',message:'Seçilen profil ve proje için dikkat edilmesi gereken riskler:\n\n'+riskWarnings.join('\n\n')});
-    if(choiceBtn.response===1)return {canceled:true};
-   }
-   await launchExternal({account,projectDir,dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.',warnings};
-  });
-  handler('get-discovered-models',async()=>{await refreshCursorModels().catch(()=>null);return discoverModels();});
-  handler('preview-smart-launch',async()=>previewSmartLaunch({snapshot:service.snapshot()}));
-  handler('get-default-project-dir',async()=>process.cwd());
-  handler('smart-launch',async(options={})=>{
-   let projectDir=options?.projectDir;
-   if(!projectDir){
-    const choice=await dialog.showOpenDialog(win,{title:'Çalışma alanı / Proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
-    projectDir=choice.filePaths[0];
-   }
-   return await smartLaunch({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),targetModel:options?.targetModel});
-  });
-  handler('list-sessions',async(options={})=>{
-   const projectDir=options?.projectDir||process.cwd();
-   const providerId=options?.providerId||'claude';
-   return await listSessions({providerId,projectDir});
-  });
-  handler('select-directory',async(options={})=>{
-   const choice=await dialog.showOpenDialog(win,{title:'Proje Klasörünü Seçin',defaultPath:options?.defaultPath||process.cwd(),properties:['openDirectory','createDirectory']});
-   return choice.canceled||!choice.filePaths.length?null:choice.filePaths[0];
-  });
-  handler('execute-handover',async(options={})=>{
-   let projectDir=options?.projectDir;
-   if(!projectDir){
-    const choice=await dialog.showOpenDialog(win,{title:'Devredilecek proje klasörünü seç',defaultPath:process.cwd(),properties:['openDirectory']});if(choice.canceled)return {canceled:true};
-    projectDir=choice.filePaths[0];
-   }
-   return await executeHandover({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),fromProvider:options?.fromProvider||'auto',toProvider:options?.toProvider||'auto',targetModel:options?.targetModel,sessionId:options?.sessionId,sessionProvider:options?.sessionProvider||undefined});
-  });
-  handler('handover-to-codex',async()=>{
-   const choice=await dialog.showOpenDialog(win,{title:'Claude oturumu bulunan proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
-   const projectDir=choice.filePaths[0];
-   return await handoverToCodex({projectDir,dataDir:app.getPath('userData')});
-  });
-  await win.loadFile(html);win.once('ready-to-show',()=>{if(process.env.VIBE_START_HIDDEN!=='1')show();});
-  if(process.env.VIBE_START_HIDDEN!=='1')show();schedule();await refresh();
- }).catch(()=>{dialog.showErrorBox('Vibe Usage','Uygulama başlatılamadı. Yerel ayar klasörünü ve kurulum dosyalarını kontrol edin.');quitting=true;app.quit();});
+'use strict';
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, dialog, screen, session } = require('electron');
+const path = require('node:path');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const { pathToFileURL } = require('node:url');
+const { createService } = require('./core/service.cjs');
+const { assertSender, validateRefresh, envelope } = require('./ipc-policy.cjs');
+const { translate, DEFAULT_LANGUAGE } = require('./ui/i18n.js');
+const { isProviderId } = require('./catalog.cjs');
+const { AppError } = require('./core/errors.cjs');
+const { setModelCacheDir, refreshCursorModels, discoverModels } = require('./core/models.cjs');
+const { claudeLaunchWarnings } = require('./core/selection.cjs');
+const { launchTool, openSignIn, loadClaudeSettingsFiles } = require('./core/launch.cjs');
+const { executeHandover, listSessions, previewSmartLaunch, smartLaunch } = require('./core/handover.cjs');
+const { profileAccount } = require('./providers/claude.cjs');
+
+const APP_NAME = 'Vibe Usage';
+const WINDOW = { defaultWidth: 430, minWidth: 340, maxWidth: 620, defaultHeight: 900, minHeight: 420, screenMargin: 30, background: '#171a1e' };
+const BOUNDS_SAVE_DELAY_MS = 500;
+// Give a just-opened sign-in flow time to write credentials before re-reading quota.
+const SIGN_IN_REFRESH_DELAY_MS = 3000;
+const CLAUDE_CREDENTIALS_FILE = '.credentials.json';
+
+app.setName(APP_NAME);
+if (process.env.VIBE_DATA_DIR) app.setPath('userData', path.resolve(process.env.VIBE_DATA_DIR));
+
+const html = path.join(__dirname, 'ui/index.html');
+const expectedUrl = pathToFileURL(html).href;
+const startHidden = process.env.VIBE_START_HIDDEN === '1';
+let win, tray, service, poll, boundsTimer, quitting = false;
+
+const dataDir = () => app.getPath('userData');
+const settings = () => service.snapshot().settings;
+const t = (key, params) => translate(settings().language, key, params);
+
+function publish() {
+  const snapshot = service.snapshot();
+  if (win && !win.isDestroyed()) win.webContents.send('vibe:update', snapshot);
+  return snapshot;
 }
-app.on('before-quit',()=>{quitting=true;clearInterval(poll);clearTimeout(boundsTimer);});
-app.on('window-all-closed',()=>{});
+
+async function refresh(providerId) {
+  const pending = service.refresh(providerId);
+  publish();
+  try { await pending; } finally { publish(); }
+  return service.snapshot();
+}
+
+function schedule() {
+  clearInterval(poll);
+  poll = setInterval(() => refresh().catch(() => {}), settings().intervalSeconds * 1000);
+}
+
+function show() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+function initialBounds() {
+  const area = screen.getPrimaryDisplay().workArea;
+  const saved = settings().window || {};
+  const width = Math.min(Math.max(saved.width || WINDOW.defaultWidth, WINDOW.minWidth), Math.min(area.width, WINDOW.maxWidth));
+  const height = Math.min(Math.max(saved.height || WINDOW.defaultHeight, WINDOW.minHeight), area.height - WINDOW.screenMargin);
+  const onScreen = Number.isFinite(saved.x) && Number.isFinite(saved.y) && screen.getAllDisplays().some(({ workArea: d }) =>
+    saved.x >= d.x && saved.x + width <= d.x + d.width && saved.y >= d.y && saved.y + height <= d.y + d.height);
+  return onScreen ? { width, height, x: saved.x, y: saved.y } : { width, height };
+}
+
+function createWindow() {
+  win = new BrowserWindow({
+    ...initialBounds(), minWidth: WINDOW.minWidth, minHeight: WINDOW.minHeight, title: APP_NAME, frame: false, show: false,
+    alwaysOnTop: settings().pinned, backgroundColor: WINDOW.background, icon: path.join(__dirname, '../assets/icon.png'),
+    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
+  });
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', event => event.preventDefault());
+  win.on('close', event => { if (!quitting) { event.preventDefault(); win.hide(); } });
+  const saveBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => { if (!win.isDestroyed()) service.updateSettings({ window: win.getBounds() }).catch(() => {}); }, BOUNDS_SAVE_DELAY_MS);
+  };
+  win.on('resize', saveBounds);
+  win.on('move', saveBounds);
+}
+
+function buildTrayMenu() {
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: t('trayOpen'), click: show },
+    { label: t('trayRefresh'), click: () => refresh().catch(() => {}) },
+    { type: 'separator' },
+    { label: t('trayQuit'), click: () => { quitting = true; app.quit(); } }
+  ]));
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createFromPath(path.join(__dirname, '../assets/tray.png')));
+  tray.setToolTip(APP_NAME);
+  tray.on('click', () => (win.isVisible() ? win.hide() : show()));
+  buildTrayMenu();
+}
+
+async function chooseDirectory(titleKey, defaultPath) {
+  const choice = await dialog.showOpenDialog(win, { title: t(titleKey), defaultPath, properties: ['openDirectory'] });
+  return choice.canceled || !choice.filePaths.length ? null : choice.filePaths[0];
+}
+
+async function confirmWarnings(warnings) {
+  if (!warnings.length) return true;
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning', buttons: [t('launchAnyway'), t('cancel')], defaultId: 0, cancelId: 1,
+    title: t('launchWarningTitle'), message: warnings.map(w => t(w.key, w.params)).join('\n\n')
+  });
+  return response === 0;
+}
+
+function claudeAccount(accountId) {
+  const account = settings().accounts.find(a => a.id === accountId && a.providerId === 'claude' && a.enabled !== false);
+  if (!account) throw new AppError('account_not_found');
+  return account;
+}
+
+const handlers = {
+  'snapshot': () => service.snapshot(),
+  'refresh': providerId => refresh(validateRefresh(providerId)),
+  'settings': async patch => {
+    await service.updateSettings(patch);
+    win.setAlwaysOnTop(settings().pinned);
+    buildTrayMenu();
+    schedule();
+    return publish();
+  },
+  'pin': async () => {
+    await service.updateSettings({ pinned: !settings().pinned });
+    win.setAlwaysOnTop(settings().pinned);
+    return publish();
+  },
+  'hide': () => win.hide(),
+  'dismiss-account': async accountId => { await service.dismissAccount(accountId); return publish(); },
+  'restore-dismissed-accounts': async () => { await service.restoreDismissedAccounts(); return refresh(); },
+  'sign-in': async providerId => {
+    if (!isProviderId(providerId)) throw new AppError('invalid_provider');
+    await openSignIn({ providerId, dataDir: dataDir(), cwd: os.homedir() });
+    setTimeout(() => refresh(providerId).catch(() => {}), SIGN_IN_REFRESH_DELAY_MS);
+  },
+  'add-profile': async () => {
+    const configDir = await chooseDirectory('chooseClaudeProfile');
+    if (!configDir) return { status: 'canceled' };
+    // macOS keeps Claude credentials in the Keychain, not in the profile folder.
+    if (process.platform !== 'darwin' && !await fs.stat(path.join(configDir, CLAUDE_CREDENTIALS_FILE)).then(s => s.isFile()).catch(() => false)) {
+      return { status: 'missing_credentials' };
+    }
+    const defaultDir = path.join(os.homedir(), '.claude');
+    const profile = profileAccount(configDir, defaultDir, path.resolve(configDir) !== path.resolve(defaultDir));
+    const { accounts, dismissedAccountIds = [] } = settings();
+    if (accounts.some(a => a.providerId === 'claude' && (a.configDir === profile.configDir || a.id === profile.id))) return { status: 'exists' };
+    const primary = !accounts.some(a => a.providerId === 'claude');
+    await service.updateSettings({ dismissedAccountIds: dismissedAccountIds.filter(id => id !== profile.id), accounts: [...accounts, { ...profile, primary }] });
+    await refresh('claude');
+    return { status: 'added' };
+  },
+  'launch-claude': async accountId => {
+    const account = claudeAccount(accountId);
+    const projectDir = await chooseDirectory('chooseProjectFolder');
+    if (!projectDir) return { status: 'canceled' };
+    const settingsFiles = await loadClaudeSettingsFiles(projectDir, account.configDir);
+    if (!await confirmWarnings(claudeLaunchWarnings(service.snapshot(), account, { settingsFiles }))) return { status: 'canceled' };
+    await launchTool({ providerId: 'claude', account, cwd: projectDir, dataDir: dataDir(), title: APP_NAME });
+    return { status: 'launched' };
+  },
+  'get-models': async () => {
+    await refreshCursorModels().catch(() => null);
+    return discoverModels();
+  },
+  'preview-smart-launch': () => previewSmartLaunch(service.snapshot()),
+  'smart-launch': async ({ targetModel } = {}) => {
+    const projectDir = await chooseDirectory('chooseProjectFolder');
+    if (!projectDir) return { status: 'canceled' };
+    return { status: 'launched', ...await smartLaunch({ projectDir, dataDir: dataDir(), snapshot: service.snapshot(), targetModel }) };
+  },
+  'list-sessions': ({ providerId, projectDir } = {}) => listSessions({ providerId, projectDir }),
+  'select-directory': ({ defaultPath } = {}) => chooseDirectory('chooseProjectFolder', defaultPath),
+  'default-project-dir': () => os.homedir(),
+  'execute-handover': ({ projectDir, fromProvider, toProvider, targetModel, sessionId, sessionProvider } = {}) => {
+    if (!projectDir) throw new AppError('folder_not_found');
+    return executeHandover({ projectDir, dataDir: dataDir(), snapshot: service.snapshot(), fromProvider, toProvider, targetModel, sessionId, sessionProvider });
+  }
+};
+
+function registerHandlers() {
+  for (const [name, handler] of Object.entries(handlers)) {
+    ipcMain.handle(`vibe:${name}`, (event, ...args) => envelope((async () => {
+      assertSender(event, expectedUrl);
+      return handler(...args);
+    })()));
+  }
+}
+
+async function start() {
+  service = await createService({ settingsPath: path.join(dataDir(), 'settings.json') });
+  setModelCacheDir(dataDir());
+  createWindow();
+  createTray();
+  registerHandlers();
+  await win.loadFile(html);
+  if (!startHidden) show();
+  schedule();
+  await refresh();
+}
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', show);
+  app.whenReady().then(start).catch(() => {
+    const language = service ? settings().language : DEFAULT_LANGUAGE;
+    dialog.showErrorBox(APP_NAME, translate(language, 'startupFailed'));
+    quitting = true;
+    app.quit();
+  });
+}
+app.on('before-quit', () => { quitting = true; clearInterval(poll); clearTimeout(boundsTimer); });
+app.on('window-all-closed', () => {});

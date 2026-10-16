@@ -1,74 +1,117 @@
-(function(root){
- const numeric=value=>typeof value==='number'&&Number.isFinite(value);
- const LOCALE_MAP = {
-  en: 'en-US', tr: 'tr-TR', de: 'de-DE', es: 'es-ES', fr: 'fr-FR',
-  it: 'it-IT', pt: 'pt-BR', nl: 'nl-NL', pl: 'pl-PL', ja: 'ja-JP',
-  ko: 'ko-KR', zh: 'zh-CN', ru: 'ru-RU'
- };
- function getLocale() {
-  if (root.VibeI18n && typeof root.VibeI18n.getCurrentLanguage === 'function') {
-   const lang = root.VibeI18n.getCurrentLanguage();
-   return LOCALE_MAP[lang] || 'en-US';
+// Presentation shared by the renderer and the CLI: turns language-neutral snapshot data
+// into display text. Wording comes from the injected `t`; numbers, money and durations
+// from Intl in the given locale. Loaded in the renderer as a classic script (UMD).
+(function (root) {
+  'use strict';
+
+  const MINUTE_MS = 60 * 1000;
+  // Countdown granularity: coarser as the distance grows (42m · 3h 11m · 49h · 4d 5h).
+  const MINUTE_PRECISION_UNTIL_MINUTES = 10 * 60;
+  const HOURS_ONLY_UNTIL_MINUTES = 72 * 60;
+  // CLDR's narrow units are ambiguous in some languages (tr: '3s 11d' = 3 hours 11 minutes;
+  // ja falls back to Latin '3h11m'), so these use the short style.
+  const SHORT_DURATION_LANGUAGES = /^(tr|de|nl|ja)\b/i;
+  const AMOUNT_KEYS = { used: 'amountUsed', limit: 'amountLimit', remaining: 'amountRemaining', bonus: 'amountBonus' };
+  const CENTS_PER_DOLLAR = 100;
+  const CURRENCY = 'USD';
+
+  const isNumber = value => typeof value === 'number' && Number.isFinite(value);
+  const clampPercent = value => (isNumber(value) ? Math.max(0, Math.min(100, value)) : null);
+
+  function formatPercent(value, locale) {
+    return new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 1 }).format(value / 100);
   }
-  return 'tr-TR';
- }
- function formatWindow(window, customLocale, now=Date.now()){
-  const locale = customLocale || getLocale();
-  const isTr = locale.startsWith('tr');
-  const percent=value=>new Intl.NumberFormat(locale,{maximumFractionDigits:1}).format(value);
-  const remaining=numeric(window.remainingPercent)?Math.max(0,Math.min(100,window.remainingPercent)):null;
-  const used=numeric(window.usedPercent)?Math.max(0,Math.min(100,window.usedPercent)):null;
-  let value;
-  if (remaining === null) {
-   value = isTr ? 'Veri yok' : (root.VibeI18n?.t ? root.VibeI18n.t('noData') : 'No data');
-  } else {
-   value = isTr ? `%${percent(remaining)}` : `${percent(remaining)}%`;
+
+  function formatMoney(cents, locale) {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: CURRENCY }).format(cents / CENTS_PER_DOLLAR);
   }
-  const passiveModel=window.active===false&&!!window.scope;
-  if(passiveModel) {
-   const passiveLabel = isTr ? 'Kaynakta pasif' : (root.VibeI18n?.t ? root.VibeI18n.t('passiveSource') : 'Passive at source');
-   const usedLabel = isTr ? 'kullanılan' : (root.VibeI18n?.t ? root.VibeI18n.t('used') : 'used');
-   value=used===null ? passiveLabel : (isTr ? `%${percent(used)} ${usedLabel}` : `${percent(used)}% ${usedLabel}`);
+
+  function durationParts(ms) {
+    const minutes = Math.max(1, Math.round(Math.max(0, ms) / MINUTE_MS));
+    if (minutes < 60) return { minutes };
+    if (minutes < MINUTE_PRECISION_UNTIL_MINUTES) return { hours: Math.floor(minutes / 60), minutes: minutes % 60 };
+    const hours = Math.round(minutes / 60);
+    if (minutes < HOURS_ONLY_UNTIL_MINUTES) return { hours };
+    return { days: Math.floor(hours / 24), hours: hours % 24 };
   }
-  if(typeof window.valueText==='string'&&window.valueText&&window.valueText.length<=100)value=window.valueText;
-  const resetDate=window.resetsAt?new Date(window.resetsAt):null;
-  const reset=resetDate&&Number.isFinite(resetDate.getTime())?new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}).format(resetDate):'';
-  const defaultNote = passiveModel ? (isTr ? 'Kaynakta pasif; model erişimi doğrulanmadı' : (root.VibeI18n?.t ? root.VibeI18n.t('passiveSourceDetail') : 'Passive at source; model access not verified')) : (window.detail||'');
-  const resetInMs=reset?resetDate.getTime()-now:null;
-  const resetIn=resetInMs===null?'':formatDuration(resetInMs,locale);
-  return {value,percent:passiveModel?null:remaining,reset,resetIn,resetInMs,note:defaultNote};
- }
- // Compact, localized countdown: 42m · 3h 11m · 49h · 4d 5h. Coarser as the distance grows.
- function formatDuration(ms,locale){
-  const total=Math.max(1,Math.round(Math.max(0,ms)/60000));
-  let parts;
-  if(total<60)parts={minutes:total};
-  else if(total<600)parts={hours:Math.floor(total/60),minutes:total%60};
-  else if(total<72*60)parts={hours:Math.round(total/60)};
-  else{const hours=Math.round(total/60);parts={days:Math.floor(hours/24),hours:hours%24};}
-  for(const k of Object.keys(parts))if(!parts[k])delete parts[k];
-  if(typeof Intl.DurationFormat==='function'){
-   // CLDR's narrow units are ambiguous in some languages (tr: '3s 11d' = 3 hours 11 minutes; ja falls back to Latin '3h11m').
-   const style=/^(tr|de|nl|ja)\b/i.test(locale)?'short':'narrow';
-   try{return new Intl.DurationFormat(locale,{style}).format(parts);}catch{}
+
+  function formatDuration(ms, locale) {
+    const parts = Object.fromEntries(Object.entries(durationParts(ms)).filter(([, value]) => value));
+    const style = SHORT_DURATION_LANGUAGES.test(locale) ? 'short' : 'narrow';
+    return new Intl.DurationFormat(locale, { style }).format(parts);
   }
-  return [['days','d'],['hours','h'],['minutes','m']].filter(([k])=>parts[k]).map(([k,u])=>`${parts[k]}${u}`).join(' ');
- }
- function formatFreshness(iso,status,now=Date.now(),customLocale){
-  const locale = customLocale || getLocale();
-  const isTr = locale.startsWith('tr');
-  if(!iso)return isTr ? 'Henüz ölçülmedi' : (root.VibeI18n?.t ? root.VibeI18n.t('notMeasuredYet') : 'Not measured yet');
-  const date=new Date(iso);if(!Number.isFinite(date.getTime()))return isTr ? 'Ölçüm zamanı bilinmiyor' : (root.VibeI18n?.t ? root.VibeI18n.t('measurementTimeUnknown') : 'Measurement time unknown');
-  const minutes=Math.max(0,Math.floor((now-date.getTime())/60000));
-  let age;
-  if (root.VibeI18n?.t) {
-   age = minutes === 0 ? root.VibeI18n.t('justNow') : root.VibeI18n.t('minsAgo', { n: minutes });
-  } else {
-   age = minutes === 0 ? (isTr ? 'az önce' : 'just now') : (isTr ? `${minutes} dk önce` : `${minutes}m ago`);
+
+  function formatDate(date, locale) {
+    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
   }
-  const stalePrefix = status === 'stale' ? (root.VibeI18n?.t ? root.VibeI18n.t('stalePrefix') : (isTr ? 'Eski veri · ' : 'Stale data · ')) : '';
-  return `${stalePrefix}${age}`;
- }
- const api={formatWindow,formatFreshness,formatDuration};
- if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.VibeFormat=api;
-})(typeof globalThis!=='undefined'?globalThis:this);
+
+  // A window whose model scope the source marks inactive: its numbers are not an entitlement.
+  const isPassive = window => window.active === false && Boolean(window.scope);
+
+  function windowLabel(window, t) {
+    const base = window.labelKey ? t(window.labelKey, window.labelParams || {}) : window.label || window.id;
+    return window.group === 'team' ? `${t('labelTeam')} · ${base}` : base;
+  }
+
+  function windowValue(window, t, locale) {
+    const remaining = clampPercent(window.remainingPercent);
+    if (isPassive(window)) {
+      const used = clampPercent(window.usedPercent);
+      return used === null ? t('passiveSource') : t('percentUsed', { n: formatPercent(used, locale) });
+    }
+    if (window.valueKey) return t(window.valueKey);
+    if (isNumber(window.amounts?.remaining)) return t('amountLeft', { n: formatMoney(window.amounts.remaining, locale) });
+    if (window.amounts) return t('amountNotReported');
+    return remaining === null ? t('noData') : t('percentRemaining', { n: formatPercent(remaining, locale) });
+  }
+
+  function windowDetail(window, t, locale) {
+    if (window.amounts) {
+      return Object.entries(AMOUNT_KEYS).filter(([field]) => isNumber(window.amounts[field]))
+        .map(([field, key]) => t(key, { n: formatMoney(window.amounts[field], locale) })).join(' · ');
+    }
+    if (window.detailKey) return t(window.detailKey);
+    return isPassive(window) ? t('passiveSourceDetail') : '';
+  }
+
+  // Everything a quota row shows. `percent` drives the bar and is null when the value is
+  // not a remaining percentage (passive scopes, money, unknown).
+  function describeWindow(window, { t, locale, now = Date.now() }) {
+    const resetDate = window.resetsAt ? new Date(window.resetsAt) : null;
+    const hasReset = Boolean(resetDate && Number.isFinite(resetDate.getTime()));
+    const resetInMs = hasReset ? resetDate.getTime() - now : null;
+    return {
+      label: windowLabel(window, t),
+      value: windowValue(window, t, locale),
+      percent: isPassive(window) || window.amounts || window.valueKey ? null : clampPercent(window.remainingPercent),
+      detail: windowDetail(window, t, locale),
+      reset: hasReset ? (resetInMs <= 0 ? t('resetsNow') : t('resetsIn', { time: formatDuration(resetInMs, locale) })) : '',
+      resetAt: hasReset ? t('resetsAt', { date: formatDate(resetDate, locale) }) : ''
+    };
+  }
+
+  function formatAge(timestamp, { t, locale, now = Date.now() }) {
+    const ms = now - timestamp;
+    return ms < MINUTE_MS ? t('justNow') : t('agoTime', { time: formatDuration(ms, locale) });
+  }
+
+  function formatFreshness(iso, status, { t, locale, now = Date.now() }) {
+    if (!iso) return t('notMeasuredYet');
+    const fetchedAt = Date.parse(iso);
+    if (!Number.isFinite(fetchedAt)) return t('measurementTimeUnknown');
+    const age = formatAge(fetchedAt, { t, locale, now });
+    return status === 'stale' ? t('staleAge', { age }) : age;
+  }
+
+  // Message for an error or status code: app errors, then provider status codes, then a
+  // generic line for internal codes that have no user-facing wording.
+  function describeCode(code, { t, has }, params = {}) {
+    if (has(`error_${code}`)) return t(`error_${code}`, params);
+    if (has(`status_${code}`)) return t(`status_${code}`, params);
+    return t('error_unexpected');
+  }
+
+  const api = { formatPercent, formatDuration, describeWindow, formatAge, formatFreshness, describeCode };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.VibeFormat = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);

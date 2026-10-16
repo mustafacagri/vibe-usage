@@ -1,35 +1,33 @@
 'use strict';
+const { PROVIDERS, PROVIDER_IDS, AUTO, providerById, normalizeProviderOrder } = window.VibeCatalog;
+const { describeWindow, formatAge, formatFreshness, describeCode, formatDuration, formatPercent } = window.VibeFormat;
+const i18n = window.VibeI18n;
+
+const TOAST_MS = 5000;
+const SETTINGS_MESSAGE_MS = 4000;
+// Countdowns and ages are relative to now; re-render this often between snapshots.
+const CLOCK_TICK_MS = 30 * 1000;
+const LOW_QUOTA_PERCENT = 20;
+const INTERVAL_CHOICES_SECONDS = [60, 120, 300, 600];
+const BYTES_PER_MEGABYTE = 1024 * 1024;
+const STATUS_TEXT = { pending: 'reading', ok: 'live', stale: 'refreshFailed', auth_missing: 'noSession' };
+// States where the useful next step is signing in or opening the provider's app.
+const SIGN_IN_STATUSES = new Set(['auth_missing', 'auth_invalid', 'auth_expired', 'auth_rejected', 'keychain_unavailable', 'app_closed']);
+const DETAILS_SECTION = 'details';
+
 const $ = selector => document.querySelector(selector);
-const selection = new Map();
+const t = (key, params) => i18n.t(key, params);
+const format = () => ({ t, locale: i18n.getCurrentLanguage(), now: Date.now() });
+const accountName = account => account.label || t(account.labelKey);
+const providerLabel = id => `${providerById(id).glyph} ${providerById(id).name}`;
+const toolLabel = (id, model) => (model ? `${providerById(id).name} · ${model}` : providerById(id).name);
+
+const selectedAccount = new Map();
 let state = null;
-let toastTimer;
-let settingsMsgTimer;
-let cachedModels = null;
-let currentSmartPreview = null;
-
-function t(key, params) {
-  return window.VibeI18n ? window.VibeI18n.t(key, params) : key;
-}
-
-function applyI18n() {
-  if (!window.VibeI18n) return;
-  document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.dataset.i18n;
-    el.textContent = t(key);
-  });
-  document.querySelectorAll('[data-i18n-title]').forEach(el => {
-    const key = el.dataset.i18nTitle;
-    el.title = t(key);
-  });
-  document.querySelectorAll('[data-i18n-aria]').forEach(el => {
-    const key = el.dataset.i18nAria;
-    el.setAttribute('aria-label', t(key));
-  });
-  document.querySelectorAll('.slot-text').forEach(el => {
-    const slotIdx = Number(el.dataset.slot);
-    el.textContent = t('slotLabel', { n: slotIdx + 1 });
-  });
-}
+let models = null;
+let smartPreview = null;
+let handoverProjectDir = '';
+let toastTimer, settingsMessageTimer;
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -38,716 +36,464 @@ function element(tag, className, text) {
   return node;
 }
 
-function toast(message) {
-  $('#toast').textContent = message;
-  $('#toast').hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000);
+function option(value, text) {
+  const node = element('option', '', text);
+  node.value = value;
+  return node;
 }
 
-function showSettingsMessage(msg) {
-  const el = $('#settings-message');
-  if (!el) return;
-  el.textContent = msg;
-  clearTimeout(settingsMsgTimer);
-  settingsMsgTimer = setTimeout(() => {
-    if (el) el.textContent = '';
-  }, 4000);
+function fillSelect(select, entries, value) {
+  select.replaceChildren(...entries.map(([key, text]) => option(key, text)));
+  if (value !== undefined && entries.some(([key]) => key === value)) select.value = value;
 }
+
+function toast(message) {
+  const node = $('#toast');
+  node.textContent = message;
+  node.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { node.hidden = true; }, TOAST_MS);
+}
+
+function showSettingsMessage(message) {
+  const node = $('#settings-message');
+  node.textContent = message;
+  clearTimeout(settingsMessageTimer);
+  settingsMessageTimer = setTimeout(() => { node.textContent = ''; }, SETTINGS_MESSAGE_MS);
+}
+
+const describe = (code, params) => describeCode(code, { t, has: i18n.hasKey }, params);
 
 async function action(fn) {
   try {
     return await fn();
-  } catch (err) {
-    console.error(err);
-    toast('Error completing action. Check session and connectivity.');
+  } catch (error) {
+    toast(describe(error.code, error.params));
+    return undefined;
   }
+}
+
+function applyStaticText() {
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n-title]')) node.title = t(node.dataset.i18nTitle);
+  for (const node of document.querySelectorAll('[data-i18n-aria]')) node.setAttribute('aria-label', t(node.dataset.i18nAria));
 }
 
 async function getModels() {
-  if (!cachedModels && window.vibe?.getDiscoveredModels) {
-    try {
-      cachedModels = await window.vibe.getDiscoveredModels();
-    } catch {}
-  }
-  // Lists come from the main process (live CLI / local config); never invent model names here.
-  return cachedModels || { claude: [], codex: [], cursor: [], antigravity: [] };
+  if (!models) models = await window.vibe.getModels();
+  return models;
 }
 
-function localizeWindow(win) {
-  if (!win) return win;
-  let label = win.label || '';
-  let detail = win.detail || '';
-  let valueText = win.valueText || '';
+// ---------------------------------------------------------------- quota cards
 
-  // 1. Direct semantic keys (primary clean architectural path)
-  if (win.labelKey === 'labelNHours' && win.labelParams?.n >= 48 && win.labelParams.n % 24 === 0) {
-    label = t('labelNDays', { n: win.labelParams.n / 24 });
-  } else if (win.labelKey) {
-    label = t(win.labelKey, win.labelParams || {});
-  } else if (typeof win.durationMinutes === 'number') {
-    if (win.durationMinutes === 10080) label = t('labelWeekly');
-    else if (win.durationMinutes >= 2880 && win.durationMinutes % 1440 === 0) label = t('labelNDays', { n: win.durationMinutes / 1440 });
-    else if (win.durationMinutes === 300) label = t('label5Hours');
-    else if (win.durationMinutes % 60 === 0) label = t('labelNHours', { n: win.durationMinutes / 60 });
-    else label = t('labelNMins', { n: win.durationMinutes });
-  } else if (/^5 saat$/i.test(label) || /^5 hours?$/i.test(label)) {
-    label = t('label5Hours');
-  } else if (/^haftal[ıi]k$/i.test(label) || /^weekly$/i.test(label)) {
-    label = t('labelWeekly');
-  } else if (/^opus\s*·\s*haftal[ıi]k$/i.test(label)) {
-    label = t('labelOpusWeekly');
-  } else if (/^sonnet\s*·\s*haftal[ıi]k$/i.test(label)) {
-    label = t('labelSonnetWeekly');
-  } else if (/^(\d+)\s*saat$/i.test(label) || /^(\d+)\s*hours?$/i.test(label)) {
-    const hours = label.match(/^(\d+)\s*(?:saat|hours?)$/i)[1];
-    label = t('labelNHours', { n: hours });
-  } else if (/^(\d+)\s*dakika$/i.test(label) || /^(\d+)\s*minutes?$/i.test(label)) {
-    const mins = label.match(/^(\d+)\s*(?:dakika|minutes?)$/i)[1];
-    label = t('labelNMins', { n: mins });
-  } else if (/^auto kapsam[ıi]$/i.test(label) || /^auto scope$/i.test(label)) {
-    label = t('labelAutoScope');
-  } else if (/^api kapsam[ıi]$/i.test(label) || /^api scope$/i.test(label)) {
-    label = t('labelApiScope');
-  } else if (/^toplam kullan[ıi]m$/i.test(label) || /^total usage$/i.test(label)) {
-    label = t('labelTotalUsage');
-  } else if (/^dahil kullan[ıi]m\s*·\s*tutar$/i.test(label)) {
-    label = t('labelIncludedSpend');
-  } else if (/^ek [üu]cretli kullan[ıi]m$/i.test(label)) {
-    label = t('labelOnDemandSpend');
-  } else if (/^tak[ıi]m\s*·\s*ek [üu]cretli kullan[ıi]m$/i.test(label)) {
-    label = `${t('labelTeam')} · ${t('labelOnDemandSpend')}`;
-  } else if (/^d[öo]nem bildirilmedi$/i.test(label)) {
-    label = t('labelNoPeriodReported');
-  }
-
-  if (win.group === 'team') label = `${t('labelTeam')} · ${label}`;
-
-  // Localize detail: semantic keys first, then known legacy (Turkish) provider strings.
-  if (win.amounts) {
-    const money = new Intl.NumberFormat(document.documentElement.lang || 'en', { style: 'currency', currency: 'USD' });
-    const keys = { used: 'amountUsed', limit: 'amountLimit', remaining: 'amountRemaining', bonus: 'amountBonus' };
-    detail = Object.entries(keys).filter(([k]) => typeof win.amounts[k] === 'number').map(([k, key]) => t(key, { n: money.format(win.amounts[k] / 100) })).join(' · ');
-  } else if (win.detailKey) {
-    detail = t(win.detailKey);
-  } else if (detail.includes('Bu sınır hesabın bütün modellerde bittiği anlamına gelmez')) {
-    detail = t('cursorApiLimitNote');
-  } else if (detail.includes('Kaynakta pasif')) {
-    detail = t('passiveSourceDetail');
-  } else if (/^Tutar bildirilmedi\.?$/.test(detail)) {
-    detail = t('amountNotReported');
-  } else if (detail.startsWith('Önceki ölçüm')) {
-    detail = t('staleWindowDetail');
-  } else if (detail === 'Source: existing Antigravity local service.') {
-    detail = t('antigravitySourceNote');
-  } else if (detail === 'Model quota; period not reported by source.') {
-    detail = t('modelQuotaNoPeriod');
-  }
-
-  // Localize valueText if any
-  if (win.valueKey) {
-    valueText = t(win.valueKey);
-  } else if (typeof win.amounts?.remaining === 'number') {
-    const money = new Intl.NumberFormat(document.documentElement.lang || 'en', { style: 'currency', currency: 'USD' });
-    valueText = t('amountLeft', { n: money.format(win.amounts.remaining / 100) });
-  } else if (valueText.includes('cent kalan')) {
-    const num = valueText.replace(/[^0-9.]/g, '');
-    valueText = t('centsRemaining', { n: num });
-  } else if (valueText === 'Tutar bildirilmedi') {
-    valueText = t('amountNotReported');
-  } else if (valueText === 'Kapalı') {
-    valueText = t('disabled');
-  }
-
-  // An empty valueText would replace the measured percentage, so only pass a real one.
-  const localized = { ...win, label, detail, valueText };
-  if (!valueText) delete localized.valueText;
-  return localized;
-}
-
-function localizeAccountLabel(label, providerName) {
-  if (!label) return label;
-  if (label === 'Hesap A') return t('accountA');
-  if (label === 'Hesap B') return t('accountB');
-  if (label === 'Mevcut hesap' || label === 'Mevcut uygulama') return t('defaultAccount');
-  // "Antigravity (me@x.com)" next to the Antigravity heading: the e-mail is enough.
-  const inner = providerName && label.match(new RegExp(`^${providerName}\\s*\\((.+)\\)$`));
-  return inner ? inner[1] : label;
-}
-
-function statusMessage(entity) {
-  if (!entity) return '';
-  if (entity.messageCode === 'no_accounts') return t('noConnectedAccounts');
-  if (entity.messageCode && window.VibeI18n?.I18N?.en?.[`status_${entity.messageCode}`]) return t(`status_${entity.messageCode}`);
-  return entity.message || '';
-}
-
-function renderQuotaCell(rawWindow, isSingle) {
-  const window = localizeWindow(rawWindow);
-  const view = VibeFormat.formatWindow(window);
-  const quota = element('div', 'quota' + (view.percent !== null && view.percent <= 20 ? ' low' : '') + (isSingle ? ' span-full' : ''));
+function quotaCell(window, fullWidth) {
+  const view = describeWindow(window, format());
+  const cell = element('div', ['quota', view.percent !== null && view.percent <= LOW_QUOTA_PERCENT ? 'low' : '', fullWidth ? 'span-full' : ''].filter(Boolean).join(' '));
   const line = element('div', 'quota-line');
-  const valueText = view.percent !== null && !window.valueText ? t('percentRemaining', { n: view.value }) : view.value;
-  line.append(element('span', 'quota-label', window.label), element('span', 'quota-value', valueText));
-  quota.append(line);
+  line.append(element('span', 'quota-label', view.label), element('span', 'quota-value', view.value));
+  cell.append(line);
   if (view.percent !== null) {
     const track = element('div', 'track');
     const fill = element('div', 'fill');
     fill.style.setProperty('--quota', String(view.percent));
     track.append(fill);
     track.setAttribute('role', 'progressbar');
-    track.setAttribute('aria-label', window.label);
+    track.setAttribute('aria-label', view.label);
     track.setAttribute('aria-valuenow', String(view.percent));
     track.setAttribute('aria-valuemin', '0');
     track.setAttribute('aria-valuemax', '100');
-    quota.append(track);
+    cell.append(track);
   }
-  // Countdown first so it survives truncation; the exact date and full detail stay in the tooltip.
-  const resetText = view.reset ? (view.resetInMs <= 0 ? t('resetsNow') : t('resetsIn', { time: view.resetIn })) : '';
-  const detail = window.detail || (view.reset ? '' : view.note) || '';
-  const desc = [resetText, detail].filter(Boolean).join(' · ');
-  if (desc) {
-    const node = element('div', 'quota-description', desc);
-    node.title = [detail, view.reset ? t('resetsAt', { date: view.reset }) : ''].filter(Boolean).join('\n');
-    quota.append(node);
+  // The countdown comes first so truncation never hides it; the full text is the tooltip.
+  const description = [view.reset, view.detail].filter(Boolean).join(' · ');
+  if (description) {
+    const node = element('div', 'quota-description', description);
+    node.title = [view.detail, view.resetAt].filter(Boolean).join('\n');
+    cell.append(node);
   }
-  return quota;
+  return cell;
 }
 
-function accountSection(provider) {
-  const section = element('section', 'provider');
-  section.dataset.provider = provider.id;
+function quotaGrid(windows) {
+  const grid = element('div', 'quota-grid');
+  grid.append(...windows.map(window => quotaCell(window, windows.length === 1)));
+  return grid;
+}
+
+function groupWindows(windows) {
+  const groups = { general: [], scopes: new Map(), details: [] };
+  for (const window of windows) {
+    if (window.section === DETAILS_SECTION) groups.details.push(window);
+    else if (window.scope) groups.scopes.set(window.scope, [...(groups.scopes.get(window.scope) || []), window]);
+    else groups.general.push(window);
+  }
+  return groups;
+}
+
+function statusMessage(entity) {
+  return entity?.messageCode ? describe(entity.messageCode) : '';
+}
+
+function signInButton(provider, status) {
+  const button = element('button', 'launch-button', status === 'app_closed' ? t('launchAppBtn') : t('loginProviderBtn', { name: provider.name }));
+  button.addEventListener('click', () => action(async () => {
+    await window.vibe.signIn(provider.id);
+    toast(t('signInOpened', { tool: provider.name }));
+  }));
+  return button;
+}
+
+function cardHeader(provider, accounts, current) {
   const heading = element('div', 'provider-heading');
   const brand = element('div', 'provider-brand');
-  const avatar = element('span', 'brand-avatar ' + provider.id + '-avatar');
-  const avatars = { claude: '◈', cursor: '✦', codex: '✺', antigravity: '▲' };
-  avatar.textContent = avatars[provider.id] || '●';
-  brand.append(avatar, element('h2', '', provider.name));
-  heading.append(brand);
-
-  const accounts = provider.accounts || [];
-  let current = accounts.find(a => a.id === selection.get(provider.id)) || accounts.find(a => a.primary) || accounts[0];
-  const headerMeta = element('div', 'provider-header-meta');
-  if (current?.plan) headerMeta.append(element('span', 'plan-pill', current.plan.toUpperCase()));
-
+  brand.append(element('span', `brand-avatar ${provider.id}-avatar`, providerById(provider.id).glyph), element('h2', '', provider.name));
+  const meta = element('div', 'provider-header-meta');
+  if (current?.plan) meta.append(element('span', 'plan-pill', current.plan.toUpperCase()));
   if (accounts.length > 1) {
-    const select = element('select', 'account-picker');
-    select.setAttribute('aria-label', `${provider.name} ${t('accountLabelPlaceholder')}`);
-    for (const account of accounts) {
-      const option = element('option', '', `${account.primary ? '★ ' : ''}${localizeAccountLabel(account.label, provider.name)}`);
-      option.value = account.id;
-      select.append(option);
-    }
-    select.value = current.id;
-    select.addEventListener('change', () => {
-      selection.set(provider.id, select.value);
-      render(state);
-    });
-    headerMeta.append(select);
-  } else if (current && current.label) {
-    const displayLabel = localizeAccountLabel(current.label, provider.name);
-    if (displayLabel !== t('defaultAccount') && displayLabel !== 'Mevcut hesap' && displayLabel !== 'Default account') {
-      headerMeta.append(element('span', 'account-pill', displayLabel));
-    }
+    const picker = element('select', 'account-picker');
+    picker.setAttribute('aria-label', `${provider.name} ${t('accountLabelPlaceholder')}`);
+    fillSelect(picker, accounts.map(a => [a.id, `${a.primary ? '★ ' : ''}${accountName(a)}`]), current.id);
+    picker.addEventListener('change', () => { selectedAccount.set(provider.id, picker.value); render(state); });
+    meta.append(picker);
+  } else if (current && current.labelKey !== 'defaultAccount') {
+    meta.append(element('span', 'account-pill', accountName(current)));
   }
-  heading.append(headerMeta);
-  section.append(heading);
+  heading.append(brand, meta);
+  return heading;
+}
 
-  if (current) {
-    const scopes = new Map();
-    const regularWindows = [];
-    const spendingWindows = [];
+function providerCard(provider) {
+  const section = element('section', 'provider');
+  section.dataset.provider = provider.id;
+  const accounts = provider.accounts || [];
+  const current = accounts.find(a => a.id === selectedAccount.get(provider.id)) || accounts.find(a => a.primary) || accounts[0];
+  section.append(cardHeader(provider, accounts, current));
 
-    for (const window of current.windows || []) {
-      if (provider.id === 'cursor' && window.id === 'plan:total') {
-        spendingWindows.push({
-          ...window,
-          detail: t('totalQuotaDesc')
-        });
-      } else if (window.valueText) {
-        spendingWindows.push(window);
-      } else if (window.scope) {
-        if (!scopes.has(window.scope)) scopes.set(window.scope, []);
-        scopes.get(window.scope).push(window);
-      } else {
-        regularWindows.push(window);
-      }
+  if (!current) {
+    section.append(element('div', 'empty', statusMessage(provider) || t('status_no_accounts')), signInButton(provider));
+  } else {
+    const windows = current.windows || [];
+    const groups = groupWindows(windows);
+    // Account-wide limits first; per-model scopes follow under their own headings.
+    if (groups.general.length) section.append(quotaGrid(groups.general));
+    for (const [scope, scoped] of groups.scopes) section.append(element('div', 'scope-title', scope), quotaGrid(scoped));
+    if (groups.details.length) {
+      const details = element('details', 'spending');
+      details.append(element('summary', '', t('spendingDetails')), ...groups.details.map(w => quotaCell(w, true)));
+      section.append(details);
     }
-
-    if (scopes.size > 0) {
-      for (const [scopeName, scopeWindows] of scopes) {
-        section.append(element('div', 'scope-title', scopeName));
-        const grid = element('div', 'quota-grid');
-        for (const window of scopeWindows) grid.append(renderQuotaCell(window, scopeWindows.length === 1));
-        section.append(grid);
-      }
-    }
-
-    if (regularWindows.length > 0) {
-      const grid = element('div', 'quota-grid');
-      for (const window of regularWindows) grid.append(renderQuotaCell(window, regularWindows.length === 1));
-      section.append(grid);
-    }
-
-    if (spendingWindows.length > 0) {
-      const spending = element('details', 'spending');
-      spending.append(element('summary', '', t('spendingDetails')));
-      for (const window of spendingWindows) {
-        spending.append(renderQuotaCell(window, true));
-      }
-      section.append(spending);
-    }
-
-    if (!current.windows?.length) {
-      section.append(element('div', 'empty', statusMessage(current) || statusMessage(provider) || t('noDataYet')));
-    } else if (statusMessage(current)) {
-      section.append(element('div', 'empty', statusMessage(current)));
-    }
-
+    const message = statusMessage(current) || (windows.length ? '' : t('noDataYet'));
+    if (message) section.append(element('div', 'empty', message));
     if (provider.id === 'claude' && current.configDir && current.status === 'ok') {
       const launch = element('button', 'launch-button', t('launchClaudeBtn'));
       launch.addEventListener('click', () => action(async () => {
-        const response = await window.vibe.launch({ accountId: current.id });
-        if (response?.message && !response?.canceled) toast(response.message);
+        const result = await window.vibe.launchClaude(current.id);
+        if (result.status === 'launched') toast(t('launchedTerminal', { tool: provider.name }));
       }));
       section.append(launch);
-      section.append(element('div', 'quota-description', t('safeLocalNote')));
     }
-
-    if (current.status === 'auth_missing' || current.status === 'auth_invalid' || current.status === 'app_closed' || provider.status === 'auth_missing' || !current.windows?.length) {
-      const label = current.status === 'app_closed' ? t('launchAppBtn') : t('loginProviderBtn', { name: provider.name });
-      const loginBtn = element('button', 'launch-button', label);
-      loginBtn.addEventListener('click', () => action(async () => {
-        await window.vibe.loginProvider(provider.id);
-        toast(t('loginProviderBtn', { name: provider.name }));
-      }));
-      section.append(loginBtn);
-    }
-  } else {
-    section.append(element('div', 'empty', statusMessage(provider) || t('noConnectedAccounts')));
-    const loginBtn = element('button', 'launch-button', t('loginProviderBtn', { name: provider.name }));
-    loginBtn.addEventListener('click', () => action(async () => {
-      await window.vibe.loginProvider(provider.id);
-      toast(t('loginProviderBtn', { name: provider.name }));
-    }));
-    section.append(loginBtn);
+    if (SIGN_IN_STATUSES.has(current.status) || !windows.length) section.append(signInButton(provider, current.status));
   }
 
-  const accountStatus = current?.status || provider.status;
-  const status = element('div', 'provider-status' + (accountStatus === 'stale' ? ' stale' : ''));
-  const statusText = accountStatus === 'loading' ? t('reading') : accountStatus === 'stale' ? t('refreshFailed') : accountStatus === 'ok' ? t('live') : accountStatus === 'auth_missing' ? t('noSession') : '';
-  status.append(element('span', '', VibeFormat.formatFreshness(current ? current.fetchedAt : provider.fetchedAt, accountStatus)), element('span', '', statusText));
-  section.append(status);
+  const status = current?.status || provider.status;
+  const footer = element('div', `provider-status${status === 'stale' ? ' stale' : ''}`);
+  footer.append(
+    element('span', '', formatFreshness(current ? current.fetchedAt : provider.fetchedAt, status, format())),
+    element('span', '', STATUS_TEXT[status] ? t(STATUS_TEXT[status]) : '')
+  );
+  section.append(footer);
   return section;
 }
 
 function render(snapshot) {
   if (!snapshot) return;
   state = snapshot;
+  i18n.setLanguage(snapshot.settings.language);
+  document.documentElement.lang = i18n.getCurrentLanguage();
+  applyStaticText();
 
-  const lang = snapshot.settings?.language || 'en';
-  if (window.VibeI18n) window.VibeI18n.setLanguage(lang);
-  document.documentElement.lang = lang;
-  applyI18n();
-
-  // Dynamic Provider Ordering: respect primaryProvider & providerOrder
-  const primary = snapshot.settings?.primaryProvider || 'codex';
-  const ALL_PROVIDERS = ['codex', 'claude', 'cursor', 'antigravity'];
-  const order = snapshot.settings?.providerOrder || [primary, ...ALL_PROVIDERS.filter(p => p !== primary)];
-
-  const sortedProviders = [...snapshot.providers].sort((a, b) => {
-    const indexA = order.indexOf(a.id);
-    const indexB = order.indexOf(b.id);
-    return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
-  });
-
-  // Re-rendering rebuilds the cards; keep expanded spending sections open.
-  const openSpending = new Set([...document.querySelectorAll('.provider details.spending[open]')].map(d => d.closest('.provider')?.dataset.provider));
-  $('#providers').replaceChildren(...sortedProviders.map(accountSection));
-  for (const id of openSpending) {
+  const order = normalizeProviderOrder(snapshot.settings.providerOrder);
+  const providers = [...snapshot.providers].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  // Rebuilding the cards would collapse expanded detail sections; keep them open.
+  const open = new Set([...document.querySelectorAll('.provider details.spending[open]')].map(d => d.closest('.provider').dataset.provider));
+  $('#providers').replaceChildren(...providers.map(providerCard));
+  for (const id of open) {
     const details = document.querySelector(`.provider[data-provider="${id}"] details.spending`);
     if (details) details.open = true;
   }
   $('#overall-status').textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: snapshot.providers.length });
   $('#refresh').disabled = snapshot.refreshing;
-  $('#pin').setAttribute('aria-pressed', String(!!snapshot.settings.pinned));
-  $('#refresh-label').textContent = t('autoRefresh', { n: snapshot.settings.intervalSeconds / 60 });
-  $('#platform-label').textContent = navigator.platform.toLowerCase().includes('mac') ? t('menuBar') : t('systemTray');
+  $('#pin').setAttribute('aria-pressed', String(snapshot.settings.pinned));
+  $('#refresh-label').textContent = t('autoRefresh', { time: formatDuration(snapshot.settings.intervalSeconds * 1000, i18n.getCurrentLanguage()) });
+  $('#platform-label').textContent = t(window.vibe.platform === 'darwin' ? 'menuBar' : 'systemTray');
+}
+
+// ------------------------------------------------------------------- settings
+
+const saveSettings = async patch => render(await window.vibe.saveSettings(patch));
+
+function renderProviderOrder() {
+  const order = normalizeProviderOrder(state.settings.providerOrder);
+  const grid = $('#provider-order');
+  grid.replaceChildren(...order.map((providerId, slot) => {
+    const row = element('div', 'fallback-slot');
+    const select = element('select');
+    select.id = `provider-slot-${slot}`;
+    fillSelect(select, PROVIDER_IDS.map(id => [id, providerLabel(id)]), providerId);
+    const label = element('label');
+    label.htmlFor = select.id;
+    label.append(element('span', 'fallback-slot-badge', String(slot + 1)), ` ${t('slotLabel', { n: slot + 1 })}`);
+    // Choosing a provider for a slot swaps it with the slot that held it.
+    select.addEventListener('change', () => action(async () => {
+      const next = [...order];
+      next[order.indexOf(select.value)] = order[slot];
+      next[slot] = select.value;
+      await saveSettings({ providerOrder: next });
+      renderProviderOrder();
+    }));
+    row.append(label, select);
+    return row;
+  }));
+}
+
+async function renderPreferredModels() {
+  const available = await getModels();
+  const container = $('#preferred-models');
+  container.replaceChildren(...PROVIDERS.filter(p => p.acceptsModel).map(provider => {
+    const row = element('div', 'model-dropdown-row');
+    const select = element('select', 'model-select');
+    select.id = `preferred-${provider.id}`;
+    const preferred = state.settings.preferredModels[provider.id];
+    fillSelect(select, [['', t('toolDefault')], ...(available[provider.id] || []).map(m => [m, m])], preferred || '');
+    select.addEventListener('change', () => action(async () => {
+      const { [provider.id]: _previous, ...others } = state.settings.preferredModels;
+      await saveSettings({ preferredModels: select.value ? { ...others, [provider.id]: select.value } : others });
+    }));
+    const label = element('label');
+    label.htmlFor = select.id;
+    label.append(element('span', `badge-icon-mini ${provider.id}-color`, provider.glyph), ` ${provider.name}`);
+    row.append(label, select);
+    return row;
+  }));
+}
+
+function accountRow(provider, account) {
+  const item = element('div', 'account-item');
+  const top = element('div', 'account-item-top');
+  const radioLabel = element('label', 'account-radio-label');
+  const radio = element('input');
+  radio.type = 'radio';
+  radio.name = `primary-${provider.id}`;
+  radio.checked = account.primary;
+  radio.addEventListener('change', () => action(async () => {
+    await saveSettings({ accounts: state.settings.accounts.map(a => (a.providerId === provider.id ? { ...a, primary: a.id === account.id } : a)) });
+    renderSettings();
+  }));
+  radioLabel.append(radio, element('span', `account-mini-icon ${provider.id}-color`, provider.glyph),
+    element('span', `primary-text${account.primary ? ' is-primary' : ''}`, t(account.primary ? 'primaryAccount' : 'secondaryAccount')));
+  const remove = element('button', 'remove-account', t('removeAccount'));
+  remove.setAttribute('aria-label', `${accountName(account)} ${t('removeAccount')}`);
+  remove.addEventListener('click', () => action(async () => {
+    if (!confirm(t('confirmRemoveAccount', { label: accountName(account) }))) return;
+    render(await window.vibe.dismissAccount(account.id));
+    renderSettings();
+  }));
+  top.append(radioLabel, remove);
+
+  const input = element('input', 'account-label-input');
+  input.type = 'text';
+  input.value = account.label || '';
+  input.placeholder = account.labelKey ? t(account.labelKey) : t('accountLabelPlaceholder');
+  input.maxLength = 64;
+  input.setAttribute('aria-label', `${provider.name} ${t('accountLabelPlaceholder')}`);
+  // Clearing a custom name restores the app-supplied one when there is one.
+  input.addEventListener('change', () => action(async () => {
+    const label = input.value.trim();
+    await saveSettings({ accounts: state.settings.accounts.map(a => {
+      if (a.id !== account.id) return a;
+      const { label: _old, ...rest } = a;
+      return label ? { ...rest, label } : rest;
+    }) });
+  }));
+  const inputWrap = element('div', 'account-item-input-wrap');
+  inputWrap.append(input);
+  item.append(top, inputWrap);
+  return item;
+}
+
+function renderAccounts() {
+  const list = $('#account-settings');
+  const cards = PROVIDERS.filter(p => state.settings.accounts.some(a => a.providerId === p.id)).map(provider => {
+    const accounts = state.settings.accounts.filter(a => a.providerId === provider.id);
+    const card = element('div', 'provider-settings-card');
+    card.dataset.provider = provider.id;
+    const header = element('div', 'provider-card-header');
+    const brand = element('div', 'provider-brand-inline');
+    brand.append(element('span', `brand-avatar-badge ${provider.id}-badge`, provider.glyph), element('strong', 'provider-name-text', provider.name));
+    header.append(brand, element('span', 'provider-account-count', t('accountCount', { n: accounts.length })));
+    const rows = element('div', 'provider-accounts-list');
+    rows.append(...accounts.map(account => accountRow(provider, account)));
+    card.append(header, rows);
+    return card;
+  });
+  list.replaceChildren(...cards);
+  const dismissed = state.settings.dismissedAccountIds?.length || 0;
+  if (dismissed) {
+    const restore = element('button', 'secondary-button gap-top-md', t('restoreAccountsBtn', { n: dismissed }));
+    restore.addEventListener('click', () => action(async () => {
+      render(await window.vibe.restoreDismissedAccounts());
+      renderSettings();
+    }));
+    list.append(restore);
+  }
 }
 
 async function renderSettings() {
-  if (!state) return;
-  
-  // Language
-  const langSelect = $('#language-select');
-  if (langSelect) {
-    langSelect.value = state.settings.language || 'en';
-  }
-
-  // Interval
-  const interval = $('#interval');
-  if (interval) {
-    interval.value = String(state.settings.intervalSeconds);
-    if (!interval.value) {
-      const option = element('option', '', `${state.settings.intervalSeconds}s`);
-      option.value = String(state.settings.intervalSeconds);
-      interval.append(option);
-      interval.value = option.value;
-    }
-  }
-
-  // Fallback Priority 4-Slot Setup
-  const fallbackList = [...(state.settings.fallbackOrder || ['claude', 'codex', 'cursor', 'antigravity'])];
-  for (const p of ['claude', 'codex', 'cursor', 'antigravity']) {
-    if (!fallbackList.includes(p)) fallbackList.push(p);
-  }
-  for (let i = 0; i < 4; i++) {
-    const slot = $(`#fallback-slot-${i}`);
-    if (slot) {
-      slot.value = fallbackList[i] || 'claude';
-    }
-  }
-
-  // Dynamic Model Dropdowns for Preferred Models
-  const models = await getModels();
-  const prefs = state.settings.preferredModels || {};
-  for (const p of ['codex', 'claude', 'cursor', 'antigravity']) {
-    const select = $(`#preferred-${p}`);
-    if (select) {
-      select.replaceChildren();
-      const providerModels = models[p] || [];
-      for (const m of providerModels) {
-        const opt = element('option', '', m);
-        opt.value = m;
-        select.append(opt);
-      }
-      if (prefs[p]) select.value = prefs[p];
-      else if (providerModels[0]) select.value = providerModels[0];
-    }
-  }
-
-  // Connected Accounts by Provider Card
-  const list = $('#account-settings');
-  list.replaceChildren();
-  const avatars = { claude: '◈', cursor: '✦', codex: '✺', antigravity: '▲' };
-  const providers = (state.providers || []).filter(p => state.settings.accounts.some(a => a.providerId === p.id));
-  
-  for (const p of providers) {
-    const accounts = state.settings.accounts.filter(a => a.providerId === p.id);
-    const group = element('div', 'provider-settings-card');
-    group.dataset.provider = p.id;
-
-    // Distinct Brand Header for the Provider
-    const header = element('div', 'provider-card-header');
-    const brandInline = element('div', 'provider-brand-inline');
-    const badge = element('span', `brand-avatar-badge ${p.id}-badge`, avatars[p.id] || '●');
-    const title = element('strong', 'provider-name-text', p.name);
-    brandInline.append(badge, title);
-    const countBadge = element('span', 'provider-account-count', t('accountCount', { n: accounts.length }));
-    header.append(brandInline, countBadge);
-    group.append(header);
-
-    const accountsList = element('div', 'provider-accounts-list');
-    for (const account of accounts) {
-      const item = element('div', 'account-item');
-
-      // Top Line: [Radio] [Icon] Primary account ... [✕ Remove]
-      const topRow = element('div', 'account-item-top');
-      const labelWrap = element('label', 'account-radio-label');
-      const radio = element('input');
-      radio.type = 'radio';
-      radio.name = `primary-${p.id}`;
-      radio.checked = !!account.primary;
-      radio.style.accentColor = `var(--accent-${p.id})`;
-      radio.addEventListener('change', () => action(async () => {
-        await window.vibe.saveSettings({
-          accounts: state.settings.accounts.map(a => a.providerId === p.id ? { ...a, primary: a.id === account.id } : a)
-        });
-        renderSettings();
-      }));
-
-      const miniIcon = element('span', `account-mini-icon ${p.id}-color`, avatars[p.id] || '●');
-      const primaryText = element('span', `primary-text${account.primary ? ' is-primary' : ''}`, account.primary ? t('primaryAccount') : t('secondaryAccount'));
-      labelWrap.append(radio, miniIcon, primaryText);
-      topRow.append(labelWrap);
-
-      const remove = element('button', 'remove-account', t('removeAccount'));
-      remove.setAttribute('aria-label', `${account.label} ${t('removeAccount')}`);
-      remove.title = t('removeAccount');
-      remove.addEventListener('click', () => action(async () => {
-        if (confirm(t('confirmRemoveAccount', { label: account.label }))) {
-          const next = await window.vibe.dismissAccount(account.id);
-          if (next) render(next);
-          renderSettings();
-        }
-      }));
-      topRow.append(remove);
-      item.append(topRow);
-
-      // Bottom Line: Full width input
-      const inputWrap = element('div', 'account-item-input-wrap');
-      const input = element('input', 'account-label-input');
-      input.type = 'text';
-      input.value = account.label;
-      input.maxLength = 64;
-      input.placeholder = t('accountLabelPlaceholder');
-      input.setAttribute('aria-label', `${p.name} ${t('accountLabelPlaceholder')}`);
-      input.addEventListener('change', () => action(async () => {
-        await window.vibe.saveSettings({
-          accounts: state.settings.accounts.map(a => a.id === account.id ? { ...a, label: input.value } : a)
-        });
-      }));
-      inputWrap.append(input);
-      item.append(inputWrap);
-
-      accountsList.append(item);
-    }
-    group.append(accountsList);
-    list.append(group);
-  }
-
-  if (state.settings.dismissedAccountIds?.length) {
-    const restoreBtn = element('button', 'secondary-button', t('restoreAccountsBtn', { n: state.settings.dismissedAccountIds.length }));
-    restoreBtn.style.marginTop = '15px';
-    restoreBtn.addEventListener('click', () => action(async () => {
-      const next = await window.vibe.restoreDismissedAccounts();
-      if (next) render(next);
-      renderSettings();
-    }));
-    list.append(restoreBtn);
-  }
+  fillSelect($('#language-select'), i18n.SUPPORTED_LANGUAGES.map(code => [code, i18n.I18N[code].name]), state.settings.language);
+  const locale = i18n.getCurrentLanguage();
+  fillSelect($('#interval'), INTERVAL_CHOICES_SECONDS.map(s => [String(s), new Intl.DurationFormat(locale, { style: 'long' }).format({ minutes: s / 60 })]), String(state.settings.intervalSeconds));
+  renderProviderOrder();
+  renderAccounts();
+  await renderPreferredModels();
 }
 
-let currentHandoverProjectDir = '';
+$('#settings-button').addEventListener('click', () => action(async () => {
+  $('#settings-message').textContent = '';
+  await renderSettings();
+  $('#settings-dialog').showModal();
+}));
+$('#language-select').addEventListener('change', event => action(async () => {
+  await saveSettings({ language: event.target.value });
+  await renderSettings();
+}));
+$('#interval').addEventListener('change', event => action(() => saveSettings({ intervalSeconds: Number(event.target.value) })));
+$('#add-profile').addEventListener('click', () => action(async () => {
+  const { status } = await window.vibe.addClaudeProfile();
+  const messages = { added: 'profileAdded', exists: 'profileExists', missing_credentials: 'profileMissingCredentials' };
+  if (messages[status]) showSettingsMessage(t(messages[status]));
+  await renderSettings();
+}));
 
-function formatTimeAgo(ts) {
-  if (!ts) return '';
-  const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
-  if (mins < 60) return mins === 0 ? t('justNow') : t('minsAgo', { n: mins });
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return t('labelNHours', { n: hours });
-  return `${Math.floor(hours / 24)}d ago`;
+// ------------------------------------------------------------------- handover
+
+function sessionLabel(session, showProvider) {
+  const { locale } = format();
+  const parts = [
+    formatAge(session.updatedAt, format()),
+    session.turnCount ? t('turnsCount', { n: session.turnCount }) : '',
+    session.model,
+    session.sizeBytes ? new Intl.NumberFormat(locale, { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 }).format(session.sizeBytes / BYTES_PER_MEGABYTE) : ''
+  ].filter(Boolean);
+  return `${showProvider ? `${providerLabel(session.providerId)} · ` : ''}${session.title} (${parts.join(' · ')})`;
 }
 
 async function refreshHandoverSessions() {
-  const sessionSelect = $('#handover-session-select');
-  if (!sessionSelect) return;
-  sessionSelect.replaceChildren();
-
-  const defaultOpt = element('option', '', t('mostRecentSession'));
-  defaultOpt.value = 'auto';
-  sessionSelect.append(defaultOpt);
-
-  const projectDir = $('#handover-project-input')?.value || currentHandoverProjectDir;
-  const fromProvider = $('#handover-from')?.value || 'auto';
-
-  if (!projectDir) return;
-
-  try {
-    const sessions = await window.vibe.listSessions({ providerId: fromProvider, projectDir });
-    if (sessions && sessions.length > 0) {
-      const providerBadges = {
-        claude: '◈ Claude',
-        codex: '✺ Codex',
-        cursor: '✦ Cursor',
-        antigravity: '▲ Antigravity'
-      };
-      for (const s of sessions) {
-        const timeStr = formatTimeAgo(s.updatedAt);
-        const turnStr = s.turnCount ? ` · ${s.turnCount} turns` : '';
-        const sizeStr = s.sizeBytes ? ` · ${(s.sizeBytes / 1024 / 1024).toFixed(1)}MB` : '';
-        const badge = providerBadges[s.providerId] || (s.providerId ? s.providerId.toUpperCase() : '');
-        const prefix = (fromProvider === 'auto' && badge) ? `[${badge}] ` : '';
-        const modelStr = s.model ? ` · ${s.model}` : '';
-        const label = `${prefix}${s.title} (${timeStr}${turnStr}${modelStr}${sizeStr})`;
-        const opt = element('option', '', label);
-        opt.value = s.id;
-        opt.dataset.provider = s.providerId || '';
-        sessionSelect.append(opt);
-      }
-    } else {
-      const emptyOpt = element('option', '', t('noSessionsFound'));
-      emptyOpt.disabled = true;
-      sessionSelect.append(emptyOpt);
-    }
-  } catch {}
-}
-
-async function updateHandoverModelDropdown(targetProvider) {
-  const models = await getModels();
-  const select = $('#handover-model');
-  if (!select) return;
-  select.replaceChildren();
-  const providerModels = models[targetProvider] || [];
-  const preferred = state?.settings?.preferredModels?.[targetProvider];
-  for (const m of providerModels) {
-    const opt = element('option', '', m);
-    opt.value = m;
-    select.append(opt);
+  const select = $('#handover-session-select');
+  const fromProvider = $('#handover-from').value;
+  select.replaceChildren(option(AUTO, t('mostRecentSession')));
+  if (!handoverProjectDir) return;
+  const sessions = await window.vibe.listSessions({ providerId: fromProvider, projectDir: handoverProjectDir });
+  if (!sessions.length) {
+    const empty = option('', t('noSessionsFound'));
+    empty.disabled = true;
+    select.append(empty);
+    return;
   }
-  select.value = preferred || providerModels[0] || '';
-}
-
-// Handover Modal Events
-$('#handover-btn')?.addEventListener('click', async () => {
-  if (!currentHandoverProjectDir) {
-    try {
-      currentHandoverProjectDir = (await window.vibe.getDefaultProjectDir?.()) || '';
-    } catch {
-      currentHandoverProjectDir = '';
-    }
-  }
-  const input = $('#handover-project-input');
-  if (input && currentHandoverProjectDir) input.value = currentHandoverProjectDir;
-
-  const target = $('#handover-to')?.value || 'codex';
-  await updateHandoverModelDropdown(target);
-  await refreshHandoverSessions();
-  $('#handover-dialog')?.showModal();
-});
-
-$('#handover-project-input')?.addEventListener('change', async (e) => {
-  currentHandoverProjectDir = e.target.value.trim();
-  await refreshHandoverSessions();
-});
-
-$('#handover-browse-btn')?.addEventListener('click', async () => {
-  const dir = await window.vibe.selectDirectory({ defaultPath: currentHandoverProjectDir });
-  if (dir) {
-    currentHandoverProjectDir = dir;
-    const input = $('#handover-project-input');
-    if (input) input.value = dir;
-    await refreshHandoverSessions();
-  }
-});
-
-$('#handover-from')?.addEventListener('change', async (e) => {
-  const from = e.target.value;
-  const toSelect = $('#handover-to');
-  if (toSelect) {
-    if (from === 'claude' && toSelect.value === 'claude') toSelect.value = 'codex';
-    else if (from === 'codex' && toSelect.value === 'codex') toSelect.value = 'claude';
-    await updateHandoverModelDropdown(toSelect.value);
-  }
-  await refreshHandoverSessions();
-});
-
-$('#handover-to')?.addEventListener('change', async (e) => {
-  await updateHandoverModelDropdown(e.target.value);
-});
-
-$('#handover-cancel-btn')?.addEventListener('click', () => {
-  $('#handover-dialog')?.close();
-});
-
-$('#handover-execute-btn')?.addEventListener('click', () => action(async () => {
-  const projectDir = $('#handover-project-input')?.value || currentHandoverProjectDir;
-  const fromProvider = $('#handover-from')?.value || 'auto';
-  const toProvider = $('#handover-to')?.value || 'codex';
-  const targetModel = $('#handover-model')?.value || '';
-  const sessionOpt = $('#handover-session-select')?.selectedOptions?.[0];
-  const sessionId = sessionOpt?.value || 'auto';
-  const sessionProvider = sessionId !== 'auto' ? sessionOpt?.dataset?.provider || undefined : undefined;
-  $('#handover-dialog')?.close();
-  const res = await window.vibe.executeHandover({ projectDir, fromProvider, toProvider, targetModel, sessionId, sessionProvider });
-  if (res?.message) toast(res.message);
-}));
-
-// Smart Launch Modal Events
-$('#smart-launch-btn')?.addEventListener('click', () => action(async () => {
-  const preview = await window.vibe.previewSmartLaunch();
-  currentSmartPreview = preview;
-  if (preview) {
-    $('#sl-provider').textContent = `${preview.providerName} ${preview.isFallback ? t('fallbackActive') : t('primaryChoice')}`;
-    $('#sl-quota').textContent = typeof preview.remaining === 'number' ? t('percentAvailable', { n: preview.remaining }) : t('readyToUse');
-    $('#sl-model').textContent = `${preview.recommendedModel} (${preview.tierName || 'Auto Tier'})`;
-    $('#sl-reason').textContent = preview.reason || 'Quotas and priority order analyzed.';
-    $('#smart-launch-dialog')?.showModal();
-  }
-}));
-
-$('#sl-cancel-btn')?.addEventListener('click', () => {
-  $('#smart-launch-dialog')?.close();
-});
-
-$('#sl-confirm-btn')?.addEventListener('click', () => action(async () => {
-  $('#smart-launch-dialog')?.close();
-  const res = await window.vibe.smartLaunch({ targetModel: currentSmartPreview?.recommendedModel });
-  if (res?.message) toast(res.message);
-}));
-
-// Settings Controls
-$('#language-select')?.addEventListener('change', e => action(async () => {
-  const lang = e.target.value;
-  if (window.VibeI18n) window.VibeI18n.setLanguage(lang);
-  document.documentElement.lang = lang;
-  applyI18n();
-  const next = await window.vibe.saveSettings({ language: lang });
-  if (next) render(next);
-  renderSettings();
-}));
-
-for (let i = 0; i < 4; i++) {
-  $(`#fallback-slot-${i}`)?.addEventListener('change', e => {
-    action(async () => {
-      const selectedValue = e.target.value;
-      let order = [...(state.settings.fallbackOrder || ['claude', 'codex', 'cursor', 'antigravity'])];
-      for (const p of ['claude', 'codex', 'cursor', 'antigravity']) {
-        if (!order.includes(p)) order.push(p);
-      }
-      const existingIndex = order.indexOf(selectedValue);
-      if (existingIndex !== -1 && existingIndex !== i) {
-        const temp = order[i];
-        order[i] = selectedValue;
-        order[existingIndex] = temp;
-      } else {
-        order[i] = selectedValue;
-      }
-      for (let j = 0; j < 4; j++) {
-        const slot = $(`#fallback-slot-${j}`);
-        if (slot) slot.value = order[j];
-      }
-      const next = await window.vibe.saveSettings({
-        fallbackOrder: order,
-        providerOrder: order,
-        primaryProvider: order[0]
-      });
-      if (next) render(next);
-    });
-  });
-}
-
-for (const p of ['codex', 'claude', 'cursor', 'antigravity']) {
-  $(`#preferred-${p}`)?.addEventListener('change', () => action(async () => {
-    const currentPrefs = { ...(state?.settings?.preferredModels || {}) };
-    currentPrefs[p] = $(`#preferred-${p}`).value;
-    const next = await window.vibe.saveSettings({ preferredModels: currentPrefs });
-    if (next) render(next);
+  select.append(...sessions.map(session => {
+    const node = option(session.id, sessionLabel(session, fromProvider === AUTO));
+    node.dataset.provider = session.providerId;
+    return node;
   }));
 }
+
+async function refreshHandoverModels() {
+  const target = $('#handover-to').value;
+  const accepts = providerById(target).acceptsModel;
+  $('#handover-model-field').hidden = !accepts;
+  if (!accepts) return;
+  const available = (await getModels())[target] || [];
+  fillSelect($('#handover-model'), [['', t('toolDefault')], ...available.map(m => [m, m])], state.settings.preferredModels[target] || '');
+}
+
+// A task is handed to a different tool: never offer the source as the target.
+function syncHandoverTarget() {
+  const from = $('#handover-from').value;
+  const to = $('#handover-to');
+  if (to.value === from) to.value = PROVIDER_IDS.find(id => id !== from);
+}
+
+function setHandoverProject(dir) {
+  handoverProjectDir = dir;
+  $('#handover-project-input').value = dir;
+}
+
+$('#handover-btn').addEventListener('click', () => action(async () => {
+  if (!handoverProjectDir) setHandoverProject(await window.vibe.defaultProjectDir());
+  fillSelect($('#handover-from'), [[AUTO, t('autoDetectSession')], ...PROVIDER_IDS.map(id => [id, providerLabel(id)])], AUTO);
+  fillSelect($('#handover-to'), PROVIDER_IDS.map(id => [id, providerLabel(id)]), normalizeProviderOrder(state.settings.providerOrder)[0]);
+  await refreshHandoverModels();
+  await refreshHandoverSessions();
+  $('#handover-dialog').showModal();
+}));
+$('#handover-browse-btn').addEventListener('click', () => action(async () => {
+  const dir = await window.vibe.selectDirectory({ defaultPath: handoverProjectDir });
+  if (!dir) return;
+  setHandoverProject(dir);
+  await refreshHandoverSessions();
+}));
+$('#handover-from').addEventListener('change', () => action(async () => {
+  syncHandoverTarget();
+  await refreshHandoverModels();
+  await refreshHandoverSessions();
+}));
+$('#handover-to').addEventListener('change', () => action(refreshHandoverModels));
+$('#handover-cancel-btn').addEventListener('click', () => $('#handover-dialog').close());
+$('#handover-execute-btn').addEventListener('click', () => action(async () => {
+  const session = $('#handover-session-select').selectedOptions[0];
+  const sessionId = session?.value || AUTO;
+  $('#handover-dialog').close();
+  const result = await window.vibe.executeHandover({
+    projectDir: handoverProjectDir,
+    fromProvider: $('#handover-from').value,
+    toProvider: $('#handover-to').value,
+    targetModel: $('#handover-model-field').hidden ? undefined : $('#handover-model').value || undefined,
+    sessionId,
+    sessionProvider: sessionId === AUTO ? undefined : session.dataset.provider
+  });
+  toast(t(result.mode === 'app' ? 'handoverApp' : 'handoverTerminal', { tool: toolLabel(result.to, result.model) }));
+}));
+
+// --------------------------------------------------------------- smart launch
+
+function smartReason(preview) {
+  if (!preview.verified) return t('reasonUnverified');
+  return t(preview.isFallback ? 'reasonFallback' : 'reasonPrimary');
+}
+
+$('#smart-launch-btn').addEventListener('click', () => action(async () => {
+  smartPreview = await window.vibe.previewSmartLaunch();
+  $('#sl-provider').textContent = providerById(smartPreview.providerId).name;
+  $('#sl-quota').textContent = smartPreview.headroomPercent === null
+    ? t('quotaUnverified')
+    : t('percentRemaining', { n: formatPercent(smartPreview.headroomPercent, i18n.getCurrentLanguage()) });
+  $('#sl-model').textContent = smartPreview.model || t('toolDefault');
+  $('#sl-reason').textContent = smartReason(smartPreview);
+  $('#smart-launch-dialog').showModal();
+}));
+$('#sl-cancel-btn').addEventListener('click', () => $('#smart-launch-dialog').close());
+$('#sl-confirm-btn').addEventListener('click', () => action(async () => {
+  $('#smart-launch-dialog').close();
+  const result = await window.vibe.smartLaunch({ targetModel: smartPreview?.model || undefined });
+  if (result.status === 'launched') toast(t(result.mode === 'app' ? 'launchedApp' : 'launchedTerminal', { tool: toolLabel(result.to, result.model) }));
+}));
+
+// ------------------------------------------------------------------- titlebar
 
 $('#refresh').addEventListener('click', () => action(() => window.vibe.refresh()));
 $('#pin').addEventListener('click', () => action(() => window.vibe.pin()));
 $('#hide').addEventListener('click', () => action(() => window.vibe.hide()));
 
-$('#settings-button').addEventListener('click', async () => {
-  if (state) {
-    const el = $('#settings-message');
-    if (el) el.textContent = '';
-    await renderSettings();
-    $('#settings-dialog').showModal();
-  }
-});
-$('#interval').addEventListener('change', event => action(() => window.vibe.saveSettings({ intervalSeconds: Number(event.target.value) })));
-$('#add-profile').addEventListener('click', () => action(async () => {
-  const response = await window.vibe.addClaudeProfile();
-  if (response?.message && !response?.canceled && response.message !== 'İptal edildi.') {
-    showSettingsMessage(response.message);
-  }
-  renderSettings();
-}));
-
+applyStaticText();
 window.vibe.onSnapshot(render);
-// Countdowns and "x min ago" are relative to now; keep them current between snapshots.
-setInterval(() => { if (state && !document.hidden) render(state); }, 30000);
+setInterval(() => { if (state && !document.hidden) render(state); }, CLOCK_TICK_MS);
 action(async () => render(await window.vibe.snapshot()));

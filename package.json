@@ -6,14 +6,18 @@
   "license": "UNLICENSED",
   "private": true,
   "main": "src/main.cjs",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
     "cli": "node src/cli.cjs",
     "watch": "node src/cli.cjs watch",
-    "smoke": "node scripts/smoke.cjs",
     "build:win": "electron-builder --win dir zip",
-    "build:mac": "electron-builder --mac dmg zip"
+    "build:mac": "electron-builder --mac dmg zip",
+    "ui-check": "electron scripts/ui-check/main.cjs",
+    "icons": "node scripts/icons.cjs"
   },
   "devDependencies": {
     "electron": "44.8.0",
@@ -29,11 +33,9 @@
     "files": [
       "src/**/*",
       "assets/*",
-      "scripts/verification/*",
       "package.json"
     ],
     "asarUnpack": [
-      "scripts/verification/*.ps1",
       "src/launchers/*"
     ],
     "win": {
@@ -50,8 +52,5 @@
       ],
       "category": "public.app-category.developer-tools"
     }
-  },
-  "engines": {
-    "node": "^22.15.0 || >=24.0.0"
   }
 }

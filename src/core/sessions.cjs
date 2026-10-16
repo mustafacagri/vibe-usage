@@ -11,7 +11,8 @@ const path = require('node:path');
 const zlib = require('node:zlib');
 const { pathToFileURL } = require('node:url');
 
-const PROVIDERS = ['claude', 'codex', 'cursor', 'antigravity'];
+const { PROVIDER_IDS, AUTO } = require('../catalog.cjs');
+const { AppError } = require('./errors.cjs');
 
 function sanitizeText(str) {
   if (typeof str !== 'string') return '';
@@ -459,22 +460,22 @@ const LISTERS = { claude: listClaude, codex: listCodex, cursor: listCursor, anti
 const READERS = { claude: readClaude, codex: readCodex, cursor: readCursor, antigravity: readAntigravity };
 
 async function listProviderSessions(providerId, projectDir, homeDir) {
-  const providers = providerId === 'auto' ? PROVIDERS : [providerId];
-  if (!providers.every(p => LISTERS[p])) throw Error(`Bilinmeyen sağlayıcı: ${providerId}`);
+  const providers = providerId === AUTO ? PROVIDER_IDS : [providerId];
+  if (!providers.every(p => LISTERS[p])) throw new AppError('invalid_provider');
   const results = await Promise.allSettled(providers.map(p => Promise.resolve().then(() => LISTERS[p](projectDir, homeDir))));
   return results.flatMap(r => (r.status === 'fulfilled' ? r.value : [])).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 // Reads one session. With sessionId 'auto' the newest session of the provider(s) is used.
 // Returns null when nothing matches; never substitutes another provider's session.
-async function readSession({ providerId = 'auto', sessionId = 'auto', projectDir, homeDir }) {
-  if (!sessionId || sessionId === 'auto') {
+async function readSession({ providerId = AUTO, sessionId = AUTO, projectDir, homeDir }) {
+  if (!sessionId || sessionId === AUTO) {
     const [latest] = await listProviderSessions(providerId, projectDir, homeDir);
     if (!latest) return null;
     providerId = latest.providerId;
     sessionId = latest.id;
   }
-  const providers = providerId === 'auto' ? PROVIDERS : [providerId];
+  const providers = providerId === AUTO ? PROVIDER_IDS : [providerId];
   for (const p of providers) {
     const t = await Promise.resolve().then(() => READERS[p](projectDir, homeDir, sessionId)).catch(() => null);
     if (t) return t;
@@ -482,4 +483,4 @@ async function readSession({ providerId = 'auto', sessionId = 'auto', projectDir
   return null;
 }
 
-module.exports = { PROVIDERS, sanitizeText, listProviderSessions, readSession, blobHasWorkspace, workspaceUris };
+module.exports = { listProviderSessions, readSession };

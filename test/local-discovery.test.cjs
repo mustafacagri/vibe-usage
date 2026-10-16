@@ -14,7 +14,7 @@ test('raw Antigravity summary preserves direct/nested/oneof and unknown fraction
     { bucketId: 'missing', remaining: { case: 'unknown', value: 1 } },
   ] }] }, userStatus: { email: 'private-fixture@example.invalid' } });
   assert.deepEqual(result.windows.map(w => w.remainingPercent), [100, 25, 0, null]);
-  assert.equal(result.windows[1].label, '5 hours');
+  assert.deepEqual([result.windows[1].labelKey, result.windows[1].labelParams], ['labelNHours', { n: 5 }]);
   assert.equal(result.windows[2].active, false);
   assert.equal(result.windows[3].resetsAt, null);
   assert.equal(JSON.stringify(result).includes('private-fixture'), false);

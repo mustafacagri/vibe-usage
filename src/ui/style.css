@@ -286,9 +286,6 @@ main {
   transform: none;
 }
 
-.column-label {
-  display: none;
-}
 
 /* Provider Cards */
 #providers {
@@ -860,19 +857,23 @@ dialog header h2 {
 }
 
 .provider-settings-card[data-provider="claude"] {
-  border-left-color: var(--accent-claude);
+  --provider-accent: var(--accent-claude);
+  border-left-color: var(--provider-accent);
 }
 
 .provider-settings-card[data-provider="codex"] {
-  border-left-color: var(--accent-codex);
+  --provider-accent: var(--accent-codex);
+  border-left-color: var(--provider-accent);
 }
 
 .provider-settings-card[data-provider="cursor"] {
-  border-left-color: var(--accent-cursor);
+  --provider-accent: var(--accent-cursor);
+  border-left-color: var(--provider-accent);
 }
 
 .provider-settings-card[data-provider="antigravity"] {
-  border-left-color: var(--accent-antigravity);
+  --provider-accent: var(--accent-antigravity);
+  border-left-color: var(--provider-accent);
 }
 
 .provider-card-header {
@@ -1207,13 +1208,6 @@ dialog header h2 {
   border-radius: 4px;
 }
 
-.preferred-models-section {
-  margin: 14px 0 16px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 10px;
-  border: 1px solid var(--border-subtle);
-}
 
 .model-dropdown-row {
   display: flex;
@@ -1287,3 +1281,6 @@ dialog header h2 {
   .summary { flex-wrap: wrap; }
   .summary-actions { margin-left: auto; }
 }
+
+/* Primary-account radios take the provider's accent colour. */
+.account-radio-label input[type="radio"] { accent-color: var(--provider-accent); }

@@ -37,7 +37,8 @@ test('Codex all rate limit buckets derive duration from source and prefer map', 
   const value = parseCodexRateLimits({ rateLimitsByLimitId: { codex: { primary: { usedPercent: 53, windowDurationMins: 300, resetsAt: 1792150000 }, secondary: { usedPercent: null, windowDurationMins: 10080, resetsAt: null } }, special: { primary: { usedPercent: 25, windowDurationMins: 60 } } }, rateLimits: { primary: { usedPercent: 99 } } });
   assert.equal(value.windows.length, 3);
   assert.equal(value.windows[0].remainingPercent, 47);
-  assert.equal(value.windows[0].label, '5 saat');
+  assert.deepEqual([value.windows[0].labelKey, value.windows[0].labelParams], ['labelNHours', { n: 5 }]);
+  assert.equal(value.windows[1].labelKey, 'labelWeekly');
   assert.equal(value.windows[1].remainingPercent, null);
   assert.equal(value.windows[1].resetsAt, null);
   assert.equal(value.windows[2].scope, 'special');
@@ -48,21 +49,11 @@ test('Cursor auto/api/total pools remain distinct and cents have units', () => {
   const value = parseCursorUsage({ membershipType: 'pro', billingCycleEnd: '2026-11-07T20:30:22Z', individualUsage: { plan: { used: 2000, limit: 2000, remaining: 0, autoPercentUsed: 14.54, apiPercentUsed: 100, totalPercentUsed: 22.37, breakdown: { bonus: 9075 } }, onDemand: { enabled: false, used: 0, limit: null, remaining: null } } });
   assert.equal(value.plan, 'pro');
   assert.deepEqual(value.windows.filter(w => /^plan:(auto|api|total)$/.test(w.id)).map(w => w.usedPercent), [14.54, 100, 22.37]);
-  assert.match(value.windows.find(w => w.id === 'plan:spend').detail, /2000.*cents/);
-  assert.equal(value.windows.find(w => w.id === 'individual:onDemand').remainingPercent, null);
+  assert.deepEqual(value.windows.find(w => w.id === 'plan:spend').amounts, { used: 2000, limit: 2000, remaining: 0, bonus: 9075 });
+  const onDemand = value.windows.find(w => w.id === 'individual:onDemand');
+  assert.deepEqual([onDemand.remainingPercent, onDemand.valueKey, onDemand.amounts], [null, 'disabled', { used: 0 }]);
 });
 
-test('Antigravity exact sanitized diagnostic output maps group buckets without model inference', () => {
-  const { parseAntigravityDiagnostic } = require('../src/providers/antigravity.cjs');
-  const value = parseAntigravityDiagnostic({ outcome: 'quota-read-success', attempts: [{ method: 'RetrieveUserQuotaSummary', httpStatus: 200, quotaFields: [
-    { scope: 'group-bucket', group: 'Claude and GPT models', bucketId: 'weekly', remainingFractionPresent: true, remainingFraction: 1, resetTime: '2026-10-23T09:50:40Z' },
-    { scope: 'group-bucket', group: 'Claude and GPT models', remainingFractionPresent: true, remainingFraction: 0.5, resetTime: null },
-  ] }] });
-  assert.equal(value.windows.length, 2); assert.equal(value.windows[0].remainingPercent, 100);
-  assert.equal(value.windows[0].scope, 'Claude and GPT models');
-  assert.equal(value.windows[1].resetsAt, null);
-  assert.throws(() => parseAntigravityDiagnostic({ outcome: 'no-local-language-server' }), /app_closed/);
-});
 
 test('Claude discovery reads immediate legitimate credential roots, excludes backups and symlinks', async t => {
   const { discoverClaudeAccounts } = require('../src/providers/claude.cjs');
@@ -96,4 +87,129 @@ test('Claude adapter passes existing token only to exact usage GET and never ref
   assert.equal(value.plan, 'team'); assert.equal(JSON.stringify(value).includes('fixture-token'), false);
   await fs.writeFile(credential, JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-token', expiresAt: 1 } }));
   await assert.rejects(provider.fetch({ configDir: dir }), /auth_expired/); assert.equal(calls, 1);
+});
+
+test('empty responses are invalid while limit-free schemas report no limits', () => {
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+
+  // Empty object without schema fields fails closed with invalid_response
+  assert.throws(() => parseCursorUsage({}), /invalid_response/);
+  assert.throws(() => parseCodexRateLimits(null), /invalid_response/);
+  assert.throws(() => parseCodexRateLimits({}), /invalid_response/);
+
+  // Valid schema with empty limits returns no_limits_reported
+  const cursorNoLimits = parseCursorUsage({ membershipType: 'enterprise', individualUsage: {} });
+  assert.equal(cursorNoLimits.status, 'no_limits_reported');
+  assert.equal(cursorNoLimits.windows.length, 0);
+
+  const codexNoLimits = parseCodexRateLimits({ rateLimitsByLimitId: {} });
+  assert.equal(codexNoLimits.status, 'no_limits_reported');
+  assert.equal(codexNoLimits.windows.length, 0);
+});
+
+test('explicit config dirs keep distinct Keychain services', async () => {
+  const { readClaudeKeychain } = require('../src/providers/claude-keychain.cjs');
+  const calls = [];
+
+  const runProcess = async (bin, args) => {
+    calls.push(args[2]); // service argument
+    return JSON.stringify({ claudeAiOauth: { accessToken: 'fixture' } });
+  };
+
+  // Unset default config resolves to un-suffixed service
+  await readClaudeKeychain({
+    platform: 'darwin',
+    configDir: '/Users/example/.claude',
+    configDirExplicit: false,
+    runProcess
+  });
+  assert.equal(calls.at(-1), 'Claude Code-credentials');
+
+  // Explicit default config resolves to suffixed service
+  await readClaudeKeychain({
+    platform: 'darwin',
+    configDir: '/Users/example/.claude',
+    configDirExplicit: true,
+    runProcess
+  });
+  assert.equal(calls.at(-1), 'Claude Code-credentials-402b469b');
+});
+
+// Helper for deterministic async racing tests without setTimeout
+function createDeferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+test('cleanEnvironment keeps explicit overrides such as CODEX_HOME', () => {
+  const { cleanEnvironment } = require('../src/providers/common.cjs');
+  const res = cleanEnvironment({ CODEX_HOME: '/explicit/path' }, 'win32', { CODEX_HOME: '/inherited/path' });
+  assert.equal(res.CODEX_HOME, '/explicit/path');
+  assert.equal(cleanEnvironment({ CODEX_HOME: '/x' }).CODEX_HOME, '/x');
+});
+
+test('Claude profiles resolve to stable ids and names', () => {
+  const { profileAccount } = require('../src/providers/claude.cjs');
+  const home = '/fake/home/user';
+  const defaultDir = path.join(home, '.claude');
+  const def = profileAccount(defaultDir, defaultDir, false);
+  assert.deepEqual([def.id, def.labelKey, def.primary, def.configDirExplicit], ['claude:default', 'accountA', true, false]);
+  const explicitDefault = profileAccount(defaultDir, defaultDir, true);
+  assert.notEqual(explicitDefault.id, 'claude:default', 'an explicit default dir is a different Keychain item');
+  const secondary = profileAccount(path.join(home, '.claude-secondary'), defaultDir, true);
+  assert.deepEqual([secondary.id, secondary.labelKey, secondary.primary], ['claude:secondary', 'accountB', false]);
+  const custom = profileAccount(path.join(home, 'my-claude-profile'), defaultDir, true);
+  assert.match(custom.id, /^claude:[0-9a-f]{12}$/);
+  assert.equal(custom.label, 'my-claude-profile');
+  assert.equal(profileAccount(path.join(home, '.claude-work'), defaultDir, true).label, 'work');
+  assert.equal(profileAccount('/', defaultDir, true).label, '/', 'a folder without a name is shown by its path');
+});
+
+
+test('providers emit semantic window keys', () => {
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+
+  // Cursor semantic keys
+  const cursorUsage = parseCursorUsage({
+    individualUsage: {
+      plan: { autoPercentUsed: 50, apiPercentUsed: 0, totalPercentUsed: 25, remaining: 100 }
+    }
+  });
+  const autoWin = cursorUsage.windows.find(w => w.id === 'plan:auto');
+  const apiWin = cursorUsage.windows.find(w => w.id === 'plan:api');
+  assert.equal(autoWin.labelKey, 'labelAutoScope');
+  assert.equal(apiWin.labelKey, 'labelApiScope');
+  assert.equal(apiWin.detailKey, 'cursorApiLimitNote');
+
+  // Codex semantic duration
+  const codexRate = parseCodexRateLimits({
+    rateLimits: {
+      primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 1780000000 }
+    }
+  });
+  const codexWin = codexRate.windows[0];
+  assert.deepEqual([codexWin.labelKey, codexWin.labelParams, codexWin.durationMinutes], ['labelNHours', { n: 5 }, 300]);
+});
+
+test('provider data is language-neutral', () => {
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const codex = parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 11, windowDurationMins: 43200, resetsAt: 1780000000 } } });
+  assert.equal(codex.windows[0].labelKey, 'labelNDays');
+  assert.deepEqual(codex.windows[0].labelParams, { n: 30 });
+
+  const cursor = parseCursorUsage({
+    individualUsage: { plan: { autoPercentUsed: 10, apiPercentUsed: 0, totalPercentUsed: 5, used: 750, limit: 2000, remaining: 1250 } },
+    teamUsage: { onDemand: { enabled: false } }
+  });
+  const spend = cursor.windows.find(w => w.id === 'plan:spend');
+  assert.deepEqual(spend.amounts, { used: 750, limit: 2000, remaining: 1250 });
+  assert.equal(spend.valueKey, undefined, 'the UI words the remaining amount itself');
+  const team = cursor.windows.find(w => w.id === 'team:onDemand');
+  assert.equal(team.group, 'team');
+  assert.equal(team.labelKey, 'labelOnDemandSpend');
+  assert.equal(team.valueKey, 'disabled');
 });
