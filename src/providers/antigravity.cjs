@@ -2,7 +2,7 @@
 const path = require('node:path');
 const https = require('node:https');
 const crypto = require('node:crypto');
-const { normalizeWindow, safeText } = require('../core/model.cjs');
+const { normalizeWindow, safeText, hasControlChars } = require('../core/model.cjs');
 const { MINUTES, MAX_LABEL_LENGTH, durationLabel } = require('../catalog.cjs');
 const common = require('./common.cjs');
 
@@ -26,20 +26,43 @@ const FIVE_HOUR_CADENCE = /^(5h|session|5-hour|five hour|five-hour)$/;
 const WEEKLY_CADENCE = 'weekly';
 
 function checkedCode(value) {
-  if (value === undefined || value === null || value === 0 || value === '0' || (typeof value === 'string' && ['ok', 'success'].includes(value.toLowerCase()))) return;
-  const code = value === CONNECT_CODES.UNAUTHENTICATED || value === 'UNAUTHENTICATED' ? 'auth_rejected'
-    : value === CONNECT_CODES.RESOURCE_EXHAUSTED || value === 'RESOURCE_EXHAUSTED' ? 'rate_limited' : 'local_service_unavailable';
+  if (
+    value === undefined ||
+    value === null ||
+    value === 0 ||
+    value === '0' ||
+    (typeof value === 'string' && ['ok', 'success'].includes(value.toLowerCase()))
+  )
+    return;
+  const code =
+    value === CONNECT_CODES.UNAUTHENTICATED || value === 'UNAUTHENTICATED'
+      ? 'auth_rejected'
+      : value === CONNECT_CODES.RESOURCE_EXHAUSTED || value === 'RESOURCE_EXHAUSTED'
+        ? 'rate_limited'
+        : 'local_service_unavailable';
   throw new common.ProviderError(code);
 }
 function rawReset(value) {
   if (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value)) {
-    const date = new Date(Number(value) * 1000); return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+    const date = new Date(Number(value) * 1000);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : null;
   }
   return value;
 }
-function fractionPercent(value) { return typeof value === 'number' && Number.isFinite(value) ? value * 100 : null; }
-function sourceKey(...values) { return values.find(value => typeof value === 'string' && value.trim())?.trim().normalize('NFC') || ''; }
-function stableWindowId(kind, ...parts) { return `${kind}:${crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, ID_HASH_LENGTH)}`; }
+function fractionPercent(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value * 100 : null;
+}
+function sourceKey(...values) {
+  return (
+    values
+      .find(value => typeof value === 'string' && value.trim())
+      ?.trim()
+      .normalize('NFC') || ''
+  );
+}
+function stableWindowId(kind, ...parts) {
+  return `${kind}:${crypto.createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, ID_HASH_LENGTH)}`;
+}
 // The language server has reported the signed-in e-mail under several shapes.
 function extractEmail(raw) {
   const email = raw?.userStatus?.email || raw?.response?.userStatus?.email || raw?.userEmail || raw?.email || raw?.user?.email;
@@ -73,13 +96,21 @@ function parseAntigravitySummary(raw) {
       if (ids.has(id)) throw new common.ProviderError('invalid_response');
       ids.add(id);
       const cadence = safeText(bucket.window || bucket.displayName || bucket.name || bucketKey).toLowerCase();
-      const remaining = bucket.remainingFraction ?? bucket.remaining?.remainingFraction ?? (bucket.remaining?.case === 'remainingFraction' ? bucket.remaining.value : null);
-      windows.push(normalizeWindow({
-        id, ...cadenceLabel(cadence, safeText(bucket.displayName || bucket.name || bucketKey)),
-        scope: safeText(group.displayName || group.name), detailKey: 'antigravitySourceNote',
-        remainingPercent: fractionPercent(remaining), resetsAt: rawReset(bucket.resetTime),
-        active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined
-      }));
+      const remaining =
+        bucket.remainingFraction ??
+        bucket.remaining?.remainingFraction ??
+        (bucket.remaining?.case === 'remainingFraction' ? bucket.remaining.value : null);
+      windows.push(
+        normalizeWindow({
+          id,
+          ...cadenceLabel(cadence, safeText(bucket.displayName || bucket.name || bucketKey)),
+          scope: safeText(group.displayName || group.name),
+          detailKey: 'antigravitySourceNote',
+          remainingPercent: fractionPercent(remaining),
+          resetsAt: rawReset(bucket.resetTime),
+          active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined
+        })
+      );
     }
   }
   if (!windows.length) throw new common.ProviderError('invalid_response');
@@ -98,88 +129,156 @@ function parseAntigravityUserStatus(raw) {
     const id = stableWindowId('model', modelKey);
     if (ids.has(id)) throw new common.ProviderError('invalid_response');
     ids.add(id);
-    return [normalizeWindow({ id, label, scope: label, detailKey: 'modelQuotaNoPeriod', remainingPercent: fractionPercent(model.quotaInfo.remainingFraction), resetsAt: rawReset(model.quotaInfo.resetTime) })];
+    return [
+      normalizeWindow({
+        id,
+        label,
+        scope: label,
+        detailKey: 'modelQuotaNoPeriod',
+        remainingPercent: fractionPercent(model.quotaInfo.remainingFraction),
+        resetsAt: rawReset(model.quotaInfo.resetTime)
+      })
+    ];
   });
   if (!windows.length) throw new common.ProviderError('invalid_response');
   return withEmail(windows, raw);
 }
+const MAX_TOKEN_LENGTH = 512;
+const MAX_LSOF_BYTES = 64 * 1024;
+const MAX_PS_BYTES = 4 * 1024 * 1024;
+const MAX_TCP_PORT = 65535;
+
+const isPort = value => Number.isInteger(value) && value > 0 && value <= MAX_TCP_PORT;
+// The CSRF token is sent as a header; it must be a single visible token.
+const isSafeToken = value =>
+  typeof value === 'string' && value.length > 0 && value.length <= MAX_TOKEN_LENGTH && !hasControlChars(value) && !value.includes(' ');
+
 function validateServers(value) {
   if (!Array.isArray(value)) throw new common.ProviderError('local_service_unavailable');
-  return value.slice(0, MAX_SERVERS).filter(server => Number.isInteger(server?.pid) && server.pid > 0 && typeof server.csrfToken === 'string' && server.csrfToken.length > 0 && server.csrfToken.length <= 512 && !/[\x00-\x20\x7f]/.test(server.csrfToken) && Array.isArray(server.ports)).map(server => ({ pid: server.pid, csrfToken: server.csrfToken, ports: [...new Set(server.ports.filter(p => Number.isInteger(p) && p > 0 && p <= 65535))].slice(0, MAX_PORTS_PER_SERVER), sourceKind: server.sourceKind === 'ide' ? 'ide' : 'app' })).filter(server => server.ports.length);
+  return value
+    .slice(0, MAX_SERVERS)
+    .filter(server => Number.isInteger(server?.pid) && server.pid > 0 && isSafeToken(server.csrfToken) && Array.isArray(server.ports))
+    .map(server => ({
+      pid: server.pid,
+      csrfToken: server.csrfToken,
+      ports: [...new Set(server.ports.filter(isPort))].slice(0, MAX_PORTS_PER_SERVER),
+      sourceKind: server.sourceKind === 'ide' ? 'ide' : 'app'
+    }))
+    .filter(server => server.ports.length);
 }
-// Process matching and PID-owned listening-port semantics are derived from:
-// CodexBar AntigravityStatusProbe.swift processInfos/antigravityProcessKind and
-// AntigravityStatusProbe+PortDetection.swift lsofListeningPorts. This Node port
-// of discovery has fixture coverage; it has not been executed on a Mac.
+
+// Process matching and PID-owned listening-port semantics follow CodexBar's
+// AntigravityStatusProbe.swift (processInfos/antigravityProcessKind) and
+// AntigravityStatusProbe+PortDetection.swift (lsofListeningPorts).
+const LANGUAGE_SERVER = /(?:^|[/\\])language(?:_|-)server(?:[_-][a-z0-9]+)*(?:\.exe)?(?:["\s]|$)/;
+const ANTIGRAVITY_BUNDLE = /\/(?:antigravity|antigravity ide|gemini)\.app\//;
+const APP_DATA_DIR_FLAG = /(?:^|\s)--app_data_dir(?:=|\s)/;
+const CSRF_FLAG = /(?:^|\s)--csrf_token(?:=|\s+)(?:"([^"\r\n]+)"|([^\s]+))/;
+
 function parseMacProcessList(output, currentUid) {
   if (!Number.isInteger(currentUid) || currentUid < 0) return [];
   const servers = [];
   for (const line of output.split(/\r?\n/)) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line); if (!match || Number(match[2]) !== currentUid) continue;
-    const command = match[3], lower = command.toLowerCase();
-    const languageServer = /(?:^|[/\\])language(?:_|-)server(?:[_-][a-z0-9]+)*(?:\.exe)?(?:["\s]|$)/.test(lower);
-    const owner = /\/(?:antigravity|antigravity ide|gemini)\.app\//.test(lower) || /\/antigravity\//.test(lower) || (/(?:^|\s)--app_data_dir(?:=|\s)/.test(lower) && lower.includes('antigravity'));
-    // This current-app adapter intentionally excludes tokenless CLI processes.
-    if (!languageServer || !owner) continue;
-    const csrf = /(?:^|\s)--csrf_token(?:=|\s+)(?:"([^"\r\n]+)"|([^\s]+))/.exec(command);
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    if (!match || Number(match[2]) !== currentUid) continue;
+    const command = match[3],
+      lower = command.toLowerCase();
+    const ownedByAntigravity =
+      ANTIGRAVITY_BUNDLE.test(lower) || lower.includes('/antigravity/') || (APP_DATA_DIR_FLAG.test(lower) && lower.includes('antigravity'));
+    // Only the running app's servers carry a CSRF token; tokenless CLI processes are skipped.
+    if (!LANGUAGE_SERVER.test(lower) || !ownedByAntigravity) continue;
+    const csrf = CSRF_FLAG.exec(command);
     const csrfToken = csrf?.[1] || csrf?.[2];
-    const isIde = lower.includes('antigravity ide') || lower.includes('antigravity-ide') || lower.includes('--app_data_dir');
-    if (csrfToken && !/[\x00-\x20\x7f]/.test(csrfToken)) servers.push({ pid: Number(match[1]), csrfToken, sourceKind: isIde ? 'ide' : 'app' });
+    const isIde = lower.includes('antigravity ide') || lower.includes('antigravity-ide') || APP_DATA_DIR_FLAG.test(lower);
+    if (isSafeToken(csrfToken)) servers.push({ pid: Number(match[1]), csrfToken, sourceKind: isIde ? 'ide' : 'app' });
     if (servers.length >= MAX_SERVERS) break;
   }
   return servers;
 }
+
 function parseListeningPorts(output, expectedPid) {
   if (!Number.isInteger(expectedPid) || expectedPid <= 0) return [];
   const ports = new Set();
   for (const line of output.split(/\r?\n/)) {
     const owner = /^\S+\s+(\d+)\s+\S+\s+\S+\s+IPv4\s+/.exec(line.trim());
     if (!owner || Number(owner[1]) !== expectedPid) continue;
-    // The request target is exactly 127.0.0.1. A LAN address, another 127/8
-    // address, or an IPv6-only socket does not prove ownership of that target.
+    // Requests go to exactly 127.0.0.1. A LAN address, another 127/8 address or an
+    // IPv6-only socket does not prove ownership of that target.
     const listener = /\bTCP\s+(?:127\.0\.0\.1|0\.0\.0\.0|\*):(\d+)\s+\(LISTEN\)\s*$/.exec(line);
     const port = listener ? Number(listener[1]) : 0;
-    if (port > 0 && port <= 65535) ports.add(port);
+    if (isPort(port)) ports.add(port);
   }
   return [...ports].sort((a, b) => a - b);
 }
-async function discoverAntigravityServers(options = {}) {
-  const run = options.runProcess || common.runProcess, platform = options.platform || process.platform;
-  if (platform === 'win32') {
-    const script = common.unpackedPath(path.resolve(__dirname, '../launchers/discover-antigravity.ps1'));
-    let output;
-    try { output = JSON.parse((await run(common.windowsPowerShell(options.env), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeoutMs: WINDOWS_DISCOVERY_TIMEOUT_MS, maxBytes: 65536 })).replace(/^\uFEFF/, '')); }
-    catch (error) { if (error instanceof common.ProviderError) throw error; throw new common.ProviderError('local_service_unavailable'); }
-    if (output?.outcome === 'app_closed') throw new common.ProviderError('app_closed');
-    if (output?.outcome !== 'success') throw new common.ProviderError('local_service_unavailable');
-    const servers = validateServers(output.servers);
-    if (!servers.length) throw new common.ProviderError('local_service_unavailable');
-    return servers;
+
+async function discoverWindowsServers(run, env) {
+  const script = common.unpackedPath(path.resolve(__dirname, '../launchers/discover-antigravity.ps1'));
+  let output;
+  try {
+    const stdout = await run(
+      common.windowsPowerShell(env),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+      { timeoutMs: WINDOWS_DISCOVERY_TIMEOUT_MS, maxBytes: MAX_LSOF_BYTES }
+    );
+    output = JSON.parse(stdout.replace(/^\uFEFF/, ''));
+  } catch (error) {
+    throw error instanceof common.ProviderError ? error : new common.ProviderError('local_service_unavailable');
   }
-  if (platform !== 'darwin') throw new common.ProviderError('unsupported_platform');
-  const currentUid = options.currentUid ?? process.geteuid?.() ?? process.getuid?.();
-  if (!Number.isInteger(currentUid) || currentUid < 0) throw new common.ProviderError('local_service_unavailable');
-  const entries = parseMacProcessList(await run('/bin/ps', ['-ax', '-o', 'pid=,uid=,command='], { timeoutMs: MAC_PROCESS_TIMEOUT_MS, maxBytes: 4 * 1024 * 1024 }), currentUid);
-  if (!entries.length) throw new common.ProviderError('app_closed');
-  const servers = [];
-  for (const entry of entries) {
-    try {
-      const output = await run('/usr/sbin/lsof', ['-nP', '-i4TCP', '-sTCP:LISTEN', '-a', '-p', String(entry.pid)], { timeoutMs: MAC_PROCESS_TIMEOUT_MS, maxBytes: 65536 });
-      servers.push({ ...entry, ports: parseListeningPorts(output, entry.pid) });
-    } catch { /* No global port or tokenless fallback. */ }
-  }
-  const validated = validateServers(servers);
-  if (!validated.length) throw new common.ProviderError('local_service_unavailable');
-  return validated;
+  if (output?.outcome === 'app_closed') throw new common.ProviderError('app_closed');
+  if (output?.outcome !== 'success') throw new common.ProviderError('local_service_unavailable');
+  return output.servers;
 }
+
+async function discoverMacServers(run, currentUid) {
+  if (!Number.isInteger(currentUid) || currentUid < 0) throw new common.ProviderError('local_service_unavailable');
+  const entries = parseMacProcessList(
+    await run('/bin/ps', ['-ax', '-o', 'pid=,uid=,command='], { timeoutMs: MAC_PROCESS_TIMEOUT_MS, maxBytes: MAX_PS_BYTES }),
+    currentUid
+  );
+  if (!entries.length) throw new common.ProviderError('app_closed');
+  // A server whose ports cannot be listed is dropped: there is no fallback to unowned ports.
+  const listed = await Promise.all(
+    entries.map(entry =>
+      run('/usr/sbin/lsof', ['-nP', '-i4TCP', '-sTCP:LISTEN', '-a', '-p', String(entry.pid)], {
+        timeoutMs: MAC_PROCESS_TIMEOUT_MS,
+        maxBytes: MAX_LSOF_BYTES
+      }).then(
+        output => ({ ...entry, ports: parseListeningPorts(output, entry.pid) }),
+        () => null
+      )
+    )
+  );
+  return listed.filter(Boolean);
+}
+
+async function discoverAntigravityServers(options = {}) {
+  const run = options.runProcess || common.runProcess,
+    platform = options.platform || process.platform;
+  let raw;
+  if (platform === 'win32') raw = await discoverWindowsServers(run, options.env);
+  else if (platform === 'darwin') raw = await discoverMacServers(run, options.currentUid ?? process.geteuid?.());
+  else throw new common.ProviderError('unsupported_platform');
+  const servers = validateServers(raw);
+  if (!servers.length) throw new common.ProviderError('local_service_unavailable');
+  return servers;
+}
+
 function isAllowedTarget(server, port, method) {
-  return Number.isInteger(server?.pid) && server.pid > 0 && Number.isInteger(port) && port >= 1 && port <= 65535 && server.ports?.includes(port)
-    && typeof server.csrfToken === 'string' && server.csrfToken && !/[\x00-\x20\x7f]/.test(server.csrfToken) && Object.values(RPC_METHODS).includes(method);
+  return (
+    Number.isInteger(server?.pid) &&
+    server.pid > 0 &&
+    isPort(port) &&
+    server.ports?.includes(port) &&
+    isSafeToken(server.csrfToken) &&
+    Object.values(RPC_METHODS).includes(method)
+  );
 }
 function requestBody(method) {
-  return JSON.stringify(method === RPC_METHODS.quota
-    ? { forceRefresh: true }
-    : { metadata: { ideName: 'antigravity', extensionName: 'antigravity', locale: 'en', ideVersion: 'unknown' } });
+  return JSON.stringify(
+    method === RPC_METHODS.quota
+      ? { forceRefresh: true }
+      : { metadata: { ideName: 'antigravity', extensionName: 'antigravity', locale: 'en', ideVersion: 'unknown' } }
+  );
 }
 // The local language server listens on 127.0.0.1 with a self-signed certificate; access is
 // scoped by the per-process CSRF token and the PID-owned port, not by TLS identity.
@@ -191,10 +290,26 @@ function requestLocalJson(server, port, method, options = {}) {
     const body = requestBody(method);
     const { finish, attach } = common.settleOnce(resolve, reject, timeoutMs);
     try {
-      const request = attach((options.request || https.request)({
-        hostname: '127.0.0.1', port, path: `${RPC_PATH_PREFIX}${method}`, method: 'POST', agent: false, rejectUnauthorized: false, timeout: timeoutMs,
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'Connect-Protocol-Version': '1', 'X-Codeium-Csrf-Token': server.csrfToken }
-      }, response => common.readJsonResponse(attach(response), finish, maxBytes)));
+      const request = attach(
+        (options.request || https.request)(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: `${RPC_PATH_PREFIX}${method}`,
+            method: 'POST',
+            agent: false,
+            rejectUnauthorized: false,
+            timeout: timeoutMs,
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+              'Connect-Protocol-Version': '1',
+              'X-Codeium-Csrf-Token': server.csrfToken
+            }
+          },
+          response => common.readJsonResponse(attach(response), finish, maxBytes)
+        )
+      );
       request.on('error', () => finish(new common.ProviderError('transport_error')));
       request.on('timeout', () => finish(new common.ProviderError('request_timeout')));
       request.end(body);
@@ -204,7 +319,11 @@ function requestLocalJson(server, port, method, options = {}) {
   });
 }
 function antigravityAccountId(email) {
-  const hash = crypto.createHash('sha256').update((email || '').toLowerCase().trim()).digest('hex').slice(0, ACCOUNT_HASH_LENGTH);
+  const hash = crypto
+    .createHash('sha256')
+    .update((email || '').toLowerCase().trim())
+    .digest('hex')
+    .slice(0, ACCOUNT_HASH_LENGTH);
   return `antigravity:${hash}`;
 }
 
@@ -219,10 +338,12 @@ function rethrowIfRateLimited(error) {
 
 async function fetchServerWindows(server, read, deadline, needsEmail = false) {
   let lastError = null;
-  const tag = parsed => ({ ...parsed, email: parsed.email, pid: server.pid });
+  // The non-enumerable `email` a parser found is used when the status call gave none.
+  const fromServer = (parsed, email) => ({ ...parsed, email: email || parsed.email || null, pid: server.pid });
   for (const port of server.ports) {
     if (Date.now() >= deadline) throw new common.ProviderError('request_timeout');
-    let email = null, statusRaw = null;
+    let email = null,
+      statusRaw = null;
     if (needsEmail) {
       // Identity first: with several servers, windows are only usable once tied to an account.
       try {
@@ -235,16 +356,20 @@ async function fetchServerWindows(server, read, deadline, needsEmail = false) {
       if (!email) continue;
     }
     try {
-      const parsed = parseAntigravitySummary(await read(server, port, RPC_METHODS.quota, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) }));
-      return { ...tag(parsed), email: email || parsed.email || null };
+      const parsed = parseAntigravitySummary(
+        await read(server, port, RPC_METHODS.quota, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) })
+      );
+      return fromServer(parsed, email);
     } catch (error) {
       rethrowIfRateLimited(error);
       // Older servers lack the quota summary; per-model quota from the status call is the fallback.
       try {
-        const raw = statusRaw || await read(server, port, RPC_METHODS.status, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) });
-        const parsed = parseAntigravityUserStatus(raw);
-        return { ...tag(parsed), email: email || parsed.email || null };
-      } catch {}
+        const raw =
+          statusRaw || (await read(server, port, RPC_METHODS.status, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) }));
+        return fromServer(parseAntigravityUserStatus(raw), email);
+      } catch {
+        // The fallback failed as well; the original error is the one worth reporting.
+      }
       lastError = error instanceof common.ProviderError ? error : new common.ProviderError('local_service_unavailable');
     }
   }
@@ -254,8 +379,13 @@ async function fetchServerWindows(server, read, deadline, needsEmail = false) {
 // When the app and the IDE both report a window: a later reset wins (it is the newer period);
 // within the same period the lower remaining value wins, so quota is never overstated.
 function preferIncoming(existing, incoming) {
-  const resetExisting = Date.parse(existing.resetsAt), resetIncoming = Date.parse(incoming.resetsAt);
-  if (Number.isFinite(resetIncoming) && Number.isFinite(resetExisting) && Math.abs(resetIncoming - resetExisting) > SAME_PERIOD_TOLERANCE_MS) {
+  const resetExisting = Date.parse(existing.resetsAt),
+    resetIncoming = Date.parse(incoming.resetsAt);
+  if (
+    Number.isFinite(resetIncoming) &&
+    Number.isFinite(resetExisting) &&
+    Math.abs(resetIncoming - resetExisting) > SAME_PERIOD_TOLERANCE_MS
+  ) {
     return resetIncoming > resetExisting;
   }
   if (Number.isFinite(resetIncoming) !== Number.isFinite(resetExisting)) return Number.isFinite(resetIncoming);
@@ -274,19 +404,23 @@ function mergeWindows(results) {
 
 async function resolveServerEmails(servers, read) {
   const deadline = Date.now() + DISCOVERY_BUDGET_MS;
-  return Promise.allSettled(servers.map(async server => {
-    let lastError = null;
-    for (const port of server.ports) {
-      try {
-        const email = extractEmail(await read(server, port, RPC_METHODS.status, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) }));
-        if (email) return email;
-      } catch (error) {
-        lastError = error;
+  return Promise.allSettled(
+    servers.map(async server => {
+      let lastError = null;
+      for (const port of server.ports) {
+        try {
+          const email = extractEmail(
+            await read(server, port, RPC_METHODS.status, { timeoutMs: timeLeft(deadline, LOCAL_REQUEST_TIMEOUT_MS) })
+          );
+          if (email) return email;
+        } catch (error) {
+          lastError = error;
+        }
       }
-    }
-    if (lastError) throw lastError;
-    return null;
-  }));
+      if (lastError) throw lastError;
+      return null;
+    })
+  );
 }
 
 function createAntigravityProvider(options = {}) {
@@ -301,7 +435,14 @@ function createAntigravityProvider(options = {}) {
       // Fail closed: an unidentified server could belong to any account.
       if (queries.some(q => q.status === 'rejected' || !q.value)) throw new common.ProviderError('local_service_unavailable');
       const emails = [...new Set(queries.map(q => q.value))];
-      return emails.map((email, index) => ({ id: antigravityAccountId(email), providerId: 'antigravity', label: email.slice(0, MAX_LABEL_LENGTH), email, primary: index === 0, enabled: true }));
+      return emails.map((email, index) => ({
+        id: antigravityAccountId(email),
+        providerId: 'antigravity',
+        label: email.slice(0, MAX_LABEL_LENGTH),
+        email,
+        primary: index === 0,
+        enabled: true
+      }));
     },
     async fetch(account) {
       if (account.configDir) throw new common.ProviderError('unsupported_profile');
@@ -332,4 +473,13 @@ function createAntigravityProvider(options = {}) {
     }
   };
 }
-module.exports = { antigravityAccountId, parseAntigravitySummary, parseAntigravityUserStatus, createAntigravityProvider, discoverAntigravityServers, parseMacProcessList, parseListeningPorts, requestLocalJson };
+module.exports = {
+  antigravityAccountId,
+  parseAntigravitySummary,
+  parseAntigravityUserStatus,
+  createAntigravityProvider,
+  discoverAntigravityServers,
+  parseMacProcessList,
+  parseListeningPorts,
+  requestLocalJson
+};

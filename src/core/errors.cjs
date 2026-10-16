@@ -14,11 +14,10 @@ class AppError extends Error {
 const UNEXPECTED = 'unexpected';
 
 // Errors cross the IPC boundary as plain data: Electron would otherwise flatten them
-// into "Error invoking remote method …" strings and drop the code.
+// into "Error invoking remote method …" strings and drop the code. Anything that is not an
+// AppError is an internal fault; its message is never exposed.
 function toErrorPayload(error) {
-  return typeof error?.code === 'string' && (error instanceof AppError || error.name === 'ProviderError')
-    ? { code: error.code, params: error.params || {} }
-    : { code: UNEXPECTED, params: {} };
+  return error instanceof AppError ? { code: error.code, params: error.params } : { code: UNEXPECTED, params: {} };
 }
 
 module.exports = { AppError, toErrorPayload };

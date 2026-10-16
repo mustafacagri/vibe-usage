@@ -1,112 +1,162 @@
 <!doctype html>
 <html lang="en">
-<head>
- <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
- <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
- <title>Vibe Usage</title><link rel="stylesheet" href="style.css">
-</head>
-<body>
- <header class="titlebar">
-  <div class="brand">Vibe Usage<span data-i18n="liveTracker"></span></div>
-  <div class="window-actions">
-   <button id="pin" aria-pressed="false" data-i18n-title="pinWindow" data-i18n-aria="pinWindow">📌</button>
-   <button id="settings-button" data-i18n-title="settings" data-i18n-aria="settings">⚙️</button>
-   <button id="hide" data-i18n-title="hideToTray" data-i18n-aria="hideToTray">−</button>
-  </div>
- </header>
- <main>
-  <div class="summary">
-   <span id="overall-status" data-i18n="preparingAccounts"></span>
-   <div class="summary-actions">
-    <button id="smart-launch-btn" class="summary-btn smart-btn" data-i18n="smartLaunch"></button>
-    <button id="handover-btn" class="summary-btn handover-btn" data-i18n="handover"></button>
-    <button id="refresh" class="text-button" data-i18n-title="refreshQuotas" data-i18n-aria="refreshQuotas">↻</button>
-   </div>
-  </div>
-  <div id="providers" aria-live="polite"></div>
-  <p class="local-note" data-i18n="safeLocalNote"></p>
- </main>
- <footer><span id="platform-label"></span><span id="refresh-label"></span></footer>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Vibe Usage</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="brand">Vibe Usage<span data-i18n="liveTracker"></span></div>
+      <div class="window-actions">
+        <button id="pin" aria-pressed="false" data-i18n-title="pinWindow" data-i18n-aria="pinWindow">📌</button>
+        <button id="settings-button" data-i18n-title="settings" data-i18n-aria="settings">⚙️</button>
+        <button id="hide" data-i18n-title="hideToTray" data-i18n-aria="hideToTray">−</button>
+      </div>
+    </header>
+    <main>
+      <div class="summary">
+        <span id="overall-status" data-i18n="preparingAccounts"></span>
+        <div class="summary-actions">
+          <button id="smart-launch-btn" class="summary-btn smart-btn" data-i18n="smartLaunch"></button>
+          <button id="handover-btn" class="summary-btn handover-btn" data-i18n="handover"></button>
+          <button id="refresh" class="text-button" data-i18n-title="refreshQuotas" data-i18n-aria="refreshQuotas">↻</button>
+        </div>
+      </div>
+      <div id="providers" aria-live="polite"></div>
+      <p class="local-note" data-i18n="safeLocalNote"></p>
+    </main>
+    <footer><span id="platform-label"></span><span id="refresh-label"></span></footer>
 
- <dialog id="settings-dialog">
-  <form method="dialog"><header><h2 data-i18n="settingsTitle"></h2><button class="text-button" data-i18n-aria="closeSettings">✕</button></header></form>
-  <div class="settings-content">
-   <div class="settings-card">
-    <div class="card-header"><strong class="card-title" data-i18n="languageLabel"></strong></div>
-    <div class="field field-tight"><select id="language-select" data-i18n-aria="languageLabel"></select></div>
-   </div>
+    <dialog id="settings-dialog">
+      <form method="dialog">
+        <header>
+          <h2 data-i18n="settingsTitle"></h2>
+          <button class="text-button" data-i18n-aria="closeSettings">✕</button>
+        </header>
+      </form>
+      <div class="settings-content">
+        <div class="settings-card">
+          <div class="card-header"><strong class="card-title" data-i18n="languageLabel"></strong></div>
+          <div class="field field-tight"><select id="language-select" data-i18n-aria="languageLabel"></select></div>
+        </div>
 
-   <div class="settings-card">
-    <div class="card-header"><span class="card-icon">🔄</span><strong class="card-title" data-i18n="fallbackPriorityTitle"></strong></div>
-    <p class="card-subtitle" data-i18n="fallbackPrioritySubtitle"></p>
-    <div id="provider-order" class="fallback-priority-grid"></div>
-   </div>
+        <div class="settings-card">
+          <div class="card-header">
+            <span class="card-icon">🔄</span><strong class="card-title" data-i18n="fallbackPriorityTitle"></strong>
+          </div>
+          <p class="card-subtitle" data-i18n="fallbackPrioritySubtitle"></p>
+          <div id="provider-order" class="fallback-priority-grid"></div>
+        </div>
 
-   <div class="settings-card">
-    <div class="card-header"><span class="card-icon">🎯</span><strong class="card-title" data-i18n="preferredModelsTitle"></strong></div>
-    <p class="card-subtitle" data-i18n="preferredModelsSubtitle"></p>
-    <div id="preferred-models"></div>
-   </div>
+        <div class="settings-card">
+          <div class="card-header">
+            <span class="card-icon">🎯</span><strong class="card-title" data-i18n="preferredModelsTitle"></strong>
+          </div>
+          <p class="card-subtitle" data-i18n="preferredModelsSubtitle"></p>
+          <div id="preferred-models"></div>
+        </div>
 
-   <div class="settings-card">
-    <div class="card-header"><span class="card-icon">⏱️</span><strong class="card-title" data-i18n="refreshIntervalTitle"></strong></div>
-    <div class="field field-tight"><select id="interval" data-i18n-aria="refreshIntervalTitle"></select></div>
-   </div>
+        <div class="settings-card">
+          <div class="card-header">
+            <span class="card-icon">⏱️</span><strong class="card-title" data-i18n="refreshIntervalTitle"></strong>
+          </div>
+          <div class="field field-tight"><select id="interval" data-i18n-aria="refreshIntervalTitle"></select></div>
+        </div>
 
-   <div class="connected-accounts-section">
-    <div class="section-title-bar">
-     <div class="section-title-left"><span class="section-title-icon">👥</span><h3 data-i18n="connectedAccountsTitle"></h3></div>
-    </div>
-    <div id="account-settings"></div>
-    <button id="add-profile" class="secondary-button gap-top-sm" data-i18n="addProfileBtn"></button>
-    <p class="help" data-i18n="settingsHelp"></p>
-    <div id="settings-message" role="status"></div>
-   </div>
-  </div>
- </dialog>
+        <div class="connected-accounts-section">
+          <div class="section-title-bar">
+            <div class="section-title-left">
+              <span class="section-title-icon">👥</span>
+              <h3 data-i18n="connectedAccountsTitle"></h3>
+            </div>
+          </div>
+          <div id="account-settings"></div>
+          <button id="add-profile" class="secondary-button gap-top-sm" data-i18n="addProfileBtn"></button>
+          <p class="help" data-i18n="settingsHelp"></p>
+          <div id="settings-message" role="status"></div>
+        </div>
+      </div>
+    </dialog>
 
- <dialog id="handover-dialog">
-  <form method="dialog"><header><h2 data-i18n="handoverTitle"></h2><button class="text-button" data-i18n-aria="cancel">✕</button></header></form>
-  <div class="dialog-body">
-   <p class="dialog-desc" data-i18n="handoverDesc"></p>
-   <label class="field"><span data-i18n="projectDirectory"></span>
-    <div class="project-dir-row">
-     <input id="handover-project-input" type="text" readonly>
-     <button id="handover-browse-btn" class="secondary-button" type="button" data-i18n="browseFolder"></button>
-    </div>
-   </label>
-   <label class="field"><span data-i18n="sourceProvider"></span><select id="handover-from"></select></label>
-   <label class="field"><span data-i18n="sessionToHandover"></span><select id="handover-session-select"></select></label>
-   <label class="field"><span data-i18n="targetProvider"></span><select id="handover-to"></select></label>
-   <label class="field" id="handover-model-field"><span data-i18n="targetModel"></span><select id="handover-model" class="model-select full-width"></select></label>
-   <div class="handover-note" data-i18n="handoverNote"></div>
-   <div class="dialog-actions">
-    <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
-    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="executeHandoverBtn"></button>
-   </div>
-  </div>
- </dialog>
+    <dialog id="handover-dialog">
+      <form method="dialog">
+        <header>
+          <h2 data-i18n="handoverTitle"></h2>
+          <button class="text-button" data-i18n-aria="cancel">✕</button>
+        </header>
+      </form>
+      <div class="dialog-body">
+        <p class="dialog-desc" data-i18n="handoverDesc"></p>
+        <label class="field"
+          ><span data-i18n="projectDirectory"></span>
+          <div class="project-dir-row">
+            <input id="handover-project-input" type="text" readonly />
+            <button id="handover-browse-btn" class="secondary-button" type="button" data-i18n="browseFolder"></button>
+          </div>
+        </label>
+        <label class="field"
+          ><span data-i18n="sourceProvider"></span
+          ><select id="handover-from"></select
+        ></label>
+        <label class="field"
+          ><span data-i18n="sessionToHandover"></span
+          ><select id="handover-session-select"></select
+        ></label>
+        <label class="field"
+          ><span data-i18n="targetProvider"></span
+          ><select id="handover-to"></select
+        ></label>
+        <label class="field" id="handover-model-field"
+          ><span data-i18n="targetModel"></span
+          ><select id="handover-model" class="model-select full-width"></select
+        ></label>
+        <div class="handover-note" data-i18n="handoverNote"></div>
+        <div class="dialog-actions">
+          <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
+          <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="executeHandoverBtn"></button>
+        </div>
+      </div>
+    </dialog>
 
- <dialog id="smart-launch-dialog">
-  <form method="dialog"><header><h2 data-i18n="smartLaunchTitle"></h2><button class="text-button" data-i18n-aria="cancel">✕</button></header></form>
-  <div class="dialog-body">
-   <div class="smart-preview-card">
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slRecommendedTool"></span><strong id="sl-provider" class="smart-value"></strong></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slQuotaStatus"></span><span id="sl-quota" class="smart-value"></span></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSelectedModel"></span><strong id="sl-model" class="smart-value"></strong></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision"></span><span id="sl-reason" class="smart-value smart-value-small"></span></div>
-   </div>
-   <div class="dialog-actions gap-top-md">
-    <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
-    <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch"></button>
-   </div>
-  </div>
- </dialog>
+    <dialog id="smart-launch-dialog">
+      <form method="dialog">
+        <header>
+          <h2 data-i18n="smartLaunchTitle"></h2>
+          <button class="text-button" data-i18n-aria="cancel">✕</button>
+        </header>
+      </form>
+      <div class="dialog-body">
+        <div class="smart-preview-card">
+          <div class="smart-preview-row">
+            <span class="smart-label" data-i18n="slRecommendedTool"></span><strong id="sl-provider" class="smart-value"></strong>
+          </div>
+          <div class="smart-preview-row">
+            <span class="smart-label" data-i18n="slQuotaStatus"></span><span id="sl-quota" class="smart-value"></span>
+          </div>
+          <div class="smart-preview-row">
+            <span class="smart-label" data-i18n="slSelectedModel"></span><strong id="sl-model" class="smart-value"></strong>
+          </div>
+          <div class="smart-preview-row">
+            <span class="smart-label" data-i18n="slSmartDecision"></span><span id="sl-reason" class="smart-value smart-value-small"></span>
+          </div>
+        </div>
+        <div class="dialog-actions gap-top-md">
+          <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel"></button>
+          <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch"></button>
+        </div>
+      </div>
+    </dialog>
 
- <div id="toast" role="status" hidden></div>
- <script src="../catalog.cjs"></script>
- <script src="../shared.cjs"></script>
- <script src="i18n.js"></script>
- <script src="app.js"></script>
-</body>
+    <div id="toast" role="status" hidden></div>
+    <script src="../catalog.cjs"></script>
+    <script src="../shared.cjs"></script>
+    <script src="i18n.js"></script>
+    <script src="app.js"></script>
+  </body>
 </html>

@@ -4,12 +4,22 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { isAccountEligible, headroomPercent, selectAccount, selectProvider, claudeLaunchWarnings, QUOTA_FLOOR_PERCENT } = require('../src/core/selection.cjs');
+const {
+  isAccountEligible,
+  headroomPercent,
+  selectAccount,
+  selectProvider,
+  claudeLaunchWarnings,
+  QUOTA_FLOOR_PERCENT
+} = require('../src/core/selection.cjs');
 const { loadClaudeSettingsFiles } = require('../src/core/launch.cjs');
 
 const NOW = Date.parse('2026-10-16T20:00:00Z');
 const fresh = new Date(NOW - 60 * 1000).toISOString();
-const general = (five, week) => [{ id: 'five_hour', remainingPercent: five }, { id: 'seven_day', remainingPercent: week }];
+const general = (five, week) => [
+  { id: 'five_hour', remainingPercent: five },
+  { id: 'seven_day', remainingPercent: week }
+];
 
 function measured(id, windows, { status = 'ok', fetchedAt = fresh } = {}) {
   return { id, status, fetchedAt, windows };
@@ -39,22 +49,40 @@ test('eligibility needs a fresh, complete measurement above the floor', () => {
 test('model scopes: unknown or inactive scoped limits are never assumed available', () => {
   const withScope = scope => measured('a', [...general(40, 60), scope]);
   assert.equal(isAccountEligible(measured('a', general(40, 60)), { model: 'fable', now: NOW }), false, 'Fable needs its own scope');
-  assert.equal(isAccountEligible(withScope({ id: 's', scope: 'Fable', active: false, remainingPercent: 100 }), { model: 'fable', now: NOW }), false);
-  assert.equal(isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: 0 }), { now: NOW }), false, 'no model: every scope counts');
-  assert.equal(isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: null }), { model: 'custom-model', now: NOW }), false);
-  assert.equal(isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: 0 }), { model: 'opus', now: NOW }), true, 'other families do not matter');
+  assert.equal(
+    isAccountEligible(withScope({ id: 's', scope: 'Fable', active: false, remainingPercent: 100 }), { model: 'fable', now: NOW }),
+    false
+  );
+  assert.equal(
+    isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: 0 }), { now: NOW }),
+    false,
+    'no model: every scope counts'
+  );
+  assert.equal(
+    isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: null }), { model: 'custom-model', now: NOW }),
+    false
+  );
+  assert.equal(
+    isAccountEligible(withScope({ id: 's', scope: 'Sonnet', remainingPercent: 0 }), { model: 'opus', now: NOW }),
+    true,
+    'other families do not matter'
+  );
 });
 
 test('account selection prefers the primary, skips exhausted ones and honours an explicit choice', () => {
-  const accounts = (primaryWindows) => snapshot([
-    { id: 'claude:a', providerId: 'claude', primary: true, windows: primaryWindows },
-    { id: 'claude:b', providerId: 'claude', primary: false, windows: general(30, 30) }
-  ]);
+  const accounts = primaryWindows =>
+    snapshot([
+      { id: 'claude:a', providerId: 'claude', primary: true, windows: primaryWindows },
+      { id: 'claude:b', providerId: 'claude', primary: false, windows: general(30, 30) }
+    ]);
   assert.equal(selectAccount(accounts(general(20, 40)), 'claude', { now: NOW }).id, 'claude:a');
   assert.equal(selectAccount(accounts(general(0, 40)), 'claude', { now: NOW }).id, 'claude:b');
   assert.equal(selectAccount(accounts(general(0, 40)), 'claude', { accountId: 'claude:a', now: NOW }).id, 'claude:a');
   assert.throws(() => selectAccount(accounts(general(20, 40)), 'claude', { accountId: 'claude:x', now: NOW }), /account_not_found/);
-  assert.equal(selectAccount(snapshot([{ id: 'claude:a', providerId: 'claude', primary: true, windows: general(0, 0) }]), 'claude', { now: NOW }), null);
+  assert.equal(
+    selectAccount(snapshot([{ id: 'claude:a', providerId: 'claude', primary: true, windows: general(0, 0) }]), 'claude', { now: NOW }),
+    null
+  );
 });
 
 test('provider selection follows the user order and never fabricates quota', () => {
@@ -68,11 +96,23 @@ test('provider selection follows the user order and never fabricates quota', () 
   const userOrder = selectProvider(snapshot(accounts, ['codex', 'claude', 'cursor', 'antigravity']), { now: NOW });
   assert.deepEqual([userOrder.providerId, userOrder.isFallback], ['codex', false]);
 
-  const exhausted = selectProvider(snapshot([{ ...accounts[0], windows: general(0, 80) }, accounts[1]], ['claude', 'codex', 'cursor', 'antigravity']), { now: NOW });
+  const exhausted = selectProvider(
+    snapshot([{ ...accounts[0], windows: general(0, 80) }, accounts[1]], ['claude', 'codex', 'cursor', 'antigravity']),
+    { now: NOW }
+  );
   assert.deepEqual([exhausted.providerId, exhausted.isFallback], ['codex', true]);
 
   // A provider that reads "ok" but has no measured account is not evidence of quota.
-  const none = selectProvider({ settings: { providerOrder: ['cursor', 'claude'], accounts: [{ id: 'cursor:default', providerId: 'cursor', primary: true, enabled: true }] }, providers: [{ id: 'cursor', status: 'ok', accounts: [] }] }, { now: NOW });
+  const none = selectProvider(
+    {
+      settings: {
+        providerOrder: ['cursor', 'claude'],
+        accounts: [{ id: 'cursor:default', providerId: 'cursor', primary: true, enabled: true }]
+      },
+      providers: [{ id: 'cursor', status: 'ok', accounts: [] }]
+    },
+    { now: NOW }
+  );
   assert.deepEqual([none.providerId, none.verified, none.headroomPercent, none.account.id], ['cursor', false, null, 'cursor:default']);
 
   assert.equal(selectProvider(snapshot(accounts, ['claude', 'codex']), { exclude: 'claude', now: NOW }).providerId, 'codex');
@@ -107,5 +147,11 @@ test('Claude settings files are read from disk and named for the warning', async
   assert.equal(files['.claude/settings.local.json'], null);
   const state = snapshot([{ id: 'claude:a', providerId: 'claude', primary: true, windows: general(50, 50) }]);
   const warnings = claudeLaunchWarnings(state, state.settings.accounts[0], { settingsFiles: files, now: NOW });
-  assert.deepEqual(warnings.map(w => [w.key, w.params.file]), [['warnSettingsEnvOverride', '.claude/settings.json'], ['warnApiKeyHelper', path.join(path.basename(configDir), 'settings.json')]]);
+  assert.deepEqual(
+    warnings.map(w => [w.key, w.params.file]),
+    [
+      ['warnSettingsEnvOverride', '.claude/settings.json'],
+      ['warnApiKeyHelper', path.join(path.basename(configDir), 'settings.json')]
+    ]
+  );
 });

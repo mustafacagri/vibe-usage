@@ -22,13 +22,15 @@ function parseCodexRateLimits(response) {
     for (const slot of WINDOW_SLOTS) {
       const raw = bucket?.[slot];
       if (!raw) continue;
-      windows.push(normalizeWindow({
-        id: `${bucketId}:${slot}`,
-        ...durationLabel(raw.windowDurationMins),
-        usedPercent: raw.usedPercent,
-        resetsAt: isoDate(raw.resetsAt, true),
-        ...(bucketId !== DEFAULT_BUCKET ? { scope: safeText(bucketId) } : {})
-      }));
+      windows.push(
+        normalizeWindow({
+          id: `${bucketId}:${slot}`,
+          ...durationLabel(raw.windowDurationMins),
+          usedPercent: raw.usedPercent,
+          resetsAt: isoDate(raw.resetsAt, true),
+          ...(bucketId !== DEFAULT_BUCKET ? { scope: safeText(bucketId) } : {})
+        })
+      );
     }
   }
   return windows.length ? { windows } : { windows, status: 'no_limits_reported' };
@@ -37,10 +39,15 @@ function parseCodexRateLimits(response) {
 // Minimal JSON-RPC client over the Codex app server's stdio transport.
 function startAppServer(binary, configDir) {
   const child = spawn(binary, ['app-server', '--listen', 'stdio://'], {
-    shell: false, windowsHide: true, env: common.cleanEnvironment({ CODEX_HOME: configDir }), stdio: ['pipe', 'pipe', 'pipe']
+    shell: false,
+    windowsHide: true,
+    env: common.cleanEnvironment({ CODEX_HOME: configDir }),
+    stdio: ['pipe', 'pipe', 'pipe']
   });
   const pending = new Map();
-  let buffer = '', closed = false, serial = 0;
+  let buffer = '',
+    closed = false,
+    serial = 0;
 
   function rejectAll() {
     closed = true;
@@ -53,17 +60,26 @@ function startAppServer(binary, configDir) {
   child.stdin.on('error', () => {});
   child.stdout.on('data', chunk => {
     buffer += chunk.toString();
-    if (buffer.length > common.MAX_RESPONSE_BYTES) { rejectAll(); child.kill(); return; }
+    if (buffer.length > common.MAX_RESPONSE_BYTES) {
+      rejectAll();
+      child.kill();
+      return;
+    }
     let newline;
     while ((newline = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       let packet;
-      try { packet = JSON.parse(line); } catch { continue; }
+      try {
+        packet = JSON.parse(line);
+      } catch {
+        continue;
+      }
       const item = pending.get(packet.id);
       if (!item) continue;
       pending.delete(packet.id);
-      if (packet.error) item.reject(new common.ProviderError('rpc_error')); else item.resolve(packet.result);
+      if (packet.error) item.reject(new common.ProviderError('rpc_error'));
+      else item.resolve(packet.result);
     }
   });
 
@@ -74,10 +90,19 @@ function startAppServer(binary, configDir) {
     return new Promise((resolve, reject) => {
       if (closed) return reject(new common.ProviderError('server_closed'));
       const id = ++serial;
-      const timeout = setTimeout(() => { pending.delete(id); reject(new common.ProviderError('rpc_timeout')); }, RPC_TIMEOUT_MS);
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new common.ProviderError('rpc_timeout'));
+      }, RPC_TIMEOUT_MS);
       pending.set(id, {
-        resolve: value => { clearTimeout(timeout); resolve(value); },
-        reject: error => { clearTimeout(timeout); reject(error); }
+        resolve: value => {
+          clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: error => {
+          clearTimeout(timeout);
+          reject(error);
+        }
       });
       send({ id, method, ...(params ? { params } : {}) });
     });
@@ -88,7 +113,10 @@ function startAppServer(binary, configDir) {
     if (child.exitCode === null && child.signalCode === null) {
       await new Promise(resolve => {
         const timer = setTimeout(resolve, SHUTDOWN_GRACE_MS);
-        child.once('close', () => { clearTimeout(timer); resolve(); });
+        child.once('close', () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
     }
     rejectAll();
@@ -99,7 +127,10 @@ function startAppServer(binary, configDir) {
 async function probeAccount(binary, configDir) {
   const server = startAppServer(binary, configDir);
   try {
-    await server.request('initialize', { clientInfo: { name: 'vibe_usage', title: 'Vibe Usage', version }, capabilities: { experimentalApi: false } });
+    await server.request('initialize', {
+      clientInfo: { name: 'vibe_usage', title: 'Vibe Usage', version },
+      capabilities: { experimentalApi: false }
+    });
     server.notify('initialized');
     const account = await server.request('account/read', { refreshToken: false });
     if (!account?.account) throw new common.ProviderError('auth_missing');
@@ -116,10 +147,15 @@ async function probeAccount(binary, configDir) {
 // which reports the signed-out state itself.
 async function assertTokenNotExpired(configDir, clock) {
   let auth;
-  try { auth = await common.readJson(path.join(configDir, 'auth.json')); }
-  catch (error) { if (error.code === 'auth_missing') return; throw error; }
+  try {
+    auth = await common.readJson(path.join(configDir, 'auth.json'));
+  } catch (error) {
+    if (error.code === 'auth_missing') return;
+    throw error;
+  }
   const token = auth.tokens?.access_token;
-  if (typeof token === 'string' && common.isExpired(common.jwtClaims(token).exp * 1000, clock)) throw new common.ProviderError('auth_expired');
+  if (typeof token === 'string' && common.isExpired(common.jwtClaims(token).exp * 1000, clock))
+    throw new common.ProviderError('auth_expired');
 }
 
 function createCodexProvider(options = {}) {
@@ -127,7 +163,9 @@ function createCodexProvider(options = {}) {
   const defaultConfigDir = process.env.CODEX_HOME || path.join(home, '.codex');
   return {
     id: 'codex',
-    discover: async () => [{ id: 'codex:default', providerId: 'codex', labelKey: 'defaultAccount', configDir: defaultConfigDir, primary: true, enabled: true }],
+    discover: async () => [
+      { id: 'codex:default', providerId: 'codex', labelKey: 'defaultAccount', configDir: defaultConfigDir, primary: true, enabled: true }
+    ],
     async fetch(account) {
       const configDir = account.configDir || defaultConfigDir;
       await assertTokenNotExpired(configDir, options.clock);

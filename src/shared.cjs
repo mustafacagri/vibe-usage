@@ -42,7 +42,9 @@
   }
 
   function formatDate(date, locale) {
-    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+    return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(
+      date
+    );
   }
 
   // A window whose model scope the source marks inactive: its numbers are not an entitlement.
@@ -67,8 +69,10 @@
 
   function windowDetail(window, t, locale) {
     if (window.amounts) {
-      return Object.entries(AMOUNT_KEYS).filter(([field]) => isNumber(window.amounts[field]))
-        .map(([field, key]) => t(key, { n: formatMoney(window.amounts[field], locale) })).join(' · ');
+      return Object.entries(AMOUNT_KEYS)
+        .filter(([field]) => isNumber(window.amounts[field]))
+        .map(([field, key]) => t(key, { n: formatMoney(window.amounts[field], locale) }))
+        .join(' · ');
     }
     if (window.detailKey) return t(window.detailKey);
     return isPassive(window) ? t('passiveSourceDetail') : '';
@@ -114,4 +118,4 @@
   const api = { formatPercent, formatDuration, describeWindow, formatAge, formatFreshness, describeCode };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VibeFormat = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+})(globalThis);

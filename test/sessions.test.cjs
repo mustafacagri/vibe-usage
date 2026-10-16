@@ -19,7 +19,13 @@ test('auto discovery lists sessions of every provider', async t => {
   const slug = path.resolve(tempProj).replace(/[/\\:]/g, '-');
   const claudeDir = path.join(tempHome, '.claude', 'projects', slug);
   await fs.mkdir(claudeDir, { recursive: true });
-  await fs.writeFile(path.join(claudeDir, 'claude-sess.jsonl'), JSON.stringify({ type: 'ai-title', aiTitle: 'Claude Session Title' }) + '\n' + JSON.stringify({ type: 'user', message: { content: 'Task 1' } }), 'utf8');
+  await fs.writeFile(
+    path.join(claudeDir, 'claude-sess.jsonl'),
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Claude Session Title' }) +
+      '\n' +
+      JSON.stringify({ type: 'user', message: { content: 'Task 1' } }),
+    'utf8'
+  );
 
   // 2. Setup mock Antigravity session
   const convDir = path.join(tempHome, '.gemini', 'antigravity-ide', 'conversations');
@@ -52,20 +58,46 @@ test('Codex sessions are project-scoped, include compressed rollouts and exclude
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-home-'));
   const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-proj-'));
   const other = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-other-'));
-  t.after(async () => { for (const d of [home, proj, other]) await fs.rm(d, { recursive: true, force: true }); });
+  t.after(async () => {
+    for (const d of [home, proj, other]) await fs.rm(d, { recursive: true, force: true });
+  });
 
   const day = path.join(home, '.codex', 'sessions', '2026', '10', '16');
   await fs.mkdir(day, { recursive: true });
   const A = '01a1aaaa-0000-7000-8000-000000000001';
   const B = '01a1bbbb-0000-7000-8000-000000000002';
-  await fs.writeFile(path.join(day, `rollout-2026-10-16T10-00-00-${A}.jsonl`), codexRollout({ id: A, cwd: proj, model: 'gpt-6-luna', user: ['Kota ekranını düzelt', 'Testleri de ekle'], assistant: ['Düzelttim', 'Testler eklendi'] }));
-  await fs.writeFile(path.join(day, `rollout-2026-10-16T09-00-00-${B}.jsonl.zst`), zlib.zstdCompressSync(Buffer.from(codexRollout({ id: B, cwd: proj, user: ['Eski sıkıştırılmış oturum'] }))));
+  await fs.writeFile(
+    path.join(day, `rollout-2026-10-16T10-00-00-${A}.jsonl`),
+    codexRollout({
+      id: A,
+      cwd: proj,
+      model: 'gpt-6-luna',
+      user: ['Kota ekranını düzelt', 'Testleri de ekle'],
+      assistant: ['Düzelttim', 'Testler eklendi']
+    })
+  );
+  await fs.writeFile(
+    path.join(day, `rollout-2026-10-16T09-00-00-${B}.jsonl.zst`),
+    zlib.zstdCompressSync(Buffer.from(codexRollout({ id: B, cwd: proj, user: ['Eski sıkıştırılmış oturum'] })))
+  );
   // Fork snapshot of A: begins with A's session_meta, must not duplicate A.
-  await fs.writeFile(path.join(day, `rollout-2026-10-16T11-00-00-${A}_01a1cccc-0000-7000-8000-000000000003.jsonl`), codexRollout({ id: A, cwd: proj, user: ['snapshot'] }));
+  await fs.writeFile(
+    path.join(day, `rollout-2026-10-16T11-00-00-${A}_01a1cccc-0000-7000-8000-000000000003.jsonl`),
+    codexRollout({ id: A, cwd: proj, user: ['snapshot'] })
+  );
   // Guardian reviewer thread and another project's session.
-  await fs.writeFile(path.join(day, 'rollout-2026-10-16T12-00-00-01a1dddd-0000-7000-8000-000000000004.jsonl'), codexRollout({ id: '01a1dddd-0000-7000-8000-000000000004', cwd: proj, source: { subagent: { other: 'guardian' } }, user: ['review'] }));
-  await fs.writeFile(path.join(day, 'rollout-2026-10-16T12-30-00-01a1eeee-0000-7000-8000-000000000005.jsonl'), codexRollout({ id: '01a1eeee-0000-7000-8000-000000000005', cwd: other, user: ['Başka proje'] }));
-  await fs.writeFile(path.join(home, '.codex', 'session_index.jsonl'), JSON.stringify({ id: A, thread_name: 'Kota ekranı', updated_at: '2026-10-16T10:00:00Z' }) + '\n');
+  await fs.writeFile(
+    path.join(day, 'rollout-2026-10-16T12-00-00-01a1dddd-0000-7000-8000-000000000004.jsonl'),
+    codexRollout({ id: '01a1dddd-0000-7000-8000-000000000004', cwd: proj, source: { subagent: { other: 'guardian' } }, user: ['review'] })
+  );
+  await fs.writeFile(
+    path.join(day, 'rollout-2026-10-16T12-30-00-01a1eeee-0000-7000-8000-000000000005.jsonl'),
+    codexRollout({ id: '01a1eeee-0000-7000-8000-000000000005', cwd: other, user: ['Başka proje'] })
+  );
+  await fs.writeFile(
+    path.join(home, '.codex', 'session_index.jsonl'),
+    JSON.stringify({ id: A, thread_name: 'Kota ekranı', updated_at: '2026-10-16T10:00:00Z' }) + '\n'
+  );
 
   const sessions = await listSessions({ providerId: 'codex', projectDir: proj, homeDir: home });
   assert.deepEqual(sessions.map(s => s.id).sort(), [A, B].sort());
@@ -81,22 +113,35 @@ test('Codex sessions are project-scoped, include compressed rollouts and exclude
   assert.equal(h.lastUserMsg, 'Testleri de ekle');
   assert.equal(h.lastAssistantMsg, 'Testler eklendi');
 
-  assert.deepEqual(await listSessions({ providerId: 'codex', projectDir: other, homeDir: home }).then(x => x.map(s => s.id)), ['01a1eeee-0000-7000-8000-000000000005']);
+  assert.deepEqual(await listSessions({ providerId: 'codex', projectDir: other, homeDir: home }).then(x => x.map(s => s.id)), [
+    '01a1eeee-0000-7000-8000-000000000005'
+  ]);
 });
 
 test('Cursor CLI sessions are matched by folder and read from store.db', async t => {
   const { listSessions, collectHandoverContext } = require('../src/core/handover.cjs');
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-home-'));
   const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-proj-'));
-  t.after(async () => { for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true }); });
+  t.after(async () => {
+    for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true });
+  });
 
   const chats = path.join(home, '.cursor', 'chats');
-  writeCursorChat(chats, { id: 'chat-mine', cwd: proj, name: 'Refactor storage', user: ['Storage katmanını ayır'], assistant: ['Ayırdım'] });
+  writeCursorChat(chats, {
+    id: 'chat-mine',
+    cwd: proj,
+    name: 'Refactor storage',
+    user: ['Storage katmanını ayır'],
+    assistant: ['Ayırdım']
+  });
   writeCursorChat(chats, { id: 'chat-other', cwd: path.join(proj, 'nested'), name: 'Other', user: ['x'] });
   writeCursorChat(chats, { id: 'chat-empty', cwd: proj, name: 'New Agent' });
 
   const sessions = await listSessions({ providerId: 'cursor', projectDir: proj, homeDir: home });
-  assert.deepEqual(sessions.map(s => [s.id, s.title, s.turnCount, s.providerId]), [['chat-mine', 'Refactor storage', 1, 'cursor']]);
+  assert.deepEqual(
+    sessions.map(s => [s.id, s.title, s.turnCount, s.providerId]),
+    [['chat-mine', 'Refactor storage', 1, 'cursor']]
+  );
 
   const h = await collectHandoverContext(proj, { sessionId: 'chat-mine', providerId: 'cursor', homeDir: home });
   assert.equal(h.lastUserMsg, 'Storage katmanını ayır');
@@ -107,7 +152,9 @@ test('Antigravity sessions require an exact workspace match and report the model
   const { listSessions } = require('../src/core/handover.cjs');
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ag-home-'));
   const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ag-proj-'));
-  t.after(async () => { for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true }); });
+  t.after(async () => {
+    for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true });
+  });
 
   const conv = path.join(home, '.gemini', 'antigravity-ide', 'conversations');
   await fs.mkdir(conv, { recursive: true });

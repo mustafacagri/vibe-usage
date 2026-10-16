@@ -6,6 +6,8 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { getQuotaAgent } = require('./tls-trust.cjs');
 const { CREDENTIAL_ENV_KEYS } = require('../catalog.cjs');
+const { AppError } = require('../core/errors.cjs');
+const { hasControlChars } = require('../core/model.cjs');
 const { version } = require('../../package.json');
 
 const USER_AGENT = `vibe-usage/${version}`;
@@ -24,31 +26,66 @@ const QUOTA_ENDPOINTS = Object.freeze({
 const ALLOWED_ENDPOINTS = new Set(Object.values(QUOTA_ENDPOINTS));
 
 const ERROR_CODES = new Set([
-  'auth_missing', 'auth_expired', 'auth_invalid', 'auth_rejected', 'rate_limited', 'transport_error', 'request_timeout',
-  'response_too_large', 'invalid_response', 'http_rejected', 'endpoint_not_allowed', 'binary_missing', 'invalid_binary',
-  'process_failed', 'process_timeout', 'rpc_error', 'rpc_timeout', 'server_closed', 'app_closed', 'local_service_unavailable',
-  'unsupported_platform', 'unsupported_profile', 'keychain_unavailable', 'provider_failed', 'tls_certificate_error',
+  'auth_missing',
+  'auth_expired',
+  'auth_invalid',
+  'auth_rejected',
+  'rate_limited',
+  'transport_error',
+  'request_timeout',
+  'response_too_large',
+  'invalid_response',
+  'http_rejected',
+  'endpoint_not_allowed',
+  'binary_missing',
+  'invalid_binary',
+  'process_failed',
+  'process_timeout',
+  'rpc_error',
+  'rpc_timeout',
+  'server_closed',
+  'app_closed',
+  'local_service_unavailable',
+  'unsupported_platform',
+  'unsupported_profile',
+  'keychain_unavailable',
+  'provider_failed',
+  'tls_certificate_error',
   'trust_store_unavailable'
 ]);
 const CERTIFICATE_ERRORS = new Set([
-  'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED', 'CERT_REJECTED',
-  'CERT_SIGNATURE_FAILURE', 'ERR_TLS_CERT_ALTNAME_INVALID'
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  'CERT_HAS_EXPIRED',
+  'CERT_NOT_YET_VALID',
+  'CERT_UNTRUSTED',
+  'CERT_REJECTED',
+  'CERT_SIGNATURE_FAILURE',
+  'ERR_TLS_CERT_ALTNAME_INVALID'
 ]);
 
-class ProviderError extends Error {
+// A provider read failure. Unknown codes collapse to `provider_failed` so that raw upstream
+// text never becomes a code the UI would show.
+class ProviderError extends AppError {
   constructor(code, options = {}) {
     super(ERROR_CODES.has(code) ? code : 'provider_failed');
     this.name = 'ProviderError';
-    this.code = this.message;
     if (options.retryAfterSeconds !== undefined) {
       const seconds = Number(options.retryAfterSeconds) || RETRY_AFTER_BOUNDS_SECONDS.min;
       this.retryAfterSeconds = Math.max(RETRY_AFTER_BOUNDS_SECONDS.min, Math.min(RETRY_AFTER_BOUNDS_SECONDS.max, seconds));
     }
   }
 }
-function safeError(error) { return error instanceof ProviderError ? error.code : 'provider_failed'; }
-function now(clock = Date.now) { const result = clock(); return result instanceof Date ? result.getTime() : Number(result); }
+function safeError(error) {
+  return error instanceof ProviderError ? error.code : 'provider_failed';
+}
+function now(clock = Date.now) {
+  const result = clock();
+  return result instanceof Date ? result.getTime() : Number(result);
+}
 
 function isExpired(epochMs, clock) {
   return Number.isFinite(epochMs) && epochMs <= now(clock) + TOKEN_EXPIRY_SKEW_MS;
@@ -59,8 +96,11 @@ function isExpired(epochMs, clock) {
 function jwtClaims(token) {
   const parts = typeof token === 'string' ? token.split('.') : [];
   if (parts.length !== 3) throw new ProviderError('auth_invalid');
-  try { return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')); }
-  catch { throw new ProviderError('auth_invalid'); }
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    throw new ProviderError('auth_invalid');
+  }
 }
 
 async function readJson(file) {
@@ -95,13 +135,21 @@ function readJsonResponse(response, finish, maxBytes = MAX_RESPONSE_BYTES) {
     finish(httpStatusError(response));
     return;
   }
-  let bytes = 0, chunks = [];
+  let bytes = 0,
+    chunks = [];
   response.on('data', chunk => {
     bytes += chunk.length;
-    if (bytes > maxBytes) { chunks = []; finish(new ProviderError('response_too_large')); } else chunks.push(chunk);
+    if (bytes > maxBytes) {
+      chunks = [];
+      finish(new ProviderError('response_too_large'));
+    } else chunks.push(chunk);
   });
   response.on('end', () => {
-    try { finish(null, JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { finish(new ProviderError('invalid_response')); }
+    try {
+      finish(null, JSON.parse(Buffer.concat(chunks).toString('utf8')));
+    } catch {
+      finish(new ProviderError('invalid_response'));
+    }
   });
 }
 
@@ -115,9 +163,15 @@ function settleOnce(resolve, reject, timeoutMs) {
     if (settled) return;
     settled = true;
     clearTimeout(deadline);
-    if (error) { for (const stream of streams) stream?.destroy?.(); reject(error); } else resolve(value);
+    if (error) {
+      for (const stream of streams) stream?.destroy?.();
+      reject(error);
+    } else resolve(value);
   }
-  const attach = stream => { streams.push(stream); return stream; };
+  const attach = stream => {
+    streams.push(stream);
+    return stream;
+  };
   return { finish, attach };
 }
 
@@ -126,11 +180,15 @@ function getJson(endpoint, { headers = {}, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, 
     if (!ALLOWED_ENDPOINTS.has(endpoint)) return reject(new ProviderError('endpoint_not_allowed'));
     const { finish, attach } = settleOnce(resolve, reject, timeoutMs);
     try {
-      const request = attach(requestImpl(new URL(endpoint), { headers, timeout: timeoutMs, agent: getQuotaAgent(), rejectUnauthorized: true }, response => {
-        readJsonResponse(attach(response), finish);
-      }));
+      const request = attach(
+        requestImpl(new URL(endpoint), { headers, timeout: timeoutMs, agent: getQuotaAgent(), rejectUnauthorized: true }, response => {
+          readJsonResponse(attach(response), finish);
+        })
+      );
       request.on('timeout', () => finish(new ProviderError('request_timeout')));
-      request.on('error', error => finish(new ProviderError(CERTIFICATE_ERRORS.has(error.code) ? 'tls_certificate_error' : 'transport_error')));
+      request.on('error', error =>
+        finish(new ProviderError(CERTIFICATE_ERRORS.has(error.code) ? 'tls_certificate_error' : 'transport_error'))
+      );
     } catch (error) {
       finish(new ProviderError(error.message === 'trust_store_unavailable' ? 'trust_store_unavailable' : 'transport_error'));
     }
@@ -144,13 +202,14 @@ function unpackedPath(file) {
 
 // Windows ships this interpreter; it is all the launch and discovery scripts need.
 function windowsPowerShell(env = process.env) {
-  const candidate = env.VIBE_POWERSHELL_BINARY || path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+  const candidate =
+    env.VIBE_POWERSHELL_BINARY || path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
   if (!validBinary(candidate, 'win32')) throw new ProviderError('invalid_binary');
   return candidate;
 }
 
 function validBinary(file, platform = process.platform) {
-  if (typeof file !== 'string' || !file || /[\x00-\x1f]/.test(file) || /\.(cmd|bat|ps1)$/i.test(file)) return false;
+  if (typeof file !== 'string' || !file || hasControlChars(file) || /\.(cmd|bat|ps1)$/i.test(file)) return false;
   return (platform === 'win32' ? path.win32 : path.posix).isAbsolute(file);
 }
 
@@ -159,33 +218,49 @@ function validBinary(file, platform = process.platform) {
 function knownInstallLocations(name, { env, home, platform }) {
   const filename = platform === 'win32' ? `${name}.exe` : name;
   const locations = [];
-  if (name === 'codex' && platform === 'win32') locations.push(path.join(env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Programs/OpenAI/Codex/bin/codex.exe'));
+  if (name === 'codex' && platform === 'win32')
+    locations.push(path.join(env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Programs/OpenAI/Codex/bin/codex.exe'));
   if (['claude', 'cursor-agent', 'agent'].includes(name)) locations.push(path.join(home, '.local/bin', filename));
   return locations;
 }
 
+// The directories macOS path_helper adds to PATH (missing files simply add nothing).
 async function macPathHelperDirectories() {
-  const files = ['/etc/paths', ...await fs.readdir('/etc/paths.d').then(entries => entries.map(entry => path.join('/etc/paths.d', entry))).catch(() => [])];
-  const directories = [];
-  for (const file of files) {
-    try { directories.push(...(await fs.readFile(file, 'utf8')).split(/\r?\n/).filter(p => p.startsWith('/'))); } catch {}
-  }
-  return directories;
+  const extra = await fs.readdir('/etc/paths.d').catch(() => []);
+  const files = ['/etc/paths', ...extra.map(entry => path.join('/etc/paths.d', entry))];
+  const contents = await Promise.all(files.map(file => fs.readFile(file, 'utf8').catch(() => '')));
+  return contents.flatMap(text => text.split(/\r?\n/).filter(line => line.startsWith('/')));
 }
 
 async function findBinary(name, { env = process.env, home = os.homedir(), platform = process.platform } = {}) {
   const override = env[`VIBE_${name.toUpperCase().replace(/-/g, '_')}_BINARY`];
   if (override) {
     if (!validBinary(override, platform)) throw new ProviderError('invalid_binary');
-    if (await fs.stat(override).then(s => s.isFile()).catch(() => false)) return override;
+    if (
+      await fs
+        .stat(override)
+        .then(s => s.isFile())
+        .catch(() => false)
+    )
+      return override;
     throw new ProviderError('binary_missing');
   }
   const filename = platform === 'win32' ? `${name}.exe` : name;
   const directories = (env.PATH || env.Path || '').split(path.delimiter).filter(Boolean);
-  if (platform === 'darwin') directories.push(...await macPathHelperDirectories());
-  const candidates = [...knownInstallLocations(name, { env, home, platform }), ...directories.map(directory => path.join(directory, filename))];
+  if (platform === 'darwin') directories.push(...(await macPathHelperDirectories()));
+  const candidates = [
+    ...knownInstallLocations(name, { env, home, platform }),
+    ...directories.map(directory => path.join(directory, filename))
+  ];
   for (const candidate of candidates) {
-    if (validBinary(candidate, platform) && await fs.stat(candidate).then(s => s.isFile()).catch(() => false)) return candidate;
+    if (
+      validBinary(candidate, platform) &&
+      (await fs
+        .stat(candidate)
+        .then(s => s.isFile())
+        .catch(() => false))
+    )
+      return candidate;
   }
   throw new ProviderError('binary_missing');
 }
@@ -193,31 +268,72 @@ async function findBinary(name, { env = process.env, home = os.homedir(), platfo
 // Copy of `source` without credential overrides (matched case-insensitively on Windows,
 // where environment names are case-insensitive), plus `config`.
 function cleanEnvironment(config = {}, platform = process.platform, source = process.env) {
-  const blocked = new Set(CREDENTIAL_ENV_KEYS.map(k => platform === 'win32' ? k.toLowerCase() : k));
-  const environment = Object.fromEntries(Object.entries(source).filter(([key]) => !blocked.has(platform === 'win32' ? key.toLowerCase() : key)));
+  const blocked = new Set(CREDENTIAL_ENV_KEYS.map(k => (platform === 'win32' ? k.toLowerCase() : k)));
+  const environment = Object.fromEntries(
+    Object.entries(source).filter(([key]) => !blocked.has(platform === 'win32' ? key.toLowerCase() : key))
+  );
   return { ...environment, ...config };
 }
 
-function runProcess(binary, args, { env, platform = process.platform, timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS, maxBytes = MAX_RESPONSE_BYTES } = {}) {
+function runProcess(
+  binary,
+  args,
+  { env, platform = process.platform, timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS, maxBytes = MAX_RESPONSE_BYTES } = {}
+) {
   return new Promise((resolve, reject) => {
-    if (!validBinary(binary, platform) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0'))) return reject(new ProviderError('invalid_binary'));
-    const child = spawn(binary, args, { env: env || cleanEnvironment({}, platform), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-    let output = '', bytes = 0, failure = null;
-    const timer = setTimeout(() => { failure = new ProviderError('process_timeout'); child.kill('SIGKILL'); }, timeoutMs);
+    if (!validBinary(binary, platform) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0')))
+      return reject(new ProviderError('invalid_binary'));
+    const child = spawn(binary, args, {
+      env: env || cleanEnvironment({}, platform),
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let output = '',
+      bytes = 0,
+      failure = null;
+    const timer = setTimeout(() => {
+      failure = new ProviderError('process_timeout');
+      child.kill('SIGKILL');
+    }, timeoutMs);
     child.stdout.on('data', chunk => {
       bytes += chunk.length;
-      if (bytes > maxBytes) { output = ''; failure = new ProviderError('response_too_large'); child.kill('SIGKILL'); } else output += chunk.toString();
+      if (bytes > maxBytes) {
+        output = '';
+        failure = new ProviderError('response_too_large');
+        child.kill('SIGKILL');
+      } else output += chunk.toString();
     });
     child.stderr.on('data', () => {});
-    child.on('error', () => { clearTimeout(timer); reject(new ProviderError('process_failed')); });
+    child.on('error', () => {
+      clearTimeout(timer);
+      reject(new ProviderError('process_failed'));
+    });
     child.on('close', code => {
       clearTimeout(timer);
-      if (failure) reject(failure); else if (code !== 0) reject(new ProviderError('process_failed')); else resolve(output);
+      if (failure) reject(failure);
+      else if (code !== 0) reject(new ProviderError('process_failed'));
+      else resolve(output);
     });
   });
 }
 
 module.exports = {
-  USER_AGENT, MAX_RESPONSE_BYTES, QUOTA_ENDPOINTS, ProviderError, safeError, now, isExpired, jwtClaims, readJson,
-  readJsonResponse, settleOnce, getJson, unpackedPath, windowsPowerShell, findBinary, cleanEnvironment, runProcess
+  USER_AGENT,
+  MAX_RESPONSE_BYTES,
+  QUOTA_ENDPOINTS,
+  ProviderError,
+  safeError,
+  now,
+  isExpired,
+  jwtClaims,
+  readJson,
+  readJsonResponse,
+  settleOnce,
+  getJson,
+  unpackedPath,
+  windowsPowerShell,
+  findBinary,
+  cleanEnvironment,
+  runProcess
 };

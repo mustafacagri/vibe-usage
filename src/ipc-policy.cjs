@@ -14,8 +14,12 @@ function validateRefresh(value) {
 
 // Every IPC result is an envelope so that error codes survive the process boundary;
 // the preload script unwraps it back into a resolved value or a thrown error.
-function envelope(promise) {
-  return Promise.resolve(promise).then(value => ({ ok: true, value }), error => ({ ok: false, error: toErrorPayload(error) }));
+async function envelope(task) {
+  try {
+    return { ok: true, value: await task() };
+  } catch (error) {
+    return { ok: false, error: toErrorPayload(error) };
+  }
 }
 
 module.exports = { assertSender, validateRefresh, envelope };

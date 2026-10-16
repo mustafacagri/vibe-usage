@@ -164,7 +164,7 @@ test('a fetch finishing after the account was removed does not resurrect it', as
       { id: 'claude:a', providerId: 'claude', label: 'Account A', configDir: '/dir/a', primary: true, enabled: true },
       { id: 'claude:b', providerId: 'claude', label: 'Account B', configDir: '/dir/b', primary: false, enabled: true }
     ],
-    fetch: async (acc) => {
+    fetch: async acc => {
       if (acc.id === 'claude:a') return defA.promise;
       if (acc.id === 'claude:b') return defB.promise;
       throw new Error('unknown_account');
@@ -277,8 +277,14 @@ test('quota monitoring writes nothing to provider files', async t => {
   // Intercept write calls
   const originalWriteFile = fs.writeFile;
   const originalAppendFile = fs.appendFile;
-  fs.writeFile = async (...args) => { writeCount++; return originalWriteFile.apply(fs, args); };
-  fs.appendFile = async (...args) => { writeCount++; return originalAppendFile.apply(fs, args); };
+  fs.writeFile = async (...args) => {
+    writeCount++;
+    return originalWriteFile.apply(fs, args);
+  };
+  fs.appendFile = async (...args) => {
+    writeCount++;
+    return originalAppendFile.apply(fs, args);
+  };
   t.after(() => {
     fs.writeFile = originalWriteFile;
     fs.appendFile = originalAppendFile;
@@ -307,7 +313,16 @@ test('a closed Antigravity app never deletes its account', async t => {
     name: 'Antigravity',
     discover: async () => {
       if (!appRunning) throw new ProviderError('app_closed');
-      return [{ id: 'antigravity:work@corp.com', providerId: 'antigravity', label: 'Antigravity (work@corp.com)', email: 'work@corp.com', primary: true, enabled: true }];
+      return [
+        {
+          id: 'antigravity:work@corp.com',
+          providerId: 'antigravity',
+          label: 'Antigravity (work@corp.com)',
+          email: 'work@corp.com',
+          primary: true,
+          enabled: true
+        }
+      ];
     },
     fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
   };
@@ -337,7 +352,7 @@ test('discovery and settings updates are serialized and dismissals hold', async 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-r3-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
 
-  let discovered = [
+  const discovered = [
     { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
     { id: 'claude:b', providerId: 'claude', label: 'Discovered B', primary: false, enabled: true }
   ];
@@ -499,7 +514,7 @@ test('dismissed accounts stay dismissed across restarts', async t => {
   const settingsPath = path.join(dir, 'settings.json');
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
 
-  let discovered = [
+  const discovered = [
     { id: 'claude:acc1', providerId: 'claude', label: 'Claude Account 1', primary: true, enabled: true },
     { id: 'claude:acc2', providerId: 'claude', label: 'Claude Account 2', primary: false, enabled: true }
   ];
@@ -546,7 +561,8 @@ test('e-mail addresses with plus signs and long addresses are accepted', async t
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
 
   const plusEmail = 'user+tag@domain.com';
-  const longEmail = 'extremely.long.corporate.work.user.email.address.that.exceeds.sixty.seven.characters@very.long.subdomain.enterprise.company.com';
+  const longEmail =
+    'extremely.long.corporate.work.user.email.address.that.exceeds.sixty.seven.characters@very.long.subdomain.enterprise.company.com';
 
   const server1 = { pid: 701, csrfToken: 'tok1', ports: [7101], sourceKind: 'ide' };
   const server2 = { pid: 702, csrfToken: 'tok2', ports: [7102], sourceKind: 'app' };
@@ -554,11 +570,17 @@ test('e-mail addresses with plus signs and long addresses are accepted', async t
   const provider = createAntigravityProvider({
     platform: 'darwin',
     discoverAntigravityServers: async () => [server1, server2],
-    requestLocalJson: async (server, port, method) => {
+    requestLocalJson: async server => {
       if (server.pid === 701) {
-        return { userStatus: { email: plusEmail }, groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.90 }] }] };
+        return {
+          userStatus: { email: plusEmail },
+          groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.9 }] }]
+        };
       }
-      return { userStatus: { email: longEmail }, groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.80 }] }] };
+      return {
+        userStatus: { email: longEmail },
+        groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.8 }] }]
+      };
     }
   });
 
@@ -610,7 +632,7 @@ test('servers with unreadable identity never delete existing accounts', async t 
   await fs.writeFile(settingsPath, JSON.stringify(initialSettings, null, 2), 'utf-8');
 
   // Server is running (pid 901) but GetUserStatus fails (rate limited or server startup)
-  let statusFails = true;
+  const statusFails = true;
   const provider = {
     id: 'antigravity',
     name: 'Antigravity',
@@ -620,7 +642,16 @@ test('servers with unreadable identity never delete existing accounts', async t 
         const { ProviderError } = require('../src/providers/common.cjs');
         throw new ProviderError('local_service_unavailable');
       }
-      return [{ id: targetId, providerId: 'antigravity', email: 'dev@company.com', label: 'Antigravity (dev@company.com)', primary: true, enabled: true }];
+      return [
+        {
+          id: targetId,
+          providerId: 'antigravity',
+          email: 'dev@company.com',
+          label: 'Antigravity (dev@company.com)',
+          primary: true,
+          enabled: true
+        }
+      ];
     },
     fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
   };
@@ -645,7 +676,7 @@ test('settings updates never infer deletions; dismissal is explicit', async t =>
   const settingsPath = path.join(dir, 'settings.json');
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
 
-  let discovered = [
+  const discovered = [
     { id: 'claude:a', providerId: 'claude', label: 'Claude A', primary: true, enabled: true },
     { id: 'claude:b', providerId: 'claude', label: 'Claude B', primary: false, enabled: true }
   ];
@@ -672,7 +703,10 @@ test('settings updates never infer deletions; dismissal is explicit', async t =>
   await svc.reconcileDiscovery();
   const snap = svc.snapshot();
   assert.equal(snap.settings.accounts.length, 2);
-  assert.equal(snap.settings.accounts.some(a => a.id === 'claude:b'), true);
+  assert.equal(
+    snap.settings.accounts.some(a => a.id === 'claude:b'),
+    true
+  );
 
   // Only explicit dismissAccount permanently dismisses Account B
   await svc.dismissAccount('claude:b');
@@ -693,8 +727,23 @@ test('Antigravity accounts are never removed for being absent', async t => {
     pinned: false,
     intervalSeconds: 120,
     accounts: [
-      { id: 'antigravity:1234567890abcdef', providerId: 'antigravity', label: 'Antigravity IDE', primary: true, enabled: true, origin: 'discovered' },
-      { id: 'claude:profile1', providerId: 'claude', configDir: path.join(dir, 'nonexistent'), label: 'Claude Old', primary: false, enabled: true, origin: 'discovered' }
+      {
+        id: 'antigravity:1234567890abcdef',
+        providerId: 'antigravity',
+        label: 'Antigravity IDE',
+        primary: true,
+        enabled: true,
+        origin: 'discovered'
+      },
+      {
+        id: 'claude:profile1',
+        providerId: 'claude',
+        configDir: path.join(dir, 'nonexistent'),
+        label: 'Claude Old',
+        primary: false,
+        enabled: true,
+        origin: 'discovered'
+      }
     ]
   };
   await fs.writeFile(settingsPath, JSON.stringify(initialSettings), 'utf-8');
@@ -715,9 +764,15 @@ test('Antigravity accounts are never removed for being absent', async t => {
   const accountsAfter = service.snapshot().settings.accounts;
 
   // Claude account should have been removed after 3rd clean miss
-  assert.equal(accountsAfter.some(a => a.id === 'claude:profile1'), false);
+  assert.equal(
+    accountsAfter.some(a => a.id === 'claude:profile1'),
+    false
+  );
   // Antigravity account must be PRESERVED because processes being closed is normal lifetime
-  assert.equal(accountsAfter.some(a => a.id === 'antigravity:1234567890abcdef'), true);
+  assert.equal(
+    accountsAfter.some(a => a.id === 'antigravity:1234567890abcdef'),
+    true
+  );
 });
 
 test('dismissal validates ids, caps the list and can be undone', async t => {
@@ -729,7 +784,12 @@ test('dismissal validates ids, caps the list and can be undone', async t => {
   const service = await createService({
     settingsPath,
     providers: [
-      { id: 'claude', name: 'Claude', discover: async () => [{ id: 'claude:valid1', providerId: 'claude', label: 'Valid 1', primary: true, enabled: true }], fetch: async () => ({ windows: [] }) }
+      {
+        id: 'claude',
+        name: 'Claude',
+        discover: async () => [{ id: 'claude:valid1', providerId: 'claude', label: 'Valid 1', primary: true, enabled: true }],
+        fetch: async () => ({ windows: [] })
+      }
     ]
   });
   await service.reconcileDiscovery();
@@ -746,7 +806,10 @@ test('dismissal validates ids, caps the list and can be undone', async t => {
   await service.dismissAccount('claude:valid1');
   let snapshot = service.snapshot();
   assert.ok(snapshot.settings.dismissedAccountIds.includes('claude:valid1'));
-  assert.equal(snapshot.settings.accounts.some(a => a.id === 'claude:valid1'), false);
+  assert.equal(
+    snapshot.settings.accounts.some(a => a.id === 'claude:valid1'),
+    false
+  );
 
   // Dismissed accounts bounded to 100 entries
   const hundredIds = Array.from({ length: 110 }, (_, i) => `claude:id_${i}`);
@@ -759,18 +822,29 @@ test('dismissal validates ids, caps the list and can be undone', async t => {
   const nextDismissed = currentDismissed.filter(id => id !== 'claude:valid1');
   await service.updateSettings({
     dismissedAccountIds: nextDismissed,
-    accounts: [...service.snapshot().settings.accounts, { id: 'claude:valid1', providerId: 'claude', label: 'Valid 1 Restored', primary: true, enabled: true }]
+    accounts: [
+      ...service.snapshot().settings.accounts,
+      { id: 'claude:valid1', providerId: 'claude', label: 'Valid 1 Restored', primary: true, enabled: true }
+    ]
   });
   snapshot = service.snapshot();
   assert.equal(snapshot.settings.dismissedAccountIds.includes('claude:valid1'), false);
-  assert.equal(snapshot.settings.accounts.some(a => a.id === 'claude:valid1'), true);
+  assert.equal(
+    snapshot.settings.accounts.some(a => a.id === 'claude:valid1'),
+    true
+  );
 
   // Test updateSettings preserves account origin when untouched
   // Re-add an account via discovery
   const discService = await createService({
     settingsPath: path.join(dir, 'settings2.json'),
     providers: [
-      { id: 'claude', name: 'Claude', discover: async () => [{ id: 'claude:disc1', providerId: 'claude', label: 'D1', primary: true, enabled: true }], fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 50 }] }) }
+      {
+        id: 'claude',
+        name: 'Claude',
+        discover: async () => [{ id: 'claude:disc1', providerId: 'claude', label: 'D1', primary: true, enabled: true }],
+        fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 50 }] })
+      }
     ]
   });
   await discService.reconcileDiscovery();
@@ -832,7 +906,9 @@ test('clearing dismissals lets discovery restore accounts', async t => {
   const provider = {
     id: 'antigravity',
     name: 'Antigravity',
-    discover: async () => [{ id: 'antigravity:test_account', providerId: 'antigravity', label: 'Antigravity Dev', primary: true, enabled: true }],
+    discover: async () => [
+      { id: 'antigravity:test_account', providerId: 'antigravity', label: 'Antigravity Dev', primary: true, enabled: true }
+    ],
     fetch: async () => ({ windows: [] })
   };
 
@@ -861,7 +937,14 @@ test('restoring dismissed accounts takes effect immediately', async t => {
     pinned: false,
     intervalSeconds: 120,
     accounts: [
-      { id: 'antigravity:test_account', providerId: 'antigravity', label: 'Antigravity Dev', primary: true, enabled: true, origin: 'discovered' }
+      {
+        id: 'antigravity:test_account',
+        providerId: 'antigravity',
+        label: 'Antigravity Dev',
+        primary: true,
+        enabled: true,
+        origin: 'discovered'
+      }
     ],
     dismissedAccountIds: []
   };
@@ -873,7 +956,9 @@ test('restoring dismissed accounts takes effect immediately', async t => {
   const provider = {
     id: 'antigravity',
     name: 'Antigravity',
-    discover: async () => [{ id: 'antigravity:test_account', providerId: 'antigravity', label: 'Antigravity Dev', primary: true, enabled: true }],
+    discover: async () => [
+      { id: 'antigravity:test_account', providerId: 'antigravity', label: 'Antigravity Dev', primary: true, enabled: true }
+    ],
     fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 80 }] })
   };
 
@@ -910,18 +995,14 @@ test('the dismissal list keeps the newest entries when full', async t => {
   const initialSettings = {
     pinned: false,
     intervalSeconds: 120,
-    accounts: [
-      { id: 'claude:target', providerId: 'claude', label: 'Target', primary: true, enabled: true, origin: 'discovered' }
-    ],
+    accounts: [{ id: 'claude:target', providerId: 'claude', label: 'Target', primary: true, enabled: true, origin: 'discovered' }],
     dismissedAccountIds: initialDismissed
   };
   await fs.writeFile(settingsPath, JSON.stringify(initialSettings), 'utf-8');
 
   const service = await createService({
     settingsPath,
-    providers: [
-      { id: 'claude', name: 'Claude', discover: async () => [], fetch: async () => ({ windows: [] }) }
-    ]
+    providers: [{ id: 'claude', name: 'Claude', discover: async () => [], fetch: async () => ({ windows: [] }) }]
   });
 
   // Dismiss 101st account
@@ -967,9 +1048,13 @@ test('account status carries a code and clears after a successful read', async t
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   let fail = true;
   const provider = {
-    id: 'codex', name: 'Codex',
+    id: 'codex',
+    name: 'Codex',
     discover: async () => [{ id: 'codex:default', providerId: 'codex', label: 'Mevcut hesap', primary: true, enabled: true }],
-    fetch: async () => { if (fail) throw new ProviderError('transport_error'); return { windows: [{ id: 'w', remainingPercent: 50 }] }; }
+    fetch: async () => {
+      if (fail) throw new ProviderError('transport_error');
+      return { windows: [{ id: 'w', remainingPercent: 50 }] };
+    }
   };
   const svc = await createService({ settingsPath: path.join(dir, 'settings.json'), providers: [provider] });
   await svc.refresh();
@@ -980,37 +1065,72 @@ test('account status carries a code and clears after a successful read', async t
   assert.equal(svc.snapshot().providers[0].accounts[0].messageCode, undefined);
 });
 
-test('window settings saved during refresh do not detach accounts from results', async t=>{
- const {createService}=require('../src/core/service.cjs');
- const dir=await fs.mkdtemp(path.join(os.tmpdir(),'vibe-window-race-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
- let complete;const response=new Promise(resolve=>{complete=resolve;});
- const svc=await createService({settingsPath:path.join(dir,'s.json'),providers:[{id:'claude',name:'Claude',discover:async()=>[{id:'claude:default',providerId:'claude',label:'A',primary:true,enabled:true}],fetch:()=>response}]});
- const refresh=svc.refresh();await svc.updateSettings({window:{x:0,y:0,width:430,height:800}});complete({windows:[{id:'five_hour',usedPercent:20}]});await refresh;
- assert.equal(svc.snapshot().providers[0].accounts[0].status,'ok');assert.equal(svc.snapshot().providers[0].accounts[0].windows[0].remainingPercent,80);
+test('window settings saved during refresh do not detach accounts from results', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-window-race-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  let complete;
+  const response = new Promise(resolve => {
+    complete = resolve;
+  });
+  const svc = await createService({
+    settingsPath: path.join(dir, 's.json'),
+    providers: [
+      {
+        id: 'claude',
+        name: 'Claude',
+        discover: async () => [{ id: 'claude:default', providerId: 'claude', label: 'A', primary: true, enabled: true }],
+        fetch: () => response
+      }
+    ]
+  });
+  const refresh = svc.refresh();
+  await svc.updateSettings({ window: { x: 0, y: 0, width: 430, height: 800 } });
+  complete({ windows: [{ id: 'five_hour', usedPercent: 20 }] });
+  await refresh;
+  assert.equal(svc.snapshot().providers[0].accounts[0].status, 'ok');
+  assert.equal(svc.snapshot().providers[0].accounts[0].windows[0].remainingPercent, 80);
 });
 
 test('service isolates accounts, deduplicates refresh, preserves last-good on failure and sanitizes errors', async t => {
   const { createService } = require('../src/core/service.cjs');
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-service-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  let failed = false, calls = 0, time = 100000;
-  const provider = { id: 'claude', name: 'Claude', discover: async () => [
-    { id: 'claude:default', providerId: 'claude', label: 'Default', primary: true, enabled: true },
-    { id: 'claude:secondary', providerId: 'claude', label: 'Secondary', primary: false, enabled: true },
-  ], fetch: async account => { calls++; await new Promise(resolve => setTimeout(resolve, 5)); if (failed) throw new Error('secret-token-raw-response'); return { plan: 'pro', windows: [{ id: 'session', label: '5 hours', usedPercent: account.primary ? 90 : 0 }] }; } };
+  let failed = false,
+    calls = 0,
+    time = 100000;
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => [
+      { id: 'claude:default', providerId: 'claude', label: 'Default', primary: true, enabled: true },
+      { id: 'claude:secondary', providerId: 'claude', label: 'Secondary', primary: false, enabled: true }
+    ],
+    fetch: async account => {
+      calls++;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      if (failed) throw new Error('secret-token-raw-response');
+      return { plan: 'pro', windows: [{ id: 'session', label: '5 hours', usedPercent: account.primary ? 90 : 0 }] };
+    }
+  };
   const svc = await createService({ settingsPath: path.join(dir, 'settings.json'), providers: [provider], clock: () => time });
   const [first] = await Promise.all([svc.refresh(), svc.refresh()]);
   assert.equal(calls, 2);
-  assert.deepEqual(first.providers[0].accounts.map(a => a.windows[0].remainingPercent), [10, 100]);
+  assert.deepEqual(
+    first.providers[0].accounts.map(a => a.windows[0].remainingPercent),
+    [10, 100]
+  );
   const fetchedAt = first.providers[0].fetchedAt;
-  failed = true; time += 1000;
+  failed = true;
+  time += 1000;
   const second = await svc.refresh();
   assert.equal(second.providers[0].status, 'stale');
   assert.equal(second.providers[0].fetchedAt, fetchedAt);
   assert.equal(second.providers[0].accounts[0].windows[0].remainingPercent, 10);
   assert.equal(second.providers[0].accounts[0].status, 'stale');
   assert.equal(JSON.stringify(second).includes('secret-token'), false);
-  const copy = svc.snapshot(); copy.settings.pinned = true;
+  const copy = svc.snapshot();
+  copy.settings.pinned = true;
   assert.equal(svc.snapshot().settings.pinned, false);
   await svc.updateSettings({ pinned: true, intervalSeconds: 60 });
   assert.equal(svc.snapshot().settings.pinned, true);
@@ -1021,9 +1141,28 @@ test('rate-limited account waits for bounded backoff without classifying exhaust
   const { ProviderError } = require('../src/providers/common.cjs');
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-backoff-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  let time = 100000, calls = 0;
-  const svc = await createService({ settingsPath: path.join(dir, 's.json'), clock: () => time, providers: [{ id: 'cursor', name: 'Cursor', discover: async () => [{ id: 'cursor:default', providerId: 'cursor', label: 'Current', primary: true, enabled: true }], fetch: async () => { calls++; throw new ProviderError('rate_limited', { retryAfterSeconds: 90 }); } }] });
-  await svc.refresh(); await svc.refresh(); assert.equal(calls, 1);
+  let time = 100000,
+    calls = 0;
+  const svc = await createService({
+    settingsPath: path.join(dir, 's.json'),
+    clock: () => time,
+    providers: [
+      {
+        id: 'cursor',
+        name: 'Cursor',
+        discover: async () => [{ id: 'cursor:default', providerId: 'cursor', label: 'Current', primary: true, enabled: true }],
+        fetch: async () => {
+          calls++;
+          throw new ProviderError('rate_limited', { retryAfterSeconds: 90 });
+        }
+      }
+    ]
+  });
+  await svc.refresh();
+  await svc.refresh();
+  assert.equal(calls, 1);
   assert.equal(svc.snapshot().providers[0].accounts[0].status, 'rate_limited');
-  time += 91000; await svc.refresh(); assert.equal(calls, 2);
+  time += 91000;
+  await svc.refresh();
+  assert.equal(calls, 2);
 });

@@ -29,6 +29,15 @@ const ANTIGRAVITY_ID_PREFIX = 'antigravity:';
 
 const copy = value => structuredClone(value);
 
+// Rejects with request_timeout if `promise` has not settled within `ms`.
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new ProviderError('request_timeout')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function migrateAntigravityAccounts(currentSettings, found) {
   let modified = false;
   // Early ids embedded the e-mail (antigravity:user@…); current ids hash it.
@@ -64,15 +73,21 @@ async function createService(options = {}) {
   const settingsPath = options.settingsPath || defaultSettingsPath();
   const adapters = options.providers || PROVIDER_IDS.map(id => ADAPTER_FACTORIES[id]());
 
-  let settings = await loadSettings(settingsPath) || copy(DEFAULT_SETTINGS);
+  let settings = (await loadSettings(settingsPath)) || copy(DEFAULT_SETTINGS);
   let changed = false;
 
   // Accounts saved before origins were tracked count as user-managed: never auto-removed.
   for (const account of settings.accounts) {
-    if (!account.origin) { account.origin = 'user'; changed = true; }
+    if (!account.origin) {
+      account.origin = 'user';
+      changed = true;
+    }
   }
   const order = normalizeProviderOrder(settings.providerOrder);
-  if (JSON.stringify(order) !== JSON.stringify(settings.providerOrder)) { settings.providerOrder = order; changed = true; }
+  if (JSON.stringify(order) !== JSON.stringify(settings.providerOrder)) {
+    settings.providerOrder = order;
+    changed = true;
+  }
 
   settings = validateSettings(settings);
   if (changed) await saveSettings(settingsPath, settings);
@@ -86,6 +101,22 @@ async function createService(options = {}) {
   const accountGenerations = new Map(); // accountId -> number
   let lastDiscoveryTime = now(clock);
   let discoveryRunning = null;
+
+  // Settings writes run one at a time, each on the result of the previous one; a failed
+  // write does not block the next.
+  function serialized(task) {
+    const run = pendingSave.catch(() => {}).then(task);
+    pendingSave = run;
+    return run;
+  }
+
+  async function commit(next) {
+    const validated = validateSettings(next);
+    await saveSettings(settingsPath, validated);
+    settings = validated;
+    rebuild();
+    return snapshot();
+  }
 
   function rebuild() {
     for (const provider of providers) {
@@ -108,18 +139,19 @@ async function createService(options = {}) {
   async function reconcileDiscovery() {
     if (discoveryRunning) return discoveryRunning;
     discoveryRunning = (async () => {
-      // Step 1: Run discover() on all adapters in parallel outside pendingSave
-      const discoveryResults = await Promise.allSettled(adapters.map(async adapter => {
-        try {
-          const found = await adapter.discover();
-          return { adapterId: adapter.id, ok: true, found: Array.isArray(found) ? found : [] };
-        } catch (err) {
-          return { adapterId: adapter.id, ok: false, error: err };
-        }
-      }));
+      const discoveryResults = await Promise.allSettled(
+        adapters.map(async adapter => {
+          try {
+            const found = await adapter.discover();
+            return { adapterId: adapter.id, ok: true, found: Array.isArray(found) ? found : [] };
+          } catch (err) {
+            return { adapterId: adapter.id, ok: false, error: err };
+          }
+        })
+      );
 
-      // Step 2: Enter pendingSave solely for fast in-memory reconciliation and atomic file save
-      const operation = pendingSave.catch(() => {}).then(async () => {
+      // Discovery itself runs outside the write queue; only the reconciliation is serialized.
+      return serialized(async () => {
         let modified = false;
         const currentSettings = copy(settings);
         const dismissed = new Set(currentSettings.dismissedAccountIds || []);
@@ -156,7 +188,13 @@ async function createService(options = {}) {
           // customized stays until the user removes it.
           for (let i = currentSettings.accounts.length - 1; i >= 0; i--) {
             const acc = currentSettings.accounts[i];
-            if (!PROCESS_BOUND_PROVIDERS.has(acc.providerId) && acc.providerId === adapterId && acc.origin === 'discovered' && acc.enabled !== false && !foundIds.has(acc.id)) {
+            if (
+              !PROCESS_BOUND_PROVIDERS.has(acc.providerId) &&
+              acc.providerId === adapterId &&
+              acc.origin === 'discovered' &&
+              acc.enabled !== false &&
+              !foundIds.has(acc.id)
+            ) {
               const misses = (consecutiveMisses.get(acc.id) || 0) + 1;
               consecutiveMisses.set(acc.id, misses);
               if (misses >= MISSES_BEFORE_REMOVAL) {
@@ -167,15 +205,8 @@ async function createService(options = {}) {
             }
           }
         }
-        if (modified) {
-          const next = validateSettings(currentSettings);
-          await saveSettings(settingsPath, next);
-          settings = next;
-          rebuild();
-        }
+        if (modified) await commit(currentSettings);
       });
-      pendingSave = operation;
-      return operation;
     })();
     try {
       return await discoveryRunning;
@@ -184,95 +215,74 @@ async function createService(options = {}) {
     }
   }
 
-  // Initial discovery reconciliation runs on startup using the exact same logic
   await reconcileDiscovery().catch(() => {});
+
+  // The account as configured now, or null when it was removed, disabled or re-pointed
+  // while a read was in flight, or a newer read already reported.
+  function currentTarget(provider, account, generation) {
+    if ((accountGenerations.get(account.id) || 0) > generation) return null;
+    accountGenerations.set(account.id, generation);
+    const configured = settings.accounts.find(a => a.id === account.id);
+    if (!configured || configured.configDir !== account.configDir || configured.enabled === false) return null;
+    return provider.accounts.find(a => a.id === account.id) || account;
+  }
+
+  function applyResult(target, result, stamp) {
+    const windows = (result.windows || []).map(normalizeWindow);
+    if (!windows.length && result.status !== 'no_limits_reported') throw new ProviderError('invalid_response');
+    if (result.plan) target.plan = result.plan;
+    if (result.status === 'no_limits_reported') {
+      Object.assign(target, { windows: [], status: 'no_limits_reported', messageCode: 'no_limits_reported', fetchedAt: stamp });
+      return;
+    }
+    // A window missing from this response keeps its last value, marked stale.
+    for (const prior of target.windows || []) {
+      if (!windows.some(w => w.id === prior.id)) windows.push({ ...prior, stale: true, detailKey: 'staleWindowDetail' });
+    }
+    Object.assign(target, { windows, status: 'ok', fetchedAt: stamp });
+    delete target.messageCode;
+  }
+
+  function applyFailure(target, error, attempt) {
+    const code = safeError(error);
+    // A failed read keeps the last good measurement, labelled stale.
+    target.status = target.fetchedAt ? 'stale' : code;
+    target.messageCode = code;
+    if (code === 'rate_limited') cooldown.set(target.id, attempt + (error.retryAfterSeconds || DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS) * 1000);
+  }
+
+  async function refreshAccount(adapter, provider, account, generation) {
+    const attempt = now(clock);
+    if ((cooldown.get(account.id) || 0) > attempt) return;
+    let result, failure;
+    try {
+      result = await withTimeout(adapter.fetch(account), FETCH_TIMEOUT_MS);
+    } catch (error) {
+      failure = error;
+    }
+    const target = currentTarget(provider, account, generation);
+    if (!target) return;
+    try {
+      if (failure) throw failure;
+      applyResult(target, result, new Date(now(clock)).toISOString());
+    } catch (error) {
+      applyFailure(target, error, attempt);
+    }
+  }
 
   async function refreshSingleProvider(adapter) {
     const provider = providers.find(p => p.id === adapter.id);
     if (!provider) return;
-    provider.lastAttemptAt = new Date(now(clock)).toISOString();
-    const providerGen = (providerGenerations.get(adapter.id) || 0) + 1;
-    providerGenerations.set(adapter.id, providerGen);
-    const currentGen = providerGen;
+    const generation = (providerGenerations.get(adapter.id) || 0) + 1;
+    providerGenerations.set(adapter.id, generation);
+    await Promise.all(provider.accounts.map(account => refreshAccount(adapter, provider, account, generation)));
 
-    await Promise.all(provider.accounts.map(async account => {
-      const attempt = now(clock);
-      if ((cooldown.get(account.id) || 0) > attempt) return;
-      account.lastAttemptAt = new Date(attempt).toISOString();
-
-      let timer;
-      const timeoutPromise = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new ProviderError('request_timeout')), FETCH_TIMEOUT_MS);
-        timer.unref?.();
-      });
-
-      try {
-        const result = await Promise.race([
-          adapter.fetch(account),
-          timeoutPromise
-        ]);
-        clearTimeout(timer);
-
-        const lastGen = accountGenerations.get(account.id) || 0;
-        if (lastGen > currentGen) return; // newer fetch already completed
-        accountGenerations.set(account.id, currentGen);
-
-        // The account may have been removed or re-pointed while the read was in flight.
-        const currentAccount = settings.accounts.find(a => a.id === account.id);
-        if (!currentAccount || currentAccount.configDir !== account.configDir || currentAccount.enabled === false) {
-          return;
-        }
-
-        const stamp = new Date(now(clock)).toISOString();
-        const windows = (result.windows || []).map(normalizeWindow);
-        const targetAccount = provider.accounts.find(a => a.id === account.id) || account;
-
-        if (result.status === 'no_limits_reported') {
-          targetAccount.windows = [];
-          targetAccount.status = 'no_limits_reported';
-          targetAccount.messageCode = 'no_limits_reported';
-          targetAccount.fetchedAt = stamp;
-        } else if (!windows.length) {
-          throw new ProviderError('invalid_response');
-        } else {
-          for (const prior of targetAccount.windows || []) {
-            if (!windows.some(w => w.id === prior.id)) {
-              windows.push({ ...prior, stale: true, detailKey: 'staleWindowDetail' });
-            }
-          }
-          targetAccount.windows = windows;
-          targetAccount.status = 'ok';
-          delete targetAccount.messageCode;
-          targetAccount.fetchedAt = stamp;
-        }
-        if (result.plan) targetAccount.plan = result.plan;
-      } catch (error) {
-        clearTimeout(timer);
-        const lastGen = accountGenerations.get(account.id) || 0;
-        if (lastGen > currentGen) return;
-        accountGenerations.set(account.id, currentGen);
-
-        const currentAccount = settings.accounts.find(a => a.id === account.id);
-        if (!currentAccount || currentAccount.configDir !== account.configDir || currentAccount.enabled === false) {
-          return;
-        }
-
-        const targetAccount = provider.accounts.find(a => a.id === account.id) || account;
-        const code = safeError(error);
-        targetAccount.status = targetAccount.fetchedAt ? 'stale' : code;
-        targetAccount.messageCode = code;
-        if (code === 'rate_limited') {
-          cooldown.set(account.id, attempt + (error.retryAfterSeconds || DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS) * 1000);
-        }
-      }
-    }));
-
-    const allOk = provider.accounts.length > 0 && provider.accounts.every(a => a.status === 'ok' || a.status === 'no_limits_reported');
-    provider.status = allOk ? 'ok' : provider.accounts.some(a => a.fetchedAt) ? 'stale' : (provider.accounts[0]?.status || 'unavailable');
-    if (allOk || provider.accounts.some(a => a.status === 'ok')) {
-      provider.fetchedAt = new Date(now(clock)).toISOString();
-    }
-    if (provider.accounts.length) delete provider.messageCode; else provider.messageCode = 'no_accounts';
+    const healthy = a => a.status === 'ok' || a.status === 'no_limits_reported';
+    const allOk = provider.accounts.length > 0 && provider.accounts.every(healthy);
+    provider.status = allOk ? 'ok' : provider.accounts.some(a => a.fetchedAt) ? 'stale' : provider.accounts[0]?.status || 'unavailable';
+    if (provider.accounts.some(a => a.status === 'ok') || allOk) provider.fetchedAt = new Date(now(clock)).toISOString();
+    if (provider.accounts.length) delete provider.messageCode;
+    else provider.messageCode = 'no_accounts';
   }
 
   function getOrStartProviderRefresh(adapter) {
@@ -312,7 +322,7 @@ async function createService(options = {}) {
   async function dismissAccount(accountId) {
     if (typeof accountId !== 'string' || !ACCOUNT_ID_PATTERN.test(accountId)) throw new AppError('invalid_argument');
     if (!settings.accounts.some(a => a.id === accountId)) throw new AppError('account_not_found');
-    const operation = pendingSave.catch(() => {}).then(async () => {
+    return serialized(async () => {
       const currentSettings = copy(settings);
       const dismissed = new Set(currentSettings.dismissedAccountIds || []);
       dismissed.add(accountId);
@@ -324,18 +334,12 @@ async function createService(options = {}) {
         if (nextPrimary) nextPrimary.primary = true;
       }
       consecutiveMisses.delete(accountId);
-      const next = validateSettings(currentSettings);
-      await saveSettings(settingsPath, next);
-      settings = next;
-      rebuild();
-      return snapshot();
+      return commit(currentSettings);
     });
-    pendingSave = operation;
-    return operation;
   }
 
   async function updateSettings(patch) {
-    const operation = pendingSave.catch(() => {}).then(async () => {
+    return serialized(async () => {
       const updatedPatch = { ...patch };
       if (patch.accounts) {
         // Any user edit (label, primary, enabled, reordering) makes the account user-managed.
@@ -349,7 +353,7 @@ async function createService(options = {}) {
         updatedPatch.accounts = patch.accounts.map(acc => {
           const existing = settings.accounts.find(a => a.id === acc.id);
           const existingOrigin = existing?.origin || 'user';
-          const labelChanged = acc.label !== undefined && existing && acc.label !== existing.label;
+          const labelChanged = existing && (acc.label !== existing.label || acc.labelKey !== existing.labelKey);
           const primaryChanged = acc.primary !== undefined && existing && acc.primary !== existing.primary;
           const enabledChanged = acc.enabled !== undefined && existing && acc.enabled !== existing.enabled;
 
@@ -366,14 +370,8 @@ async function createService(options = {}) {
           return { ...acc, ...(configDirExplicit !== undefined ? { configDirExplicit } : {}), origin };
         });
       }
-      const next = validateSettings({ ...settings, ...updatedPatch });
-      await saveSettings(settingsPath, next);
-      settings = next;
-      if (patch.accounts) rebuild();
-      return snapshot();
+      return commit({ ...settings, ...updatedPatch });
     });
-    pendingSave = operation;
-    return operation;
   }
 
   async function restoreDismissedAccounts() {

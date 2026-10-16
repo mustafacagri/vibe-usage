@@ -4,7 +4,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { validateSettings, migrateSettings, saveSettings, loadSettings, defaultSettingsPath, DEFAULT_SETTINGS } = require('../src/core/settings.cjs');
+const {
+  validateSettings,
+  migrateSettings,
+  saveSettings,
+  loadSettings,
+  defaultSettingsPath,
+  DEFAULT_SETTINGS
+} = require('../src/core/settings.cjs');
 const { PROVIDER_IDS } = require('../src/catalog.cjs');
 
 const base = { pinned: false, intervalSeconds: 120, accounts: [] };
@@ -20,7 +27,8 @@ test('defaults cover every provider and English', () => {
 });
 
 test('invalid intervals, paths, duplicate primaries and unknown fields are rejected', () => {
-  for (const intervalSeconds of [0, 29, 901, '120', NaN]) assert.throws(() => validateSettings({ ...base, intervalSeconds }), /invalid_interval/);
+  for (const intervalSeconds of [0, 29, 901, '120', NaN])
+    assert.throws(() => validateSettings({ ...base, intervalSeconds }), /invalid_interval/);
   for (const configDir of ['relative', '\\\\host\\share', '/tmp/../bad', 'C:\\x\u0000y']) {
     assert.throws(() => validateSettings({ ...base, accounts: [account({ configDir })] }), /invalid_path/);
   }
@@ -30,13 +38,19 @@ test('invalid intervals, paths, duplicate primaries and unknown fields are rejec
 });
 
 test('provider order and preferred models are validated', () => {
-  const valid = validateSettings({ ...base, providerOrder: ['codex', 'cursor', 'claude', 'antigravity'], preferredModels: { codex: 'gpt-6-luna', claude: 'opus' } });
+  const valid = validateSettings({
+    ...base,
+    providerOrder: ['codex', 'cursor', 'claude', 'antigravity'],
+    preferredModels: { codex: 'gpt-6-luna', claude: 'opus' }
+  });
   assert.deepEqual(valid.providerOrder, ['codex', 'cursor', 'claude', 'antigravity']);
   assert.equal(valid.preferredModels.claude, 'opus');
   assert.throws(() => validateSettings({ ...base, providerOrder: ['codex', 'codex'] }), /invalid_settings/);
   assert.throws(() => validateSettings({ ...base, providerOrder: ['nope'] }), /invalid_settings/);
   assert.throws(() => validateSettings({ ...base, preferredModels: { unknown: 'model' } }), /invalid_settings/);
   assert.throws(() => validateSettings({ ...base, preferredModels: { codex: 'bad model' } }), /invalid_settings/);
+  assert.throws(() => validateSettings({ ...base, preferredModels: { codex: '--flag' } }), /invalid_settings/);
+  assert.equal(validateSettings({ ...base, preferredModels: { claude: 'sonnet[1m]' } }).preferredModels.claude, 'sonnet[1m]');
 });
 
 test('an account is named by the user or by a known label key, never by neither', () => {
@@ -46,7 +60,10 @@ test('an account is named by the user or by a known label key, never by neither'
   const named = validateSettings({ ...base, accounts: [account({ label: ' Work ', labelKey: 'accountA' })] }).accounts[0];
   assert.deepEqual([named.label, named.labelKey], ['Work', undefined], 'a typed name replaces the key');
   assert.throws(() => validateSettings({ ...base, accounts: [account({ label: undefined })] }), /invalid_account_label/);
-  assert.throws(() => validateSettings({ ...base, accounts: [account({ label: undefined, labelKey: 'madeUp' })] }), /invalid_account_label/);
+  assert.throws(
+    () => validateSettings({ ...base, accounts: [account({ label: undefined, labelKey: 'madeUp' })] }),
+    /invalid_account_label/
+  );
 });
 
 test('settings written by 0.1.x migrate to the current shape', () => {
@@ -65,7 +82,10 @@ test('settings written by 0.1.x migrate to the current shape', () => {
   };
   const migrated = validateSettings(migrateSettings(legacy));
   assert.deepEqual(migrated.providerOrder, ['codex', 'claude', 'cursor', 'antigravity']);
-  assert.deepEqual(migrated.accounts.map(a => a.label || `key:${a.labelKey}`), ['key:accountA', 'key:defaultAccount', 'me@example.com', 'Work']);
+  assert.deepEqual(
+    migrated.accounts.map(a => a.label || `key:${a.labelKey}`),
+    ['key:accountA', 'key:defaultAccount', 'me@example.com', 'Work']
+  );
   assert.equal('fallbackOrder' in migrated || 'primaryProvider' in migrated, false);
   assert.deepEqual(migrated.preferredModels, { codex: 'gpt-6-luna' }, 'app-only tools take no model');
 });
@@ -74,7 +94,12 @@ test('atomic round trip persists only public settings and migrates on load', asy
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-settings-'));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'settings.json');
-  const settings = { pinned: true, intervalSeconds: 180, accounts: [account({ id: 'claude:secondary', label: 'Work', configDir: dir })], window: { x: 1, y: 2, width: 380, height: 760 } };
+  const settings = {
+    pinned: true,
+    intervalSeconds: 180,
+    accounts: [account({ id: 'claude:secondary', label: 'Work', configDir: dir })],
+    window: { x: 1, y: 2, width: 380, height: 760 }
+  };
   await saveSettings(file, settings);
   assert.deepEqual(await loadSettings(file), settings);
   assert.deepEqual(await fs.readdir(dir), ['settings.json']);

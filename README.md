@@ -41,6 +41,8 @@ Node.js 24 gerekir (Electron 44'ün gömülü sürümü).
 
 ```text
 npm ci
+npm run lint      # ESLint
+npm run format    # Prettier (CI: npm run format:check)
 npm test          # birim ve entegrasyon testleri
 npm run ui-check  # gerçek arayüzü 13 dilde örnek veriyle çizer; konsol/CSP hatası,
                   # ekranda kalan çeviri anahtarı ve taşan değerleri yakalar
@@ -53,9 +55,11 @@ npm run build:mac
 
 `VIBE_DATA_DIR` uygulamanın ayar klasörünü değiştirir. `VIBE_CLAUDE_BINARY`, `VIBE_CODEX_BINARY`, `VIBE_CURSOR_AGENT_BINARY` yerel kurulu ikililerin açık yollarıdır. Kota istekleri yalnız sabit iki adrese gider (Anthropic ve Cursor kullanım uçları); TLS doğrulaması açıktır ve sistem sertifika deposu Node'un varsayılanlarıyla birlikte kullanılır.
 
+Paketlenmiş uygulamada Electron fuse'ları açıktır (`runAsNode`, `NODE_OPTIONS` ve inspector kapalı; ASAR bütünlük doğrulaması açık). Fuse'lar Electron ikilisini değiştirdiği için macOS paketi yeniden imzalanmalıdır; geliştirici sertifikası olmadığından imza ad-hoc'tur (`mac.identity: "-"`).
+
 ## Sınırlar
 
-- Paket kod imzalı değildir; macOS notarizasyonu yapılmadı.
+- Paket Developer ID ile imzalı değildir (yalnız ad-hoc imza); macOS notarizasyonu yapılmadı, bu yüzden başka bir Mac'te ilk açılışta Gizlilik ve Güvenlik onayı gerekir.
 - Windows'ta terminal başlatma ve Cursor/Antigravity uygulama yolları (`%LOCALAPPDATA%\Programs`) kod düzeyinde desteklenir, bu sürümde Windows cihazında yeniden doğrulanmadı.
 - Antigravity oturum modeli belgelenmemiş yerel bir kayıttan okunur; okunamazsa model boş gösterilir.
 - Cursor IDE (Composer) sohbetleri devredilmez; yalnız Cursor Agent CLI oturumları okunur.

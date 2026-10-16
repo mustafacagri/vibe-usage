@@ -30,24 +30,39 @@ const KEYS = new Set(Object.keys(I18N.en));
 // and selects too narrow for their chosen option.
 function inspectPage(keys) {
   const visible = node => node.offsetParent !== null || node.closest('dialog[open]');
-  const texts = [...document.querySelectorAll('body *')].filter(node => node.children.length === 0 && visible(node)).map(node => node.textContent.trim());
-  const lineHeight = node => parseFloat(getComputedStyle(node).lineHeight) || parseFloat(getComputedStyle(node).fontSize) * 1.2;
-  const wrapped = selector => [...document.querySelectorAll(selector)].filter(visible)
-    .filter(node => node.getBoundingClientRect().height > lineHeight(node) * 1.6 + parseFloat(getComputedStyle(node).paddingTop) + parseFloat(getComputedStyle(node).paddingBottom))
+  const texts = [...document.querySelectorAll('body *')]
+    .filter(node => node.children.length === 0 && visible(node))
     .map(node => node.textContent.trim());
+  const lineHeight = node => parseFloat(getComputedStyle(node).lineHeight) || parseFloat(getComputedStyle(node).fontSize) * 1.2;
+  const wrapped = selector =>
+    [...document.querySelectorAll(selector)]
+      .filter(visible)
+      .filter(
+        node =>
+          node.getBoundingClientRect().height >
+          lineHeight(node) * 1.6 + parseFloat(getComputedStyle(node).paddingTop) + parseFloat(getComputedStyle(node).paddingBottom)
+      )
+      .map(node => node.textContent.trim());
   // Room for the select's own arrow, beyond its padding.
   const SELECT_ARROW_PX = 18;
   const canvas = document.createElement('canvas').getContext('2d');
-  const clippedSelects = [...document.querySelectorAll('select')].filter(visible).filter(select => {
-    const text = select.selectedOptions[0]?.textContent || '';
-    const style = getComputedStyle(select);
-    canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const room = select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - SELECT_ARROW_PX;
-    return canvas.measureText(text).width > room;
-  }).map(select => select.selectedOptions[0]?.textContent);
+  const clippedSelects = [...document.querySelectorAll('select')]
+    .filter(visible)
+    .filter(select => {
+      const text = select.selectedOptions[0]?.textContent || '';
+      const style = getComputedStyle(select);
+      canvas.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const room = select.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - SELECT_ARROW_PX;
+      return canvas.measureText(text).width > room;
+    })
+    .map(select => select.selectedOptions[0]?.textContent);
   return {
     rawKeys: texts.filter(text => keys.includes(text)),
-    wrappedValues: [...wrapped('.quota-value'), ...wrapped('button').map(text => `button "${text}"`), ...clippedSelects.map(text => `select "${text}"`)],
+    wrappedValues: [
+      ...wrapped('.quota-value'),
+      ...wrapped('button').map(text => `button "${text}"`),
+      ...clippedSelects.map(text => `select "${text}"`)
+    ],
     height: document.documentElement.scrollHeight
   };
 }
@@ -63,11 +78,21 @@ async function screenshot(win, file, height) {
 async function check(language) {
   const args = [`--ui-check-language=${language}`, ...(SNAPSHOT ? [`--ui-check-snapshot=${SNAPSHOT}`] : [])];
   const win = new BrowserWindow({
-    width: WIDTH, height: 900, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: false, sandbox: false, backgroundThrottling: false, additionalArguments: args }
+    width: WIDTH,
+    height: 900,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: false,
+      sandbox: false,
+      backgroundThrottling: false,
+      additionalArguments: args
+    }
   });
   const errors = [];
-  win.webContents.on('console-message', event => { if (event.level === 'error' || event.level === 'warning') errors.push(event.message); });
+  win.webContents.on('console-message', event => {
+    if (event.level === 'error' || event.level === 'warning') errors.push(event.message);
+  });
   await win.loadFile(path.join(ROOT, 'src/ui/index.html'));
   await settle(SETTLE_MS);
   const views = [];
@@ -89,15 +114,26 @@ async function check(language) {
   };
 }
 
-setTimeout(() => { console.error('ui-check timed out'); process.exit(1); }, TIMEOUT_MS);
+setTimeout(() => {
+  console.error('ui-check timed out');
+  process.exit(1);
+}, TIMEOUT_MS);
 // Each language gets its own window; closing one must not quit the run.
 app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT_DIR, { recursive: true });
   let failed = false;
   for (const language of SUPPORTED_LANGUAGES) {
-    const { errors, rawKeys, wrappedValues } = await check(language).catch(error => ({ errors: [error.message], rawKeys: [], wrappedValues: [] }));
-    const problems = [...errors.map(e => `console: ${e}`), ...rawKeys.map(k => `raw key: ${k}`), ...wrappedValues.map(v => `does not fit: ${v}`)];
+    const { errors, rawKeys, wrappedValues } = await check(language).catch(error => ({
+      errors: [error.message],
+      rawKeys: [],
+      wrappedValues: []
+    }));
+    const problems = [
+      ...errors.map(e => `console: ${e}`),
+      ...rawKeys.map(k => `raw key: ${k}`),
+      ...wrappedValues.map(v => `does not fit: ${v}`)
+    ];
     console.log(`${problems.length ? '✖' : '✔'} ${language} @ ${WIDTH}px${problems.length ? `\n    ${problems.join('\n    ')}` : ''}`);
     failed ||= problems.length > 0;
   }

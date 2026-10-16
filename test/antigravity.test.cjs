@@ -5,12 +5,9 @@ const assert = require('node:assert/strict');
 test('fetch merges app and IDE servers without double-counting windows', async () => {
   const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
 
-  const appServer = { pid: 101, csrfToken: 'app-token', ports: [3101], sourceKind: 'app' };
-  const ideServer = { pid: 202, csrfToken: 'ide-token', ports: [3202], sourceKind: 'ide' };
-
   const provider = createAntigravityProvider({
     platform: 'darwin',
-    runProcess: async (binary) => {
+    runProcess: async binary => {
       if (binary === '/bin/ps') {
         return [
           '101 501 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token=app-token',
@@ -30,7 +27,14 @@ test('fetch merges app and IDE servers without double-counting windows', async (
         // App only reports Claude and GPT models
         return {
           groups: [
-            { id: 'claude-gpt', displayName: 'Claude and GPT models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 1.0 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 1.0 }] }
+            {
+              id: 'claude-gpt',
+              displayName: 'Claude and GPT models',
+              buckets: [
+                { bucketId: 'session', window: '5h', remainingFraction: 1.0 },
+                { bucketId: 'weekly', window: 'weekly', remainingFraction: 1.0 }
+              ]
+            }
           ]
         };
       }
@@ -38,8 +42,22 @@ test('fetch merges app and IDE servers without double-counting windows', async (
         // IDE reports both Claude and GPT models AND Gemini Models
         return {
           groups: [
-            { id: 'claude-gpt', displayName: 'Claude and GPT models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.9 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.95 }] },
-            { id: 'gemini', displayName: 'Gemini Models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.86 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.93 }] }
+            {
+              id: 'claude-gpt',
+              displayName: 'Claude and GPT models',
+              buckets: [
+                { bucketId: 'session', window: '5h', remainingFraction: 0.9 },
+                { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.95 }
+              ]
+            },
+            {
+              id: 'gemini',
+              displayName: 'Gemini Models',
+              buckets: [
+                { bucketId: 'session', window: '5h', remainingFraction: 0.86 },
+                { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.93 }
+              ]
+            }
           ]
         };
       }
@@ -50,8 +68,14 @@ test('fetch merges app and IDE servers without double-counting windows', async (
   const result = await provider.fetch({ id: 'antigravity:current' });
 
   // Both Gemini windows must be captured!
-  assert.equal(result.windows.some(w => w.scope.includes('Gemini') && w.labelKey === 'labelNHours'), true);
-  assert.equal(result.windows.some(w => w.scope.includes('Gemini') && w.labelKey === 'labelWeekly'), true);
+  assert.equal(
+    result.windows.some(w => w.scope.includes('Gemini') && w.labelKey === 'labelNHours'),
+    true
+  );
+  assert.equal(
+    result.windows.some(w => w.scope.includes('Gemini') && w.labelKey === 'labelWeekly'),
+    true
+  );
 
   // Claude and GPT models must NOT be duplicated (only 1 session, 1 weekly for claude-gpt)
   const claudeSessionWindows = result.windows.filter(w => w.scope.includes('Claude and GPT') && w.labelKey === 'labelNHours');
@@ -73,7 +97,7 @@ test('multiple servers split accounts by e-mail and merge windows by reset perio
   const multiProvider = createAntigravityProvider({
     platform: 'darwin',
     discoverAntigravityServers: async () => [serverWork, serverPersonal],
-    requestLocalJson: async (server) => {
+    requestLocalJson: async server => {
       if (server.pid === 1001) {
         return {
           userStatus: { email: 'work@corp.com' },
@@ -103,36 +127,44 @@ test('multiple servers split accounts by e-mail and merge windows by reset perio
   const mergeProvider = createAntigravityProvider({
     platform: 'darwin',
     discoverAntigravityServers: async () => [serverFresh, serverStale],
-    requestLocalJson: async (server) => {
+    requestLocalJson: async server => {
       if (server.pid === 2001) {
         // Fresh reset window: next week, 95% remaining
         return {
           userStatus: { email: 'same@user.com' },
-          groups: [{
-            id: 'cg',
-            displayName: 'Claude and GPT',
-            buckets: [{
-              bucketId: 'session',
-              window: '5h',
-              remainingFraction: 0.95,
-              resetTime: '2026-10-23T18:00:00Z'
-            }]
-          }]
+          groups: [
+            {
+              id: 'cg',
+              displayName: 'Claude and GPT',
+              buckets: [
+                {
+                  bucketId: 'session',
+                  window: '5h',
+                  remainingFraction: 0.95,
+                  resetTime: '2026-10-23T18:00:00Z'
+                }
+              ]
+            }
+          ]
         };
       }
       // Stale cache prior to reset: last week, 5% remaining
       return {
         userStatus: { email: 'same@user.com' },
-        groups: [{
-          id: 'cg',
-          displayName: 'Claude and GPT',
-          buckets: [{
-            bucketId: 'session',
-            window: '5h',
-            remainingFraction: 0.05,
-            resetTime: '2026-10-16T18:00:00Z'
-          }]
-        }]
+        groups: [
+          {
+            id: 'cg',
+            displayName: 'Claude and GPT',
+            buckets: [
+              {
+                bucketId: 'session',
+                window: '5h',
+                remainingFraction: 0.05,
+                resetTime: '2026-10-16T18:00:00Z'
+              }
+            ]
+          }
+        ]
       };
     }
   });
@@ -154,16 +186,16 @@ test('going from one to two accounts never mixes their quota', async () => {
   const provider = createAntigravityProvider({
     platform: 'darwin',
     discoverAntigravityServers: async () => [serverWork, serverPersonal],
-    requestLocalJson: async (server) => {
+    requestLocalJson: async server => {
       if (server.pid === 101) {
         return {
           userStatus: { email: 'work@corp.com' },
-          groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.90 }] }]
+          groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.9 }] }]
         };
       }
       return {
         userStatus: { email: 'personal@gmail.com' },
-        groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.10 }] }]
+        groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.1 }] }]
       };
     }
   });
@@ -179,10 +211,7 @@ test('going from one to two accounts never mixes their quota', async () => {
   assert.equal(workQuota.windows[0].remainingPercent, 90);
 
   // Ambiguity protection: fetching a legacy account without email refuses to merge multiple accounts
-  await assert.rejects(
-    () => provider.fetch({ id: 'antigravity:current' }),
-    /unsupported_profile/
-  );
+  await assert.rejects(() => provider.fetch({ id: 'antigravity:current' }), /unsupported_profile/);
 });
 
 test('a quota summary without identity is tied to its account through the status call', async () => {
@@ -203,10 +232,16 @@ test('a quota summary without identity is tied to its account through the status
       // RetrieveUserQuotaSummary has NO email field whatsoever ("summary without identity")
       if (method === 'RetrieveUserQuotaSummary') {
         if (server.pid === 801) {
-          return { code: 'ok', groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.92 }] }] };
+          return {
+            code: 'ok',
+            groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.92 }] }]
+          };
         }
         if (server.pid === 802) {
-          return { code: 'ok', groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.22 }] }] };
+          return {
+            code: 'ok',
+            groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.22 }] }]
+          };
         }
       }
       throw new Error('unexpected_method');
@@ -222,10 +257,7 @@ test('a quota summary without identity is tied to its account through the status
   assert.equal(personalQuota.windows[0].remainingPercent, 22);
 
   // An account with nonexistent email correctly throws auth_missing
-  await assert.rejects(
-    () => provider.fetch({ id: antigravityAccountId('other@unknown.com'), email: 'other@unknown.com' }),
-    /auth_missing/
-  );
+  await assert.rejects(() => provider.fetch({ id: antigravityAccountId('other@unknown.com'), email: 'other@unknown.com' }), /auth_missing/);
 });
 
 test('discovery fails closed when any server cannot be identified', async () => {
@@ -236,17 +268,14 @@ test('discovery fails closed when any server cannot be identified', async () => 
   const provider = createAntigravityProvider({
     platform: 'darwin',
     discoverAntigravityServers: async () => [server1, server2],
-    requestLocalJson: async (server, port, method) => {
+    requestLocalJson: async server => {
       if (server.pid === 101) return { userStatus: { email: 'user1@company.com' } };
       // Server 2 fails transport or returns no email
       throw new Error('connection_refused');
     }
   });
 
-  await assert.rejects(
-    async () => await provider.discover(),
-    { code: 'local_service_unavailable' }
-  );
+  await assert.rejects(async () => await provider.discover(), { code: 'local_service_unavailable' });
 });
 
 test('windows are not merged while any server lacks a verified identity', async () => {
@@ -260,21 +289,24 @@ test('windows are not merged while any server lacks a verified identity', async 
     requestLocalJson: async (server, port, method) => {
       if (server.pid === 101) {
         if (method === 'GetUserStatus') return { userStatus: { email: 'dev@company.com' } };
-        return { groups: [{ id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 1.0 }] }] };
+        return {
+          groups: [
+            { id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 1.0 }] }
+          ]
+        };
       }
       if (server.pid === 202) {
         // IDE responds with quota but GetUserStatus has no email
         if (method === 'GetUserStatus') return { userStatus: { email: null } };
-        return { groups: [{ id: 'gemini', displayName: 'Gemini', buckets: [{ bucketId: 'weekly', window: 'weekly', remainingFraction: 0.9 }] }] };
+        return {
+          groups: [{ id: 'gemini', displayName: 'Gemini', buckets: [{ bucketId: 'weekly', window: 'weekly', remainingFraction: 0.9 }] }]
+        };
       }
     }
   });
 
   // Multiple servers running, but one cannot resolve identity -> fail closed
-  await assert.rejects(
-    async () => await provider.fetch({ id: 'antigravity:current' }),
-    { code: 'local_service_unavailable' }
-  );
+  await assert.rejects(async () => await provider.fetch({ id: 'antigravity:current' }), { code: 'local_service_unavailable' });
 });
 
 test('identity lookup continues on the next port', async () => {
@@ -292,7 +324,11 @@ test('identity lookup continues on the next port', async () => {
       }
       if (port === 3102) {
         if (method === 'GetUserStatus') return { userStatus: { email: 'dev@test.com' } };
-        return { groups: [{ id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.8 }] }] };
+        return {
+          groups: [
+            { id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.8 }] }
+          ]
+        };
       }
     }
   });

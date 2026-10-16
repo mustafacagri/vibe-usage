@@ -4,33 +4,48 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { discoverModels, setModelCacheDir, refreshCursorModels, parseCursorModelList, resolveModelTier, getMappedModel } = require('../src/core/models.cjs');
+const { discoverModels, refreshCursorModels, parseCursorModelList, resolveModelTier, getMappedModel } = require('../src/core/models.cjs');
 
-const CURSOR_LIST = ['auto', 'composer-2.5', 'claude-opus-5-5-high', 'claude-opus-5-5-thinking-high', 'claude-sonnet-5-5-high', 'claude-sonnet-5-5-max', 'gemini-3.8-flash-high', 'gpt-5.6-terra-high'];
+const CURSOR_LIST = [
+  'auto',
+  'composer-2.5',
+  'claude-opus-5-5-high',
+  'claude-opus-5-5-thinking-high',
+  'claude-sonnet-5-5-high',
+  'claude-sonnet-5-5-max',
+  'gemini-3.8-flash-high',
+  'gpt-5.6-terra-high'
+];
 
 // A home directory holding each tool's own model data, as the tools write it.
 async function fixtureHome(t, { cursorCache = true } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-models-home-'));
   const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-models-cache-'));
-  t.after(async () => {
-    setModelCacheDir(null);
-    await Promise.all([home, cacheDir].map(d => fs.rm(d, { recursive: true, force: true })));
-  });
+  t.after(() => Promise.all([home, cacheDir].map(d => fs.rm(d, { recursive: true, force: true }))));
   await fs.mkdir(path.join(home, '.codex'));
-  await fs.writeFile(path.join(home, '.codex', 'models_cache.json'), JSON.stringify({ models: [
-    { slug: 'gpt-6-luna', visibility: 'list' }, { slug: 'gpt-reserve', visibility: 'hide' }, { slug: 'gpt-5.6-terra', visibility: 'list' }
-  ] }));
+  await fs.writeFile(
+    path.join(home, '.codex', 'models_cache.json'),
+    JSON.stringify({
+      models: [
+        { slug: 'gpt-6-luna', visibility: 'list' },
+        { slug: 'gpt-reserve', visibility: 'hide' },
+        { slug: 'gpt-5.6-terra', visibility: 'list' }
+      ]
+    })
+  );
   await fs.mkdir(path.join(home, '.claude', 'projects', '-p'), { recursive: true });
   await fs.writeFile(path.join(home, '.claude', 'settings.json'), JSON.stringify({ model: 'claude-opus-5-5' }));
-  await fs.writeFile(path.join(home, '.claude', 'projects', '-p', 's.jsonl'), `${JSON.stringify({ message: { model: 'claude-sonnet-5-5' } })}\n${JSON.stringify({ message: { model: '<synthetic>' } })}\n`);
+  await fs.writeFile(
+    path.join(home, '.claude', 'projects', '-p', 's.jsonl'),
+    `${JSON.stringify({ message: { model: 'claude-sonnet-5-5' } })}\n${JSON.stringify({ message: { model: '<synthetic>' } })}\n`
+  );
   if (cursorCache) await fs.writeFile(path.join(cacheDir, 'cursor-models.json'), JSON.stringify({ models: CURSOR_LIST, updatedAt: 1 }));
-  setModelCacheDir(cacheDir);
-  return { home, cacheDir };
+  return { homeDir: home, cacheDir };
 }
 
-test('model lists come from each tool\'s own data; nothing is invented', async t => {
-  const { home } = await fixtureHome(t);
-  const models = discoverModels(home);
+test("model lists come from each tool's own data; nothing is invented", async t => {
+  const location = await fixtureHome(t);
+  const models = discoverModels(location);
   assert.deepEqual(models.claude, ['opus', 'sonnet', 'fable', 'claude-opus-5-5', 'claude-sonnet-5-5']);
   assert.deepEqual(models.codex, ['gpt-6-luna', 'gpt-5.6-terra'], 'hidden models are not offered');
   assert.deepEqual(models.cursor, CURSOR_LIST, 'a cached live list, even a stale one, is used as is');
@@ -38,11 +53,14 @@ test('model lists come from each tool\'s own data; nothing is invented', async t
 });
 
 test('without a Cursor live list only the default and the user history are offered', async t => {
-  const { home } = await fixtureHome(t, { cursorCache: false });
-  assert.deepEqual(discoverModels(home).cursor, ['auto']);
-  await fs.mkdir(path.join(home, '.cursor'));
-  await fs.writeFile(path.join(home, '.cursor', 'cli-config.json'), JSON.stringify({ selectedModel: { modelId: 'gpt-5.6-sol-high' }, modelSelectionHistory: ['default', 'claude-opus-5-5-high'] }));
-  assert.deepEqual(discoverModels(home).cursor, ['auto', 'gpt-5.6-sol-high', 'claude-opus-5-5-high']);
+  const location = await fixtureHome(t, { cursorCache: false });
+  assert.deepEqual(discoverModels(location).cursor, ['auto']);
+  await fs.mkdir(path.join(location.homeDir, '.cursor'));
+  await fs.writeFile(
+    path.join(location.homeDir, '.cursor', 'cli-config.json'),
+    JSON.stringify({ selectedModel: { modelId: 'gpt-5.6-sol-high' }, modelSelectionHistory: ['default', 'claude-opus-5-5-high'] })
+  );
+  assert.deepEqual(discoverModels(location).cursor, ['auto', 'gpt-5.6-sol-high', 'claude-opus-5-5-high']);
 });
 
 test('tiers are read from model family names only', () => {
@@ -56,9 +74,13 @@ test('tiers are read from model family names only', () => {
 });
 
 test('handover model: preference, else the same model, else the closest tier', async t => {
-  const { home } = await fixtureHome(t);
-  const map = (source, target, preferences) => getMappedModel(source, target, preferences, home);
-  assert.deepEqual(map('claude-opus-5-5', 'codex', { codex: 'gpt-6-luna' }), { tier: 'flagship', targetModel: 'gpt-6-luna', source: 'preference' });
+  const location = await fixtureHome(t);
+  const map = (source, target, preferences) => getMappedModel(source, target, preferences, location);
+  assert.deepEqual(map('claude-opus-5-5', 'codex', { codex: 'gpt-6-luna' }), {
+    tier: 'flagship',
+    targetModel: 'gpt-6-luna',
+    source: 'preference'
+  });
   assert.equal(map('claude-opus-5-5', 'cursor').targetModel, 'claude-opus-5-5-high', 'same model at standard effort');
   assert.equal(map('Gemini 3.8 Flash (High)', 'cursor').targetModel, 'gemini-3.8-flash-high', 'display names map to ids');
   assert.equal(map('claude-sonnet-5-5', 'claude').targetModel, 'claude-sonnet-5-5');
@@ -69,7 +91,8 @@ test('handover model: preference, else the same model, else the closest tier', a
 });
 
 test('Cursor models are parsed from the CLI and cached in the app data dir', async t => {
-  const output = 'Available models\n\nauto - Auto (default)\ngpt-5.3-codex - Codex 5.3\nclaude-opus-5-5-high - Claude Opus 5.5 High\n\nTip: use --model <id>\n';
+  const output =
+    'Available models\n\nauto - Auto (default)\ngpt-5.3-codex - Codex 5.3\nclaude-opus-5-5-high - Claude Opus 5.5 High\n\nTip: use --model <id>\n';
   assert.deepEqual(parseCursorModelList(output), ['auto', 'gpt-5.3-codex', 'claude-opus-5-5-high']);
   if (process.platform === 'win32') return; // the fake CLI below is a POSIX shell script
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-cli-'));

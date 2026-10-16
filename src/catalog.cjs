@@ -17,18 +17,35 @@
   const ACCOUNT_ID_PATTERN = /^[a-zA-Z0-9:@._+-]{1,120}$/;
   const MAX_DISMISSED_ACCOUNTS = 100;
   const MAX_LABEL_LENGTH = 80;
+  // A model id as CLIs accept it (`opus`, `gpt-5.6-terra`, `sonnet[1m]`). It must start
+  // alphanumeric so that it can never be read as a command-line flag.
+  const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:/[\]-]{0,99}$/;
 
   const MINUTES = Object.freeze({ HOUR: 60, DAY: 1440, FIVE_HOURS: 300, WEEK: 10080 });
 
   // Environment variables that would make a launched CLI or a quota probe use credentials,
   // endpoints or profiles other than the account the user selected.
   const CREDENTIAL_ENV_KEYS = Object.freeze([
-    'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_PROFILE',
-    'ANTHROPIC_VERTEX_PROJECT_ID', 'ANTHROPIC_BEDROCK_BASE_URL',
-    'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
-    'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
-    'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
-    'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'ACCESS_TOKEN',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_PROFILE',
+    'ANTHROPIC_VERTEX_PROJECT_ID',
+    'ANTHROPIC_BEDROCK_BASE_URL',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_FOUNDRY',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'CODEX_HOME',
+    'CODEX_API_KEY',
+    'CODEX_ACCESS_TOKEN',
+    'ACCESS_TOKEN',
     'CURSOR_API_KEY'
   ]);
 
@@ -50,15 +67,28 @@
   function durationLabel(minutes) {
     if (!Number.isFinite(minutes) || minutes <= 0) return { labelKey: 'labelNoPeriodReported' };
     if (minutes === MINUTES.WEEK) return { labelKey: 'labelWeekly', durationMinutes: minutes };
-    if (minutes >= 2 * MINUTES.DAY && minutes % MINUTES.DAY === 0) return { labelKey: 'labelNDays', labelParams: { n: minutes / MINUTES.DAY }, durationMinutes: minutes };
-    if (minutes % MINUTES.HOUR === 0) return { labelKey: 'labelNHours', labelParams: { n: minutes / MINUTES.HOUR }, durationMinutes: minutes };
+    if (minutes >= 2 * MINUTES.DAY && minutes % MINUTES.DAY === 0)
+      return { labelKey: 'labelNDays', labelParams: { n: minutes / MINUTES.DAY }, durationMinutes: minutes };
+    if (minutes % MINUTES.HOUR === 0)
+      return { labelKey: 'labelNHours', labelParams: { n: minutes / MINUTES.HOUR }, durationMinutes: minutes };
     return { labelKey: 'labelNMins', labelParams: { n: minutes }, durationMinutes: minutes };
   }
 
   const api = Object.freeze({
-    PROVIDERS, PROVIDER_IDS, AUTO, ACCOUNT_ID_PATTERN, MAX_DISMISSED_ACCOUNTS, MAX_LABEL_LENGTH, MINUTES, CREDENTIAL_ENV_KEYS,
-    providerById, isProviderId, normalizeProviderOrder, durationLabel
+    PROVIDERS,
+    PROVIDER_IDS,
+    AUTO,
+    ACCOUNT_ID_PATTERN,
+    MODEL_ID_PATTERN,
+    MAX_DISMISSED_ACCOUNTS,
+    MAX_LABEL_LENGTH,
+    MINUTES,
+    CREDENTIAL_ENV_KEYS,
+    providerById,
+    isProviderId,
+    normalizeProviderOrder,
+    durationLabel
   });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.VibeCatalog = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this);
+})(globalThis);

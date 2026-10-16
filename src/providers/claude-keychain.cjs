@@ -1,6 +1,7 @@
 'use strict';
 const crypto = require('node:crypto');
 const common = require('./common.cjs');
+const { hasControlChars } = require('../core/model.cjs');
 
 // Selector semantics verified against quota-axi's own implementation:
 // https://github.com/kunchenguid/quota-axi/blob/main/src/lib/claude-profile.ts
@@ -11,18 +12,27 @@ const common = require('./common.cjs');
 function resolveClaudeKeychainService({ configDir, configDirExplicit = false, secureStorageConfigDir } = {}) {
   const selected = secureStorageConfigDir || (configDirExplicit ? configDir : undefined);
   if (selected === undefined || selected === '') return 'Claude Code-credentials';
-  if (typeof selected !== 'string' || selected.length > 1024 || /[\x00-\x1f\x7f]/.test(selected)) throw new common.ProviderError('unsupported_profile');
+  if (typeof selected !== 'string' || selected.length > 1024 || hasControlChars(selected))
+    throw new common.ProviderError('unsupported_profile');
   const suffix = crypto.createHash('sha256').update(selected.normalize('NFC')).digest('hex').slice(0, 8);
   return `Claude Code-credentials-${suffix}`;
 }
+const KEYCHAIN_TIMEOUT_MS = 8000;
+
+// The parsed credentials document stored for the profile; the caller checks its contents.
 async function readClaudeKeychain(options = {}) {
   if ((options.platform || process.platform) !== 'darwin') throw new common.ProviderError('unsupported_platform');
   const service = resolveClaudeKeychainService(options);
   try {
-    const output = await (options.runProcess || common.runProcess)('/usr/bin/security', ['find-generic-password', '-s', service, '-w'], { timeoutMs: 8000, maxBytes: 1024 * 1024 });
+    const output = await (options.runProcess || common.runProcess)('/usr/bin/security', ['find-generic-password', '-s', service, '-w'], {
+      timeoutMs: KEYCHAIN_TIMEOUT_MS,
+      maxBytes: common.MAX_RESPONSE_BYTES
+    });
     const credentials = JSON.parse(output);
-    if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials) || typeof credentials.claudeAiOauth?.accessToken !== 'string' || !credentials.claudeAiOauth.accessToken.trim()) throw new Error();
+    if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) throw new Error('not an object');
     return credentials;
-  } catch { throw new common.ProviderError('keychain_unavailable'); }
+  } catch {
+    throw new common.ProviderError('keychain_unavailable');
+  }
 }
 module.exports = { resolveClaudeKeychainService, readClaudeKeychain };

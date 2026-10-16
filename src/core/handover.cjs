@@ -32,13 +32,26 @@ function getGitContext(cwd) {
       changedFiles.push(entries[i].slice(3));
       if (/^[RC]/.test(entries[i])) i++; // the next entry is the rename/copy source
     }
-    return { branch: git(cwd, ['branch', '--show-current']), lastCommit: git(cwd, ['log', '-1', '--oneline']), changedFiles: changedFiles.slice(0, BRIEF_LIMITS.files) };
+    return {
+      branch: git(cwd, ['branch', '--show-current']),
+      lastCommit: git(cwd, ['log', '-1', '--oneline']),
+      changedFiles: changedFiles.slice(0, BRIEF_LIMITS.files)
+    };
   } catch {
     return { branch: '', lastCommit: '', changedFiles: [] };
   }
 }
 
-const EMPTY_SESSION = { providerId: '', sessionId: '', sessionTitle: '', sessionModel: '', initialGoal: '', lastUserMsg: '', lastAssistantMsg: '', turnCount: 0 };
+const EMPTY_SESSION = {
+  providerId: '',
+  sessionId: '',
+  sessionTitle: '',
+  sessionModel: '',
+  initialGoal: '',
+  lastUserMsg: '',
+  lastAssistantMsg: '',
+  turnCount: 0
+};
 
 // Session summary plus git state. A named session that cannot be found is an error:
 // silently substituting another session would hand over the wrong task.
@@ -47,7 +60,12 @@ async function collectHandoverContext(projectDir, { sessionId = AUTO, providerId
   const transcript = await readSession({ providerId, sessionId, projectDir: path.resolve(projectDir), homeDir });
   if (!transcript && sessionId !== AUTO) throw new AppError('session_not_found');
   const { files = [], ...session } = transcript || EMPTY_SESSION;
-  return { ...session, hasSession: Boolean(transcript), git, recentFiles: [...new Set([...git.changedFiles, ...files])].slice(0, BRIEF_LIMITS.files) };
+  return {
+    ...session,
+    hasSession: Boolean(transcript),
+    git,
+    recentFiles: [...new Set([...git.changedFiles, ...files])].slice(0, BRIEF_LIMITS.files)
+  };
 }
 
 const clip = (text, limit) => String(text || '').slice(0, limit);
@@ -64,7 +82,9 @@ function renderBrief(context, { from, to, model, tier }) {
     ['Previous turns', context.turnCount],
     ['Git branch', context.git.branch && code(context.git.branch)],
     ['Last commit', context.git.lastCommit && code(context.git.lastCommit)]
-  ].filter(([, value]) => value).map(([name, value]) => `**${name}:** ${value}`);
+  ]
+    .filter(([, value]) => value)
+    .map(([name, value]) => `**${name}:** ${value}`);
   const section = (title, body) => `## ${title}\n${body}`;
   const blocks = [
     `# Vibe Usage handover: ${fromName} → ${providerName(to)}`,
@@ -89,7 +109,19 @@ function targetAccount(snapshot, providerId) {
   return selectAccount(snapshot, providerId) || primaryAccount(snapshot, providerId);
 }
 
-async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = AUTO, toProvider = AUTO, targetModel, sessionId = AUTO, sessionProvider, platform, spawnProcess = spawn, homeDir }) {
+async function executeHandover({
+  projectDir,
+  dataDir,
+  snapshot,
+  fromProvider = AUTO,
+  toProvider = AUTO,
+  targetModel,
+  sessionId = AUTO,
+  sessionProvider,
+  platform,
+  spawnProcess = spawn,
+  homeDir
+}) {
   assertProvider(fromProvider);
   assertProvider(toProvider);
   if (sessionProvider !== undefined) assertProvider(sessionProvider, { allowAuto: false });
@@ -99,27 +131,48 @@ async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = A
   const context = await collectHandoverContext(cwd, { sessionId, providerId: readFrom, homeDir });
   const from = context.providerId || (fromProvider === AUTO ? null : fromProvider);
   const to = toProvider === AUTO ? selectProvider(snapshot, { exclude: from }).providerId : toProvider;
-  const mapping = getMappedModel(context.sessionModel, to, snapshot.settings.preferredModels);
+  const mapping = getMappedModel(context.sessionModel, to, snapshot.settings.preferredModels, { homeDir, cacheDir: dataDir });
   const model = providerById(to).acceptsModel ? targetModel || mapping.targetModel || null : null;
 
   await fs.writeFile(path.join(cwd, HANDOVER_FILE), renderBrief(context, { from, to, model, tier: mapping.tier }), 'utf8');
   const account = targetAccount(snapshot, to);
   const title = `Vibe Usage · ${from ? providerName(from) : '…'} → ${providerName(to)}`;
-  const { mode } = await launchTool({ providerId: to, account, cwd, dataDir, model, prompt: HANDOVER_PROMPT, title, platform, spawnProcess });
+  const { mode } = await launchTool({
+    providerId: to,
+    account,
+    cwd,
+    dataDir,
+    model,
+    prompt: HANDOVER_PROMPT,
+    title,
+    platform,
+    spawnProcess
+  });
   return { from, to, model, mode };
 }
 
 async function listSessions({ providerId = AUTO, projectDir, homeDir = os.homedir() } = {}) {
   assertProvider(providerId);
   let cwd;
-  try { cwd = validateConfigDir(projectDir); } catch { return []; }
-  if (!await fs.stat(cwd).then(s => s.isDirectory()).catch(() => false)) return [];
+  try {
+    cwd = validateConfigDir(projectDir);
+  } catch {
+    return [];
+  }
+  if (
+    !(await fs
+      .stat(cwd)
+      .then(s => s.isDirectory())
+      .catch(() => false))
+  )
+    return [];
   return listProviderSessions(providerId, cwd, homeDir);
 }
 
-function previewSmartLaunch(snapshot) {
+// `dataDir` locates the cached model lists (see models.cjs).
+function previewSmartLaunch(snapshot, { dataDir, homeDir } = {}) {
   const decision = selectProvider(snapshot);
-  const mapping = getMappedModel(null, decision.providerId, snapshot.settings.preferredModels);
+  const mapping = getMappedModel(null, decision.providerId, snapshot.settings.preferredModels, { homeDir, cacheDir: dataDir });
   return {
     providerId: decision.providerId,
     verified: decision.verified,
@@ -130,12 +183,30 @@ function previewSmartLaunch(snapshot) {
 }
 
 // Starts the provider that currently has verified quota, fresh (no handover brief).
-async function smartLaunch({ projectDir, dataDir, snapshot, targetModel, platform, spawnProcess = spawn }) {
-  const preview = previewSmartLaunch(snapshot);
+async function smartLaunch({ projectDir, dataDir, snapshot, targetModel, platform, homeDir, spawnProcess = spawn }) {
+  const preview = previewSmartLaunch(snapshot, { dataDir, homeDir });
   const model = preview.model === null ? null : targetModel || preview.model;
   const account = targetAccount(snapshot, preview.providerId);
-  const { mode } = await launchTool({ providerId: preview.providerId, account, cwd: projectDir, dataDir, model, title: `Vibe Usage · ${providerName(preview.providerId)}`, platform, spawnProcess });
+  const { mode } = await launchTool({
+    providerId: preview.providerId,
+    account,
+    cwd: projectDir,
+    dataDir,
+    model,
+    title: `Vibe Usage · ${providerName(preview.providerId)}`,
+    platform,
+    spawnProcess
+  });
   return { to: preview.providerId, model, mode, verified: preview.verified };
 }
 
-module.exports = { HANDOVER_FILE, HANDOVER_PROMPT, collectHandoverContext, renderBrief, executeHandover, listSessions, previewSmartLaunch, smartLaunch };
+module.exports = {
+  HANDOVER_FILE,
+  HANDOVER_PROMPT,
+  collectHandoverContext,
+  renderBrief,
+  executeHandover,
+  listSessions,
+  previewSmartLaunch,
+  smartLaunch
+};

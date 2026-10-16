@@ -12,7 +12,7 @@ const privateKey = fs.readFileSync(path.join(__dirname, 'fixtures/tls/localhost-
 const createQuotaAgent = (...args) => require('../src/providers/tls-trust.cjs').createQuotaAgent(...args);
 
 function testTrust(system = [], defaults = []) {
-  return { getCACertificates: type => type === 'system' ? system : defaults };
+  return { getCACertificates: type => (type === 'system' ? system : defaults) };
 }
 
 async function localServer(t) {
@@ -72,7 +72,17 @@ test('OS trust never bypasses hostname verification', async t => {
 
 test('unavailable platform trust fails explicitly instead of silently using a different trust policy', () => {
   assert.throws(() => createQuotaAgent({ tlsApi: {} }), /trust_store_unavailable/);
-  assert.throws(() => createQuotaAgent({ tlsApi: { getCACertificates() { throw Error('private store detail'); } } }), /^Error: trust_store_unavailable$/);
+  assert.throws(
+    () =>
+      createQuotaAgent({
+        tlsApi: {
+          getCACertificates() {
+            throw Error('private store detail');
+          }
+        }
+      }),
+    /^Error: trust_store_unavailable$/
+  );
 });
 
 test('shared quota HTTP requests use a private agent with platform trust and verification enabled', async () => {

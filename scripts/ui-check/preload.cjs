@@ -26,7 +26,15 @@ window.vibe = {
   previewSmartLaunch: async () => ({ providerId: 'codex', verified: true, isFallback: false, headroomPercent: 89, model: 'gpt-6-luna' }),
   smartLaunch: none,
   listSessions: async () => [
-    { id: 's1', providerId: 'claude', title: 'Quota UI polish', updatedAt: Date.now() - 2 * 3600 * 1000, turnCount: 12, model: 'claude-opus-5-5', sizeBytes: 3.2 * 1024 * 1024 },
+    {
+      id: 's1',
+      providerId: 'claude',
+      title: 'Quota UI polish',
+      updatedAt: Date.now() - 2 * 3600 * 1000,
+      turnCount: 12,
+      model: 'claude-opus-5-5',
+      sizeBytes: 3.2 * 1024 * 1024
+    },
     { id: 's2', providerId: 'cursor', title: 'Refactor storage', updatedAt: Date.now() - 26 * 3600 * 1000, turnCount: 3 }
   ],
   selectDirectory: async () => null,

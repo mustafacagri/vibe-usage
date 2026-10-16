@@ -59,8 +59,12 @@ test('percentages, money and countdowns follow the locale', () => {
 });
 
 test('countdowns get coarser with distance', () => {
-  const m = 60e3, h = 60 * m;
-  assert.deepEqual([42 * m, 9 * h + 59 * m, 49 * h, 4 * 24 * h + 5 * h].map(x => formatDuration(x, 'en')), ['42m', '9h 59m', '49h', '4d 5h']);
+  const m = 60e3,
+    h = 60 * m;
+  assert.deepEqual(
+    [42 * m, 9 * h + 59 * m, 49 * h, 4 * 24 * h + 5 * h].map(x => formatDuration(x, 'en')),
+    ['42m', '9h 59m', '49h', '4d 5h']
+  );
 });
 
 test('retained data after a failed refresh is labelled stale', () => {

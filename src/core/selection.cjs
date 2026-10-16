@@ -85,7 +85,13 @@ function selectProvider(snapshot, { exclude, now = Date.now() } = {}) {
   for (const [index, providerId] of order.entries()) {
     const account = selectAccount(snapshot, providerId, { now });
     if (account) {
-      return { providerId, account, verified: true, isFallback: index > 0, headroomPercent: headroomPercent(measuredAccount(snapshot, account)) };
+      return {
+        providerId,
+        account,
+        verified: true,
+        isFallback: index > 0,
+        headroomPercent: headroomPercent(measuredAccount(snapshot, account))
+      };
     }
   }
   return { providerId: order[0], account: primaryAccount(snapshot, order[0]), verified: false, isFallback: false, headroomPercent: null };
@@ -112,5 +118,10 @@ function claudeLaunchWarnings(snapshot, account, { model, settingsFiles = {}, no
 
 module.exports = {
   QUOTA_FLOOR_PERCENT,
-  isAccountEligible, headroomPercent, selectAccount, primaryAccount, selectProvider, claudeLaunchWarnings
+  isAccountEligible,
+  headroomPercent,
+  selectAccount,
+  primaryAccount,
+  selectProvider,
+  claudeLaunchWarnings
 };

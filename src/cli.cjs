@@ -15,13 +15,15 @@ const { executeHandover } = require('./core/handover.cjs');
 const COMMANDS = ['status', 'watch', 'run', 'handover'];
 const CLEAR_SCREEN = '\x1b[2J\x1b[H';
 const EXIT_INTERRUPTED = 130;
-const MODEL_ARGUMENT = /^[A-Za-z0-9_.[\]:/-]{1,100}$/;
 
 function parseFlags(args, allowed) {
   const flags = {};
   while (args.length) {
     const flag = args.shift();
-    if (allowed[flag] === Boolean) { flags[flag] = true; continue; }
+    if (allowed[flag] === Boolean) {
+      flags[flag] = true;
+      continue;
+    }
     if (!allowed[flag] || !args.length) throw new AppError('invalid_argument');
     flags[flag] = args.shift();
   }
@@ -33,11 +35,14 @@ function renderSnapshot(snapshot, t, locale) {
   for (const provider of snapshot.providers) {
     lines.push(provider.name.toUpperCase());
     for (const account of provider.accounts) {
-      const label = account.label || t(account.labelKey);
-      lines.push(`  ${account.primary ? '★ ' : ''}${label}${account.plan ? ` · ${account.plan}` : ''} · ${formatFreshness(account.fetchedAt, account.status, { t, locale })}`);
+      const name = `${account.primary ? '★ ' : ''}${account.label || t(account.labelKey)}`;
+      const freshness = formatFreshness(account.fetchedAt, account.status, { t, locale });
+      lines.push(`  ${[name, account.plan, freshness].filter(Boolean).join(' · ')}`);
       for (const window of account.windows) {
         const view = describeWindow(window, { t, locale });
-        lines.push(`    ${view.label}${window.scope ? ` / ${window.scope}` : ''}: ${[view.value, view.reset, view.detail].filter(Boolean).join(' · ')}`);
+        lines.push(
+          `    ${view.label}${window.scope ? ` / ${window.scope}` : ''}: ${[view.value, view.reset, view.detail].filter(Boolean).join(' · ')}`
+        );
       }
       if (account.messageCode) lines.push(`    ${describeCode(account.messageCode, { t, has: hasKey })}`);
     }
@@ -52,7 +57,6 @@ async function run(service, args, t) {
   const providerId = args.shift();
   if (!isProviderId(providerId)) throw new AppError('invalid_provider');
   const flags = parseFlags(args, { '--account': String, '--cwd': String, '--model': String, '--dry-run': Boolean });
-  if (flags['--model'] && !MODEL_ARGUMENT.test(flags['--model'])) throw new AppError('invalid_argument');
   const snapshot = await service.refresh(providerId);
   // Without an explicit --account, only an account with verified quota is used.
   const chosen = selectAccount(snapshot, providerId, { accountId: flags['--account'], model: flags['--model'] });
@@ -60,18 +64,33 @@ async function run(service, args, t) {
   const cwd = path.resolve(flags['--cwd'] || process.cwd());
   const plan = await launchPlan(providerId, { account: chosen, model: flags['--model'] });
   if (!plan) throw new AppError('no_cli', { tool: providerById(providerId).name });
-  const warnings = providerId === 'claude'
-    ? claudeLaunchWarnings(snapshot, chosen, { model: flags['--model'], settingsFiles: await loadClaudeSettingsFiles(cwd, chosen.configDir) })
-    : [];
+  const warnings =
+    providerId === 'claude'
+      ? claudeLaunchWarnings(snapshot, chosen, {
+          model: flags['--model'],
+          settingsFiles: await loadClaudeSettingsFiles(cwd, chosen.configDir)
+        })
+      : [];
   const messages = warnings.map(w => t(w.key, w.params));
   if (flags['--dry-run']) {
-    console.log(JSON.stringify({ provider: providerId, accountId: chosen.id, projectDir: cwd, command: [plan.binary, ...plan.args], warnings: messages }, null, 2));
+    console.log(
+      JSON.stringify(
+        { provider: providerId, accountId: chosen.id, projectDir: cwd, command: [plan.binary, ...plan.args], warnings: messages },
+        null,
+        2
+      )
+    );
     return;
   }
   for (const message of messages) console.log(message);
   const child = spawn(plan.binary, plan.args, { cwd, env: applyEnvironment(environmentChanges(plan.env)), shell: false, stdio: 'inherit' });
-  child.on('error', () => { console.error(describeCode('launch_failed', { t, has: hasKey })); process.exitCode = 1; });
-  child.on('close', (code, signal) => { process.exitCode = typeof code === 'number' ? code : signal === 'SIGINT' ? EXIT_INTERRUPTED : 1; });
+  child.on('error', () => {
+    console.error(describeCode('launch_failed', { t, has: hasKey }));
+    process.exitCode = 1;
+  });
+  child.on('close', (code, signal) => {
+    process.exitCode = typeof code === 'number' ? code : signal === 'SIGINT' ? EXIT_INTERRUPTED : 1;
+  });
 }
 
 async function handover(service, args, t) {
@@ -91,28 +110,40 @@ async function handover(service, args, t) {
 async function main() {
   const args = process.argv.slice(2);
   const command = args.shift() || 'status';
-  const service = await createService({ settingsPath: process.env.VIBE_DATA_DIR ? path.join(process.env.VIBE_DATA_DIR, 'settings.json') : undefined });
+  const service = await createService({
+    settingsPath: process.env.VIBE_DATA_DIR ? path.join(process.env.VIBE_DATA_DIR, 'settings.json') : undefined
+  });
   const language = service.snapshot().settings.language;
   const t = (key, params) => translate(language, key, params);
-  const locale = language;
-  if (command === 'help' || command === '--help') { console.log(t('cliHelp')); return; }
+  if (command === 'help' || command === '--help') {
+    console.log(t('cliHelp'));
+    return;
+  }
   if (!COMMANDS.includes(command)) throw new AppError('unknown_command');
 
   try {
     if (command === 'status') {
       const snapshot = await service.refresh();
-      console.log(args.includes('--json') ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, t, locale));
+      console.log(args.includes('--json') ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, t, language));
     } else if (command === 'watch') {
-      const draw = snapshot => process.stdout.write(`${process.stdout.isTTY ? CLEAR_SCREEN : ''}${renderSnapshot(snapshot, t, locale)}\n`);
+      const draw = snapshot =>
+        process.stdout.write(`${process.stdout.isTTY ? CLEAR_SCREEN : ''}${renderSnapshot(snapshot, t, language)}\n`);
       draw(service.snapshot());
       draw(await service.refresh());
       let busy = false;
       const timer = setInterval(async () => {
         if (busy) return;
         busy = true;
-        try { draw(await service.refresh()); } finally { busy = false; }
+        try {
+          draw(await service.refresh());
+        } finally {
+          busy = false;
+        }
       }, service.snapshot().settings.intervalSeconds * 1000);
-      process.once('SIGINT', () => { clearInterval(timer); process.exit(0); });
+      process.once('SIGINT', () => {
+        clearInterval(timer);
+        process.exit(0);
+      });
     } else if (command === 'run') {
       await run(service, args, t);
     } else {
@@ -124,7 +155,12 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(describeCode(error.code, { t: (key, params) => translate(undefined, key, params), has: hasKey }));
-  process.exitCode = 1;
-});
+// Runs only as a program; requiring the module (tests) has no side effects.
+if (require.main === module) {
+  main().catch(error => {
+    console.error(describeCode(error.code, { t: (key, params) => translate(undefined, key, params), has: hasKey }, error.params));
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { renderSnapshot };

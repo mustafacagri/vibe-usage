@@ -23,10 +23,19 @@ async function sourceText() {
 
 const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
 const baseKey = key => key.replace(PLURAL_SUFFIX, '');
-const pluralFamilies = table => [...new Set(Object.keys(table).filter(k => PLURAL_SUFFIX.test(k)).map(baseKey))];
+const pluralFamilies = table => [
+  ...new Set(
+    Object.keys(table)
+      .filter(k => PLURAL_SUFFIX.test(k))
+      .map(baseKey)
+  )
+];
 
 test('every language defines the same keys, non-empty, with the same placeholders', () => {
-  const singular = table => Object.keys(table).filter(k => !PLURAL_SUFFIX.test(k)).sort();
+  const singular = table =>
+    Object.keys(table)
+      .filter(k => !PLURAL_SUFFIX.test(k))
+      .sort();
   const en = I18N[DEFAULT_LANGUAGE];
   for (const language of SUPPORTED_LANGUAGES) {
     const table = I18N[language];
@@ -60,8 +69,14 @@ test('every key the code references exists, and every key is referenced', async 
   const source = await sourceText();
   const literals = new Set([...source.matchAll(/['"`]([A-Za-z][A-Za-z0-9_]+)['"`]/g)].map(m => m[1]));
   const referenced = [...source.matchAll(/\bt\('(\w+)'|data-i18n(?:-title|-aria)?="(\w+)"/g)].map(m => m[1] || m[2]);
-  assert.deepEqual(referenced.filter(key => !hasKey(key)), [], 'missing keys');
-  const unused = [...new Set(Object.keys(I18N.en).map(baseKey))].filter(key => !NON_TEXT_KEYS.has(key) && !DYNAMIC_KEY.test(key) && !literals.has(key));
+  assert.deepEqual(
+    referenced.filter(key => !hasKey(key)),
+    [],
+    'missing keys'
+  );
+  const unused = [...new Set(Object.keys(I18N.en).map(baseKey))].filter(
+    key => !NON_TEXT_KEYS.has(key) && !DYNAMIC_KEY.test(key) && !literals.has(key)
+  );
   assert.deepEqual(unused, [], 'unused keys');
 });
 
@@ -69,7 +84,10 @@ test('every app error code has a message', async () => {
   const source = await sourceText();
   const codes = new Set([...source.matchAll(/new AppError\('(\w+)'/g)].map(m => m[1]));
   assert.ok(codes.size > 5);
-  assert.deepEqual([...codes].filter(code => !(`error_${code}` in I18N.en) && !(`status_${code}` in I18N.en)), []);
+  assert.deepEqual(
+    [...codes].filter(code => !(`error_${code}` in I18N.en) && !(`status_${code}` in I18N.en)),
+    []
+  );
 });
 
 test('lookups fall back to English, then to the key', () => {

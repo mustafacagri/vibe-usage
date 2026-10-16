@@ -37,11 +37,16 @@ function parseCursorUsage(summary) {
     for (const [scope, keys] of Object.entries(PLAN_SCOPES)) {
       windows.push(normalizeWindow({ id: `plan:${scope}`, ...keys, usedPercent: plan[`${scope}PercentUsed`], resetsAt }));
     }
-    windows.push(normalizeWindow({
-      id: 'plan:spend', labelKey: 'labelIncludedSpend', section: 'details', resetsAt,
-      amounts: { ...poolAmounts(plan), bonus: plan.breakdown?.bonus },
-      ...(poolValueKey(plan) ? { valueKey: poolValueKey(plan) } : {})
-    }));
+    windows.push(
+      normalizeWindow({
+        id: 'plan:spend',
+        labelKey: 'labelIncludedSpend',
+        section: 'details',
+        resetsAt,
+        amounts: { ...poolAmounts(plan), bonus: plan.breakdown?.bonus },
+        ...(poolValueKey(plan) ? { valueKey: poolValueKey(plan) } : {})
+      })
+    );
   }
   for (const group of USAGE_GROUPS) {
     const usage = summary[`${group}Usage`];
@@ -49,7 +54,17 @@ function parseCursorUsage(summary) {
       const pool = usage?.[key];
       if (!pool) continue;
       const valueKey = poolValueKey(pool);
-      windows.push(normalizeWindow({ id: `${group}:${key}`, labelKey, group, section: 'details', resetsAt, amounts: poolAmounts(pool), ...(valueKey ? { valueKey } : {}) }));
+      windows.push(
+        normalizeWindow({
+          id: `${group}:${key}`,
+          labelKey,
+          group,
+          section: 'details',
+          resetsAt,
+          amounts: poolAmounts(pool),
+          ...(valueKey ? { valueKey } : {})
+        })
+      );
     }
   }
   const result = { windows };
@@ -84,6 +99,15 @@ function sessionCookie(token, clock) {
   return `WorkosCursorSessionToken=${user}%3A%3A${token}`;
 }
 
+// The Cursor Agent CLI; older installs only have the `agent` name. Null when not installed.
+async function findCursorAgent() {
+  for (const name of ['cursor-agent', 'agent']) {
+    const binary = await common.findBinary(name).catch(() => null);
+    if (binary) return binary;
+  }
+  return null;
+}
+
 function createCursorProvider(options = {}) {
   const context = {
     home: options.home || os.homedir(),
@@ -107,4 +131,4 @@ function createCursorProvider(options = {}) {
   };
 }
 
-module.exports = { parseCursorUsage, createCursorProvider };
+module.exports = { parseCursorUsage, findCursorAgent, createCursorProvider };

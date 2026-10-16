@@ -17,12 +17,19 @@
     "build:win": "electron-builder --win dir zip",
     "build:mac": "electron-builder --mac dmg zip",
     "ui-check": "electron scripts/ui-check/main.cjs",
-    "icons": "node scripts/icons.cjs"
+    "icons": "node scripts/icons.cjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@eslint/js": "9.39.5",
     "electron": "44.8.0",
     "electron-builder": "26.15.3",
-    "playwright": "1.64.1"
+    "eslint": "9.39.5",
+    "globals": "17.13.0",
+    "playwright": "1.64.1",
+    "prettier": "3.9.10"
   },
   "build": {
     "appId": "dev.vibe.usage",
@@ -50,7 +57,17 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.developer-tools",
+      "identity": "-",
+      "hardenedRuntime": false
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
     }
   }
 }

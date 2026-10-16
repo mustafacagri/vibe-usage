@@ -5,10 +5,14 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
-const { CREDENTIAL_ENV_KEYS } = require('../catalog.cjs');
+const { CREDENTIAL_ENV_KEYS, MODEL_ID_PATTERN } = require('../catalog.cjs');
 const { findBinary, unpackedPath, windowsPowerShell } = require('../providers/common.cjs');
 const { validateConfigDir } = require('./settings.cjs');
+const { DEFAULT_ACCOUNT_ID: CLAUDE_DEFAULT_ACCOUNT_ID } = require('../providers/claude.cjs');
+const { findCursorAgent } = require('../providers/cursor.cjs');
 const { AppError } = require('./errors.cjs');
+const { readJson } = require('./files.cjs');
+const { hasControlChars } = require('./model.cjs');
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const LAUNCHER_DIR = 'launchers';
@@ -18,7 +22,7 @@ const CODEX_HOME_ENV = 'CODEX_HOME';
 const TERMINAL_SCRIPT = unpackedPath(path.resolve(__dirname, '../launchers/terminal.ps1'));
 
 function shellQuote(value) {
-  if (typeof value !== 'string' || /[\x00-\x1f]/.test(value)) throw new AppError('invalid_argument');
+  if (typeof value !== 'string' || hasControlChars(value)) throw new AppError('invalid_argument');
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
@@ -38,7 +42,10 @@ function applyEnvironment(changes, source = process.env, platform = process.plat
 
 function waitForSpawn(child) {
   return new Promise((resolve, reject) => {
-    child.once('spawn', () => { child.unref(); resolve(); });
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
     child.once('error', () => reject(new AppError('launch_failed')));
   });
 }
@@ -69,11 +76,30 @@ async function openInTerminal({ cwd, binary, args = [], env, title, dataDir, pla
   }
   if (platform === 'win32') {
     const encodedArgs = Buffer.from(args.join('\0'), 'utf8').toString('base64');
-    const psArgs = ['-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', TERMINAL_SCRIPT,
-      '-WorkingDirectory', cwd, '-Executable', binary, ...(title ? ['-Title', title] : []), ...(args.length ? ['-ArgumentsBase64', encodedArgs] : [])];
-    return waitForSpawn(spawnProcess(windowsPowerShell(), psArgs, {
-      shell: false, detached: true, windowsHide: false, stdio: 'ignore', env: applyEnvironment(changes, process.env, platform)
-    }));
+    const psArgs = [
+      '-NoLogo',
+      '-NoProfile',
+      '-NoExit',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      TERMINAL_SCRIPT,
+      '-WorkingDirectory',
+      cwd,
+      '-Executable',
+      binary,
+      ...(title ? ['-Title', title] : []),
+      ...(args.length ? ['-ArgumentsBase64', encodedArgs] : [])
+    ];
+    return waitForSpawn(
+      spawnProcess(windowsPowerShell(), psArgs, {
+        shell: false,
+        detached: true,
+        windowsHide: false,
+        stdio: 'ignore',
+        env: applyEnvironment(changes, process.env, platform)
+      })
+    );
   }
   throw new AppError('unsupported_platform');
 }
@@ -88,35 +114,39 @@ async function openDesktopApp({ providerId, cwd, platform = process.platform, en
   const app = DESKTOP_APPS[providerId];
   if (!app) throw new AppError('unsupported_platform');
   if (platform === 'darwin') {
-    return waitForSpawn(spawnProcess('/usr/bin/open', ['-a', app.mac, ...(cwd ? [cwd] : [])], { shell: false, detached: true, stdio: 'ignore' }));
+    return waitForSpawn(
+      spawnProcess('/usr/bin/open', ['-a', app.mac, ...(cwd ? [cwd] : [])], { shell: false, detached: true, stdio: 'ignore' })
+    );
   }
   if (platform === 'win32') {
     const executable = path.win32.join(env.LOCALAPPDATA || '', 'Programs', ...app.windows);
-    if (!env.LOCALAPPDATA || !await fs.stat(executable).then(s => s.isFile()).catch(() => false)) throw new AppError('app_not_found', { app: app.mac });
+    if (
+      !env.LOCALAPPDATA ||
+      !(await fs
+        .stat(executable)
+        .then(s => s.isFile())
+        .catch(() => false))
+    )
+      throw new AppError('app_not_found', { app: app.mac });
     return waitForSpawn(spawnProcess(executable, cwd ? [cwd] : [], { shell: false, detached: true, stdio: 'ignore' }));
   }
   throw new AppError('unsupported_platform');
 }
 
 function isDefaultClaudeProfile(account) {
-  return account.id === 'claude:default' || account.configDirExplicit === false;
+  return account.id === CLAUDE_DEFAULT_ACCOUNT_ID || account.configDirExplicit === false;
 }
 
 // The default profile must run with CLAUDE_CONFIG_DIR unset: setting it, even to the default
 // directory, selects a different Keychain entry on macOS.
 function claudeEnvironment(account) {
-  return isDefaultClaudeProfile(account) ? { unset: [CLAUDE_CONFIG_ENV] } : { set: { [CLAUDE_CONFIG_ENV]: validateConfigDir(account.configDir) } };
+  return isDefaultClaudeProfile(account)
+    ? { unset: [CLAUDE_CONFIG_ENV] }
+    : { set: { [CLAUDE_CONFIG_ENV]: validateConfigDir(account.configDir) } };
 }
 
 function launchEnvironment(account, source = process.env, platform = process.platform) {
   return applyEnvironment(environmentChanges(claudeEnvironment(account)), source, platform);
-}
-
-async function findCursorAgent() {
-  for (const name of ['cursor-agent', 'agent']) {
-    try { return await findBinary(name); } catch {}
-  }
-  return null;
 }
 
 // How each provider starts with an optional model and initial prompt. Returns the launch
@@ -124,7 +154,11 @@ async function findCursorAgent() {
 const LAUNCHERS = {
   async claude({ account, model, prompt }) {
     if (!account?.configDir) throw new AppError('account_not_found');
-    return { binary: await findBinary('claude'), args: [...(model ? ['--model', model] : []), ...(prompt ? [prompt] : [])], env: claudeEnvironment(account) };
+    return {
+      binary: await findBinary('claude'),
+      args: [...(model ? ['--model', model] : []), ...(prompt ? [prompt] : [])],
+      env: claudeEnvironment(account)
+    };
   },
   async codex({ account, model, prompt }) {
     const set = account?.configDir ? { [CODEX_HOME_ENV]: validateConfigDir(account.configDir) } : {};
@@ -142,13 +176,21 @@ const LAUNCHERS = {
 };
 
 // The command that starts a provider's CLI, or null when it only exists as a desktop app.
+// Model ids come from settings, the UI or the command line, so they are checked here.
 function launchPlan(providerId, options) {
+  if (options.model && !MODEL_ID_PATTERN.test(options.model)) throw new AppError('invalid_argument');
   return LAUNCHERS[providerId](options);
 }
 
 async function launchTool({ providerId, account, cwd, dataDir, model, prompt, title, platform = process.platform, spawnProcess = spawn }) {
   const directory = validateConfigDir(cwd);
-  if (!await fs.stat(directory).then(s => s.isDirectory()).catch(() => false)) throw new AppError('folder_not_found');
+  if (
+    !(await fs
+      .stat(directory)
+      .then(s => s.isDirectory())
+      .catch(() => false))
+  )
+    throw new AppError('folder_not_found');
   const plan = await launchPlan(providerId, { account, model, prompt });
   if (!plan) {
     await openDesktopApp({ providerId, cwd: directory, platform, spawnProcess });
@@ -172,22 +214,26 @@ async function openSignIn({ providerId, dataDir, cwd, spawnProcess = spawn }) {
   return openDesktopApp({ providerId, spawnProcess });
 }
 
-async function readJsonOrNull(file) {
-  try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
-}
-
 // Claude settings files that can override the selected profile's identity, keyed by name.
 async function loadClaudeSettingsFiles(projectDir, configDir) {
   const files = {};
   if (projectDir) {
-    files['.claude/settings.json'] = await readJsonOrNull(path.join(projectDir, '.claude', 'settings.json'));
-    files['.claude/settings.local.json'] = await readJsonOrNull(path.join(projectDir, '.claude', 'settings.local.json'));
+    files['.claude/settings.json'] = await readJson(path.join(projectDir, '.claude', 'settings.json'));
+    files['.claude/settings.local.json'] = await readJson(path.join(projectDir, '.claude', 'settings.local.json'));
   }
-  if (configDir) files[path.join(path.basename(configDir), 'settings.json')] = await readJsonOrNull(path.join(configDir, 'settings.json'));
+  if (configDir) files[path.join(path.basename(configDir), 'settings.json')] = await readJson(path.join(configDir, 'settings.json'));
   return files;
 }
 
 module.exports = {
-  shellQuote, environmentChanges, applyEnvironment, launchEnvironment,
-  openInTerminal, openDesktopApp, launchPlan, launchTool, openSignIn, loadClaudeSettingsFiles
+  shellQuote,
+  environmentChanges,
+  applyEnvironment,
+  launchEnvironment,
+  openInTerminal,
+  openDesktopApp,
+  launchPlan,
+  launchTool,
+  openSignIn,
+  loadClaudeSettingsFiles
 };

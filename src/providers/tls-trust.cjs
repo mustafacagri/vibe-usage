@@ -19,7 +19,7 @@ function createQuotaAgent({ tlsApi = tls } = {}) {
     ca: [...new Set([...defaults, ...system])],
     rejectUnauthorized: true,
     checkServerIdentity: tls.checkServerIdentity,
-    keepAlive: false,
+    keepAlive: false
   });
 }
 
