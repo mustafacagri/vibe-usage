@@ -5,7 +5,15 @@ const { safeError, now, ProviderError } = require('../providers/common.cjs');
 const { antigravityAccountId } = require('../providers/antigravity.cjs');
 
 const { AppError } = require('./errors.cjs');
-const { providerById, normalizeProviderOrder, ACCOUNT_ID_PATTERN, MAX_DISMISSED_ACCOUNTS } = require('../catalog.cjs');
+const { PROVIDER_IDS, providerById, normalizeProviderOrder, ACCOUNT_ID_PATTERN, MAX_DISMISSED_ACCOUNTS } = require('../catalog.cjs');
+
+// Loaded lazily so tests that inject their own adapters never load the real ones.
+const ADAPTER_FACTORIES = {
+  claude: () => require('../providers/claude.cjs').createClaudeProvider(),
+  codex: () => require('../providers/codex.cjs').createCodexProvider(),
+  cursor: () => require('../providers/cursor.cjs').createCursorProvider(),
+  antigravity: () => require('../providers/antigravity.cjs').createAntigravityProvider()
+};
 
 const FETCH_TIMEOUT_MS = 12000;
 const DISCOVERY_INTERVAL_MS = 60 * 1000;
@@ -17,15 +25,16 @@ const DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS = 120;
 // "app closed", not "account removed".
 const PROCESS_BOUND_PROVIDERS = new Set(['antigravity']);
 const LEGACY_ANTIGRAVITY_ACCOUNT_ID = 'antigravity:current';
+const ANTIGRAVITY_ID_PREFIX = 'antigravity:';
 
 const copy = value => structuredClone(value);
 
 function migrateAntigravityAccounts(currentSettings, found) {
   let modified = false;
-  // Migrate any legacy unhashed accounts like antigravity:user@...
+  // Early ids embedded the e-mail (antigravity:user@…); current ids hash it.
   for (const acc of currentSettings.accounts) {
-    if (acc.providerId === 'antigravity' && acc.id.startsWith('antigravity:') && acc.id.includes('@')) {
-      const email = (acc.email || acc.id.slice(12)).toLowerCase().trim();
+    if (acc.providerId === 'antigravity' && acc.id.startsWith(ANTIGRAVITY_ID_PREFIX) && acc.id.includes('@')) {
+      const email = (acc.email || acc.id.slice(ANTIGRAVITY_ID_PREFIX.length)).toLowerCase().trim();
       acc.id = antigravityAccountId(email);
       acc.email = email;
       modified = true;
@@ -53,12 +62,7 @@ function migrateAntigravityAccounts(currentSettings, found) {
 async function createService(options = {}) {
   const clock = options.clock || Date.now;
   const settingsPath = options.settingsPath || defaultSettingsPath();
-  const adapters = options.providers || [
-    require('../providers/codex.cjs').createCodexProvider(),
-    require('../providers/claude.cjs').createClaudeProvider(),
-    require('../providers/cursor.cjs').createCursorProvider(),
-    require('../providers/antigravity.cjs').createAntigravityProvider()
-  ];
+  const adapters = options.providers || PROVIDER_IDS.map(id => ADAPTER_FACTORIES[id]());
 
   let settings = await loadSettings(settingsPath) || copy(DEFAULT_SETTINGS);
   let changed = false;
@@ -73,7 +77,7 @@ async function createService(options = {}) {
   settings = validateSettings(settings);
   if (changed) await saveSettings(settingsPath, settings);
 
-  let providers = adapters.map(p => ({ id: p.id, name: providerById(p.id)?.name || p.id, status: 'pending', accounts: [] }));
+  const providers = adapters.map(p => ({ id: p.id, name: providerById(p.id)?.name || p.id, status: 'pending', accounts: [] }));
   let pendingSave = Promise.resolve();
   const cooldown = new Map();
   const inFlight = new Map(); // providerId -> Promise

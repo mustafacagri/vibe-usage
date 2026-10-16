@@ -13,13 +13,9 @@
   --text-muted: #64748b;
   
   --accent-claude: #d97757;
-  --accent-claude-glow: rgba(217, 119, 87, 0.25);
   --accent-cursor: #8b5cf6;
-  --accent-cursor-glow: rgba(139, 92, 246, 0.25);
   --accent-codex: #10b981;
-  --accent-codex-glow: rgba(16, 185, 129, 0.25);
   --accent-antigravity: #38bdf8;
-  --accent-antigravity-glow: rgba(56, 189, 248, 0.25);
 
   --green: #10b981;
   --warn: #f59e0b;
@@ -329,18 +325,6 @@ main {
 }
 
 /* Provider Accents & Avatars */
-.provider[data-provider="claude"]::before {
-  background: linear-gradient(90deg, var(--accent-claude), #f59e0b);
-}
-.provider[data-provider="cursor"]::before {
-  background: linear-gradient(90deg, var(--accent-cursor), #ec4899);
-}
-.provider[data-provider="codex"]::before {
-  background: linear-gradient(90deg, var(--accent-codex), #06b6d4);
-}
-.provider[data-provider="antigravity"]::before {
-  background: linear-gradient(90deg, var(--accent-antigravity), #6366f1);
-}
 
 .provider-heading {
   display: flex;
@@ -368,22 +352,6 @@ main {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.claude-avatar {
-  background: linear-gradient(135deg, #d97757, #b45309);
-  color: #fff;
-}
-.cursor-avatar {
-  background: linear-gradient(135deg, #7c3aed, #4f46e5);
-  color: #fff;
-}
-.codex-avatar {
-  background: linear-gradient(135deg, #059669, #0d9488);
-  color: #fff;
-}
-.antigravity-avatar {
-  background: linear-gradient(135deg, #0284c7, #2563eb);
-  color: #fff;
-}
 
 .provider-brand h2 {
   font-size: 15px;
@@ -535,18 +503,6 @@ main {
 }
 
 /* Provider-Specific Progress Gradients */
-.provider[data-provider="claude"] .fill {
-  background: linear-gradient(90deg, #d97757, #f59e0b);
-}
-.provider[data-provider="cursor"] .fill {
-  background: linear-gradient(90deg, #6366f1, #a855f7);
-}
-.provider[data-provider="codex"] .fill {
-  background: linear-gradient(90deg, #10b981, #06b6d4);
-}
-.provider[data-provider="antigravity"] .fill {
-  background: linear-gradient(90deg, #2563eb, #38bdf8);
-}
 
 .quota.low .fill {
   background: linear-gradient(90deg, #ef4444, #f43f5e) !important;
@@ -731,8 +687,8 @@ dialog header h2 {
 
 .fallback-slot {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
 }
 
 .fallback-slot label {
@@ -758,6 +714,8 @@ dialog header h2 {
 }
 
 .fallback-slot select {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   background: rgba(11, 14, 20, 0.9);
   color: var(--text);
@@ -798,10 +756,6 @@ dialog header h2 {
   font-size: 11px;
 }
 
-.codex-color { color: var(--accent-codex); }
-.claude-color { color: var(--accent-claude); }
-.cursor-color { color: var(--accent-cursor); }
-.antigravity-color { color: var(--accent-antigravity); }
 
 .model-select {
   flex: 1;
@@ -856,26 +810,6 @@ dialog header h2 {
   transition: border-color 0.15s ease;
 }
 
-.provider-settings-card[data-provider="claude"] {
-  --provider-accent: var(--accent-claude);
-  border-left-color: var(--provider-accent);
-}
-
-.provider-settings-card[data-provider="codex"] {
-  --provider-accent: var(--accent-codex);
-  border-left-color: var(--provider-accent);
-}
-
-.provider-settings-card[data-provider="cursor"] {
-  --provider-accent: var(--accent-cursor);
-  border-left-color: var(--provider-accent);
-}
-
-.provider-settings-card[data-provider="antigravity"] {
-  --provider-accent: var(--accent-antigravity);
-  border-left-color: var(--provider-accent);
-}
-
 .provider-card-header {
   display: flex;
   justify-content: space-between;
@@ -900,30 +834,6 @@ dialog header h2 {
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
-}
-
-.brand-avatar-badge.codex-badge {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10b981;
-  border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.brand-avatar-badge.claude-badge {
-  background: rgba(217, 119, 87, 0.15);
-  color: #d97757;
-  border: 1px solid rgba(217, 119, 87, 0.3);
-}
-
-.brand-avatar-badge.cursor-badge {
-  background: rgba(139, 92, 246, 0.15);
-  color: #8b5cf6;
-  border: 1px solid rgba(139, 92, 246, 0.3);
-}
-
-.brand-avatar-badge.antigravity-badge {
-  background: rgba(56, 189, 248, 0.15);
-  color: #38bdf8;
-  border: 1px solid rgba(56, 189, 248, 0.3);
 }
 
 .provider-name-text {
@@ -995,6 +905,8 @@ dialog header h2 {
 }
 
 .remove-account {
+  flex-shrink: 0;
+  white-space: nowrap;
   font-size: 11px;
   padding: 3px 8px;
   color: #f87171;
@@ -1277,10 +1189,26 @@ dialog header h2 {
 /* Narrow windows (default 430px, minimum 340px): one quota per row, and let the
    summary actions drop below the status instead of clipping it. */
 @media (max-width: 479px) {
-  .quota-grid { grid-template-columns: minmax(0, 1fr); }
+  .quota-grid, .fallback-priority-grid { grid-template-columns: minmax(0, 1fr); }
   .summary { flex-wrap: wrap; }
   .summary-actions { margin-left: auto; }
 }
 
-/* Primary-account radios take the provider's accent colour. */
-.account-radio-label input[type="radio"] { accent-color: var(--provider-accent); }
+/* Per-provider palette, defined once. Provider-coloured elements read it from their
+   nearest [data-provider] ancestor. */
+[data-provider="claude"] { --accent: var(--accent-claude); --accent-end: #f59e0b; --avatar-start: #d97757; --avatar-end: #b45309; --fill-start: #d97757; --fill-end: #f59e0b; }
+[data-provider="cursor"] { --accent: var(--accent-cursor); --accent-end: #ec4899; --avatar-start: #7c3aed; --avatar-end: #4f46e5; --fill-start: #6366f1; --fill-end: #a855f7; }
+[data-provider="codex"] { --accent: var(--accent-codex); --accent-end: #06b6d4; --avatar-start: #059669; --avatar-end: #0d9488; --fill-start: #10b981; --fill-end: #06b6d4; }
+[data-provider="antigravity"] { --accent: var(--accent-antigravity); --accent-end: #6366f1; --avatar-start: #0284c7; --avatar-end: #2563eb; --fill-start: #2563eb; --fill-end: #38bdf8; }
+
+.provider[data-provider]::before { background: linear-gradient(90deg, var(--accent), var(--accent-end)); }
+.brand-avatar { background: linear-gradient(135deg, var(--avatar-start), var(--avatar-end)); color: #fff; }
+.provider .fill { background: linear-gradient(90deg, var(--fill-start), var(--fill-end)); }
+.provider-color { color: var(--accent); }
+.provider-settings-card[data-provider] { border-left-color: var(--accent); }
+.account-radio-label input[type="radio"] { accent-color: var(--accent); }
+.brand-avatar-badge {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}

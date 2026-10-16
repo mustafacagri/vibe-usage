@@ -31,10 +31,24 @@ function samePath(a, b) {
   return norm(a) === norm(b);
 }
 
+const TITLE_MAX_LENGTH = 70;
+const TITLE_MIN_LENGTH = 4;
+const RECENT_FILES = 10;
+// Lines that open a prompt but say nothing about it: markup, mentions, rules, code fences.
+const NON_TITLE_PREFIXES = ['<', '@', '---', '```'];
+
+// First meaningful line of the first prompt, without Markdown heading or list markers.
 function titleFrom(text) {
   const line = String(text || '').split('\n').map(x => x.trim())
-    .find(x => x.length > 3 && !x.startsWith('<') && !x.startsWith('@') && !x.startsWith('---') && !x.startsWith('```'));
-  return line ? line.replace(/^[#\-*\s]+/, '').slice(0, 70) : '';
+    .find(x => x.length >= TITLE_MIN_LENGTH && !NON_TITLE_PREFIXES.some(prefix => x.startsWith(prefix)));
+  return line ? line.replace(/^[#\-*\s]+/, '').slice(0, TITLE_MAX_LENGTH) : '';
+}
+
+// A session list item, or null for sessions without a single user prompt. An empty title is
+// worded by the UI ("untitled session").
+function listEntry(providerId, id, transcript, { updatedAt, sizeBytes, title }) {
+  if (!transcript.turnCount) return null;
+  return { id, providerId, title: title || transcript.sessionTitle, updatedAt, sizeBytes, turnCount: transcript.turnCount, model: transcript.sessionModel };
 }
 
 function openDb(file) {
@@ -95,7 +109,7 @@ async function readClaudeFile(file, id) {
   }
   if (t.aiTitle) t.sessionTitle = t.aiTitle;
   delete t.aiTitle;
-  t.files = [...files].slice(-10);
+  t.files = [...files].slice(-RECENT_FILES);
   return t;
 }
 
@@ -108,9 +122,7 @@ async function listClaude(projectDir, homeDir) {
         const full = path.join(dir, f);
         const stat = await fsp.stat(full);
         const id = f.slice(0, -'.jsonl'.length);
-        const t = await readClaudeFile(full, id);
-        if (!t.turnCount) continue;
-        sessions.push({ id, title: t.sessionTitle || `Session ${id.slice(0, 8)}`, updatedAt: stat.mtimeMs, sizeBytes: stat.size, turnCount: t.turnCount, model: t.sessionModel, providerId: 'claude' });
+        sessions.push(listEntry('claude', id, await readClaudeFile(full, id), { updatedAt: stat.mtimeMs, sizeBytes: stat.size }));
       } catch {}
     }
   }
@@ -143,6 +155,7 @@ function walkRollouts(dir, out = []) {
 }
 
 const HEAD_BYTES = 8192;
+const ZSTD_READ_CHUNK_BYTES = 16384;
 
 function readHead(file) {
   if (!file.endsWith('.zst')) {
@@ -157,7 +170,7 @@ function readHead(file) {
   return new Promise(resolve => {
     const chunks = [];
     let size = 0;
-    const input = fs.createReadStream(file, { highWaterMark: 16384 });
+    const input = fs.createReadStream(file, { highWaterMark: ZSTD_READ_CHUNK_BYTES });
     const out = input.pipe(zlib.createZstdDecompress());
     const done = () => { input.destroy(); out.destroy(); resolve(Buffer.concat(chunks).toString('utf8')); };
     out.on('data', d => { chunks.push(d); size += d.length; if (size >= HEAD_BYTES) done(); });
@@ -260,9 +273,7 @@ async function listCodex(projectDir, homeDir) {
   for (const { file, id } of await findCodexRollouts(projectDir, homeDir)) {
     try {
       const stat = await fsp.stat(file);
-      const t = await codexSummary(file, id);
-      if (!t.turnCount) continue;
-      sessions.push({ id, title: names.get(id) || t.sessionTitle || `Session ${id.slice(0, 8)}`, updatedAt: stat.mtimeMs, sizeBytes: stat.size, turnCount: t.turnCount, model: t.sessionModel, providerId: 'codex' });
+      sessions.push(listEntry('codex', id, await codexSummary(file, id), { updatedAt: stat.mtimeMs, sizeBytes: stat.size, title: names.get(id) }));
     } catch {}
   }
   return sessions;
@@ -335,10 +346,8 @@ async function listCursor(projectDir, homeDir) {
   const sessions = [];
   for (const { id, dir, meta } of cursorChatDirs(projectDir, homeDir)) {
     try {
-      const t = readCursorChat(dir, id);
-      if (!t.turnCount) continue;
       const stat = fs.statSync(path.join(dir, 'store.db'));
-      sessions.push({ id, title: t.sessionTitle || `Session ${id.slice(0, 8)}`, updatedAt: meta.updatedAtMs || stat.mtimeMs, sizeBytes: stat.size, turnCount: t.turnCount, model: '', providerId: 'cursor' });
+      sessions.push(listEntry('cursor', id, readCursorChat(dir, id), { updatedAt: meta.updatedAtMs || stat.mtimeMs, sizeBytes: stat.size }));
     } catch {}
   }
   return sessions;
@@ -383,17 +392,21 @@ function blobHasWorkspace(blob, uris) {
 
 // Best effort: the latest generation record stores the model display name as a
 // length-prefixed string under protobuf field 21 (tag 0xaa 0x01).
+const MODEL_NAME_TAG = Buffer.from([0xaa, 0x01]);
+const MODEL_NAME_MAX_LENGTH = 80;
+const MODEL_NAME = /^(Gemini|Claude|GPT)[\w .()-]*$/;
 function antigravityModel(db) {
   try {
     const row = db.prepare('SELECT data FROM gen_metadata ORDER BY idx DESC LIMIT 1').get();
     const buf = row?.data ? Buffer.from(row.data) : null;
     if (!buf) return '';
     let found = '';
-    for (let i = buf.indexOf(Buffer.from([0xaa, 0x01])); i !== -1; i = buf.indexOf(Buffer.from([0xaa, 0x01]), i + 1)) {
-      const len = buf[i + 2];
-      if (!len || len > 80) continue;
-      const s = buf.toString('utf8', i + 3, i + 3 + len);
-      if (/^(Gemini|Claude|GPT)[\w .()-]*$/.test(s)) found = s;
+    for (let i = buf.indexOf(MODEL_NAME_TAG); i !== -1; i = buf.indexOf(MODEL_NAME_TAG, i + 1)) {
+      const len = buf[i + MODEL_NAME_TAG.length];
+      if (!len || len > MODEL_NAME_MAX_LENGTH) continue;
+      const start = i + MODEL_NAME_TAG.length + 1;
+      const name = buf.toString('utf8', start, start + len);
+      if (MODEL_NAME.test(name)) found = name;
     }
     return found;
   } catch {
@@ -442,9 +455,8 @@ async function listAntigravity(projectDir, homeDir) {
   const sessions = [];
   for (const { id, file, model } of antigravityConversations(projectDir, homeDir)) {
     try {
-      const t = await readAntigravityTranscript(homeDir, id, model);
       const stat = fs.statSync(file);
-      sessions.push({ id, title: t.sessionTitle || `Session ${id.slice(0, 8)}`, updatedAt: stat.mtimeMs, sizeBytes: stat.size, turnCount: t.turnCount, model: t.sessionModel, providerId: 'antigravity' });
+      sessions.push(listEntry('antigravity', id, await readAntigravityTranscript(homeDir, id, model), { updatedAt: stat.mtimeMs, sizeBytes: stat.size }));
     } catch {}
   }
   return sessions;
@@ -463,7 +475,7 @@ async function listProviderSessions(providerId, projectDir, homeDir) {
   const providers = providerId === AUTO ? PROVIDER_IDS : [providerId];
   if (!providers.every(p => LISTERS[p])) throw new AppError('invalid_provider');
   const results = await Promise.allSettled(providers.map(p => Promise.resolve().then(() => LISTERS[p](projectDir, homeDir))));
-  return results.flatMap(r => (r.status === 'fulfilled' ? r.value : [])).sort((a, b) => b.updatedAt - a.updatedAt);
+  return results.flatMap(r => (r.status === 'fulfilled' ? r.value : [])).filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 // Reads one session. With sessionId 'auto' the newest session of the provider(s) is used.

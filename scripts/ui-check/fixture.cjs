@@ -19,10 +19,10 @@ function snapshot(language, now = Date.now()) {
       ]
     },
     providers: [
-      { id: 'codex', name: 'Codex', status: 'ok', fetchedAt, accounts: [{ id: 'codex:default', labelKey: 'defaultAccount', primary: true, status: 'ok', plan: 'free', fetchedAt,
+      { id: 'codex', name: 'Codex', status: 'stale', fetchedAt, accounts: [{ id: 'codex:default', labelKey: 'defaultAccount', primary: true, status: 'stale', plan: 'free', fetchedAt, messageCode: 'rate_limited',
         windows: [{ id: 'codex:primary', labelKey: 'labelNDays', labelParams: { n: 30 }, usedPercent: 11, remainingPercent: 89, resetsAt: at(25.6 * 24 * HOUR) }] }] },
-      { id: 'claude', name: 'Claude', status: 'stale', fetchedAt, accounts: [
-        { id: 'claude:default', labelKey: 'accountA', configDir: '/home/me/.claude', primary: true, status: 'stale', plan: 'pro', fetchedAt, messageCode: 'rate_limited',
+      { id: 'claude', name: 'Claude', status: 'ok', fetchedAt, accounts: [
+        { id: 'claude:default', labelKey: 'accountA', configDir: '/home/me/.claude', primary: true, status: 'ok', plan: 'pro', fetchedAt,
           windows: [
             { id: 'five_hour', labelKey: 'labelNHours', labelParams: { n: 5 }, usedPercent: 43, remainingPercent: 57, resetsAt: at(3 * HOUR + 11 * 60 * 1000) },
             { id: 'seven_day', labelKey: 'labelWeekly', usedPercent: 30, remainingPercent: 70, resetsAt: at(49 * HOUR) },

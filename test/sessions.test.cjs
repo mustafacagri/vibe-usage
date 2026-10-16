@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { writeAntigravityDb, codexRollout, writeCursorChat } = require('./helpers/fixtures.cjs');
+const { writeAntigravityDb, writeAntigravityTranscript, codexRollout, writeCursorChat } = require('./helpers/fixtures.cjs');
 
 test('auto discovery lists sessions of every provider', async t => {
   const { listSessions, collectHandoverContext } = require('../src/core/handover.cjs');
@@ -23,19 +23,10 @@ test('auto discovery lists sessions of every provider', async t => {
 
   // 2. Setup mock Antigravity session
   const convDir = path.join(tempHome, '.gemini', 'antigravity-ide', 'conversations');
-  const brainDir = path.join(tempHome, '.gemini', 'antigravity-ide', 'brain');
   const convId = 'ag-test-conv-123';
   await fs.mkdir(convDir, { recursive: true });
-  await fs.mkdir(path.join(brainDir, convId, '.system_generated', 'logs'), { recursive: true });
-
-  // Same layout as Antigravity: workspace URI inside a protobuf blob, terminated by a field tag.
   writeAntigravityDb(path.join(convDir, `${convId}.db`), tempProj, 'Gemini 3.8 Flash (High)');
-
-  const agTranscript = [
-    JSON.stringify({ type: 'USER_INPUT', content: 'Antigravity Arch Plan Task' }),
-    JSON.stringify({ type: 'PLANNER_RESPONSE', content: 'Step 1 completed' })
-  ].join('\n');
-  await fs.writeFile(path.join(brainDir, convId, '.system_generated', 'logs', 'transcript.jsonl'), agTranscript, 'utf8');
+  writeAntigravityTranscript(tempHome, convId, ['Antigravity Arch Plan Task'], ['Step 1 completed']);
 
   // Test listSessions with providerId: 'auto'
   const autoSessions = await listSessions({ providerId: 'auto', projectDir: tempProj, homeDir: tempHome });
@@ -123,9 +114,12 @@ test('Antigravity sessions require an exact workspace match and report the model
   writeAntigravityDb(path.join(conv, 'exact.db'), proj, 'Gemini 3.8 Flash (High)');
   writeAntigravityDb(path.join(conv, 'prefix.db'), `${proj}-2`, 'Gemini 3.8 Flash (High)');
   writeAntigravityDb(path.join(conv, 'nomodel.db'), proj, null);
+  writeAntigravityDb(path.join(conv, 'empty.db'), proj, null);
+  for (const id of ['exact', 'prefix', 'nomodel']) writeAntigravityTranscript(home, id, [`Task ${id}`]);
 
   const sessions = await listSessions({ providerId: 'antigravity', projectDir: proj, homeDir: home });
-  assert.deepEqual(sessions.map(s => s.id).sort(), ['exact', 'nomodel']);
+  assert.deepEqual(sessions.map(s => s.id).sort(), ['exact', 'nomodel'], 'other folders and prompt-less conversations are excluded');
+  assert.equal(sessions.find(s => s.id === 'exact').title, 'Task exact');
   assert.equal(sessions.find(s => s.id === 'exact').model, 'Gemini 3.8 Flash (High)');
   assert.equal(sessions.find(s => s.id === 'nomodel').model, '', 'unknown model stays unknown');
 });

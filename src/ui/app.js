@@ -10,6 +10,7 @@ const CLOCK_TICK_MS = 30 * 1000;
 const LOW_QUOTA_PERCENT = 20;
 const INTERVAL_CHOICES_SECONDS = [60, 120, 300, 600];
 const BYTES_PER_MEGABYTE = 1024 * 1024;
+const SHORT_ID_LENGTH = 8;
 const STATUS_TEXT = { pending: 'reading', ok: 'live', stale: 'refreshFailed', auth_missing: 'noSession' };
 // States where the useful next step is signing in or opening the provider's app.
 const SIGN_IN_STATUSES = new Set(['auth_missing', 'auth_invalid', 'auth_expired', 'auth_rejected', 'keychain_unavailable', 'app_closed']);
@@ -146,7 +147,7 @@ function signInButton(provider, status) {
 function cardHeader(provider, accounts, current) {
   const heading = element('div', 'provider-heading');
   const brand = element('div', 'provider-brand');
-  brand.append(element('span', `brand-avatar ${provider.id}-avatar`, providerById(provider.id).glyph), element('h2', '', provider.name));
+  brand.append(element('span', 'brand-avatar', providerById(provider.id).glyph), element('h2', '', provider.name));
   const meta = element('div', 'provider-header-meta');
   if (current?.plan) meta.append(element('span', 'plan-pill', current.plan.toUpperCase()));
   if (accounts.length > 1) {
@@ -240,9 +241,10 @@ function renderProviderOrder() {
     const select = element('select');
     select.id = `provider-slot-${slot}`;
     fillSelect(select, PROVIDER_IDS.map(id => [id, providerLabel(id)]), providerId);
+    select.setAttribute('aria-label', t('slotLabel', { n: slot + 1 }));
     const label = element('label');
     label.htmlFor = select.id;
-    label.append(element('span', 'fallback-slot-badge', String(slot + 1)), ` ${t('slotLabel', { n: slot + 1 })}`);
+    label.append(element('span', 'fallback-slot-badge', String(slot + 1)));
     // Choosing a provider for a slot swaps it with the slot that held it.
     select.addEventListener('change', () => action(async () => {
       const next = [...order];
@@ -261,6 +263,7 @@ async function renderPreferredModels() {
   const container = $('#preferred-models');
   container.replaceChildren(...PROVIDERS.filter(p => p.acceptsModel).map(provider => {
     const row = element('div', 'model-dropdown-row');
+    row.dataset.provider = provider.id;
     const select = element('select', 'model-select');
     select.id = `preferred-${provider.id}`;
     const preferred = state.settings.preferredModels[provider.id];
@@ -271,7 +274,7 @@ async function renderPreferredModels() {
     }));
     const label = element('label');
     label.htmlFor = select.id;
-    label.append(element('span', `badge-icon-mini ${provider.id}-color`, provider.glyph), ` ${provider.name}`);
+    label.append(element('span', 'badge-icon-mini provider-color', provider.glyph), ` ${provider.name}`);
     row.append(label, select);
     return row;
   }));
@@ -289,7 +292,7 @@ function accountRow(provider, account) {
     await saveSettings({ accounts: state.settings.accounts.map(a => (a.providerId === provider.id ? { ...a, primary: a.id === account.id } : a)) });
     renderSettings();
   }));
-  radioLabel.append(radio, element('span', `account-mini-icon ${provider.id}-color`, provider.glyph),
+  radioLabel.append(radio, element('span', 'account-mini-icon provider-color', provider.glyph),
     element('span', `primary-text${account.primary ? ' is-primary' : ''}`, t(account.primary ? 'primaryAccount' : 'secondaryAccount')));
   const remove = element('button', 'remove-account', t('removeAccount'));
   remove.setAttribute('aria-label', `${accountName(account)} ${t('removeAccount')}`);
@@ -329,7 +332,7 @@ function renderAccounts() {
     card.dataset.provider = provider.id;
     const header = element('div', 'provider-card-header');
     const brand = element('div', 'provider-brand-inline');
-    brand.append(element('span', `brand-avatar-badge ${provider.id}-badge`, provider.glyph), element('strong', 'provider-name-text', provider.name));
+    brand.append(element('span', 'brand-avatar-badge', provider.glyph), element('strong', 'provider-name-text', provider.name));
     header.append(brand, element('span', 'provider-account-count', t('accountCount', { n: accounts.length })));
     const rows = element('div', 'provider-accounts-list');
     rows.append(...accounts.map(account => accountRow(provider, account)));
@@ -384,7 +387,8 @@ function sessionLabel(session, showProvider) {
     session.model,
     session.sizeBytes ? new Intl.NumberFormat(locale, { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 }).format(session.sizeBytes / BYTES_PER_MEGABYTE) : ''
   ].filter(Boolean);
-  return `${showProvider ? `${providerLabel(session.providerId)} · ` : ''}${session.title} (${parts.join(' · ')})`;
+  const title = session.title || t('untitledSession', { id: session.id.slice(0, SHORT_ID_LENGTH) });
+  return `${showProvider ? `${providerLabel(session.providerId)} · ` : ''}${title} (${parts.join(' · ')})`;
 }
 
 async function refreshHandoverSessions() {

@@ -17,6 +17,15 @@ function writeAntigravityDb(file, projectDir, modelName) {
   db.close();
 }
 
+// The readable transcript Antigravity keeps next to each conversation database.
+function writeAntigravityTranscript(home, id, prompts, replies = []) {
+  const fsSync = require('node:fs');
+  const dir = path.join(home, '.gemini', 'antigravity-ide', 'brain', id, '.system_generated', 'logs');
+  fsSync.mkdirSync(dir, { recursive: true });
+  const lines = prompts.flatMap((content, i) => [{ type: 'USER_INPUT', content }, ...(replies[i] ? [{ type: 'PLANNER_RESPONSE', content: replies[i] }] : [])]);
+  fsSync.writeFileSync(path.join(dir, 'transcript.jsonl'), lines.map(l => JSON.stringify(l)).join('\n'));
+}
+
 function codexRollout({ id, cwd, source = 'vscode', model = 'gpt-6-luna', user = [], assistant = [] }) {
   const lines = [{ type: 'session_meta', payload: { session_id: id, id, cwd, source, base_instructions: { text: 'x'.repeat(200) } } }, { type: 'turn_context', payload: { cwd, model } }];
   lines.push({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `# AGENTS.md instructions for ${cwd}\n\n<INSTRUCTIONS>x</INSTRUCTIONS>` }] } });
@@ -62,4 +71,4 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
-module.exports = { writeAntigravityDb, codexRollout, writeCursorChat, fakeSpawn, createDeferred };
+module.exports = { writeAntigravityDb, writeAntigravityTranscript, codexRollout, writeCursorChat, fakeSpawn, createDeferred };
