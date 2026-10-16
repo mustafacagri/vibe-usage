@@ -81,10 +81,13 @@ function localizeWindow(win) {
   let valueText = win.valueText || '';
 
   // 1. Direct semantic keys (primary clean architectural path)
-  if (win.labelKey) {
+  if (win.labelKey === 'labelNHours' && win.labelParams?.n >= 48 && win.labelParams.n % 24 === 0) {
+    label = t('labelNDays', { n: win.labelParams.n / 24 });
+  } else if (win.labelKey) {
     label = t(win.labelKey, win.labelParams || {});
   } else if (typeof win.durationMinutes === 'number') {
     if (win.durationMinutes === 10080) label = t('labelWeekly');
+    else if (win.durationMinutes >= 2880 && win.durationMinutes % 1440 === 0) label = t('labelNDays', { n: win.durationMinutes / 1440 });
     else if (win.durationMinutes === 300) label = t('label5Hours');
     else if (win.durationMinutes % 60 === 0) label = t('labelNHours', { n: win.durationMinutes / 60 });
     else label = t('labelNMins', { n: win.durationMinutes });
@@ -118,15 +121,36 @@ function localizeWindow(win) {
     label = t('labelNoPeriodReported');
   }
 
-  // Localize detail
-  if (detail.includes('Bu sınır hesabın bütün modellerde bittiği anlamına gelmez')) {
+  if (win.group === 'team') label = `${t('labelTeam')} · ${label}`;
+
+  // Localize detail: semantic keys first, then known legacy (Turkish) provider strings.
+  if (win.amounts) {
+    const money = new Intl.NumberFormat(document.documentElement.lang || 'en', { style: 'currency', currency: 'USD' });
+    const keys = { used: 'amountUsed', limit: 'amountLimit', remaining: 'amountRemaining', bonus: 'amountBonus' };
+    detail = Object.entries(keys).filter(([k]) => typeof win.amounts[k] === 'number').map(([k, key]) => t(key, { n: money.format(win.amounts[k] / 100) })).join(' · ');
+  } else if (win.detailKey) {
+    detail = t(win.detailKey);
+  } else if (detail.includes('Bu sınır hesabın bütün modellerde bittiği anlamına gelmez')) {
     detail = t('cursorApiLimitNote');
   } else if (detail.includes('Kaynakta pasif')) {
     detail = t('passiveSourceDetail');
+  } else if (/^Tutar bildirilmedi\.?$/.test(detail)) {
+    detail = t('amountNotReported');
+  } else if (detail.startsWith('Önceki ölçüm')) {
+    detail = t('staleWindowDetail');
+  } else if (detail === 'Source: existing Antigravity local service.') {
+    detail = t('antigravitySourceNote');
+  } else if (detail === 'Model quota; period not reported by source.') {
+    detail = t('modelQuotaNoPeriod');
   }
 
   // Localize valueText if any
-  if (valueText.includes('cent kalan')) {
+  if (win.valueKey) {
+    valueText = t(win.valueKey);
+  } else if (typeof win.amounts?.remaining === 'number') {
+    const money = new Intl.NumberFormat(document.documentElement.lang || 'en', { style: 'currency', currency: 'USD' });
+    valueText = t('amountLeft', { n: money.format(win.amounts.remaining / 100) });
+  } else if (valueText.includes('cent kalan')) {
     const num = valueText.replace(/[^0-9.]/g, '');
     valueText = t('centsRemaining', { n: num });
   } else if (valueText === 'Tutar bildirilmedi') {
@@ -135,15 +159,27 @@ function localizeWindow(win) {
     valueText = t('disabled');
   }
 
-  return { ...win, label, detail, valueText };
+  // An empty valueText would replace the measured percentage, so only pass a real one.
+  const localized = { ...win, label, detail, valueText };
+  if (!valueText) delete localized.valueText;
+  return localized;
 }
 
-function localizeAccountLabel(label) {
+function localizeAccountLabel(label, providerName) {
   if (!label) return label;
   if (label === 'Hesap A') return t('accountA');
   if (label === 'Hesap B') return t('accountB');
-  if (label === 'Mevcut hesap') return t('defaultAccount');
-  return label;
+  if (label === 'Mevcut hesap' || label === 'Mevcut uygulama') return t('defaultAccount');
+  // "Antigravity (me@x.com)" next to the Antigravity heading: the e-mail is enough.
+  const inner = providerName && label.match(new RegExp(`^${providerName}\\s*\\((.+)\\)$`));
+  return inner ? inner[1] : label;
+}
+
+function statusMessage(entity) {
+  if (!entity) return '';
+  if (entity.messageCode === 'no_accounts') return t('noConnectedAccounts');
+  if (entity.messageCode && window.VibeI18n?.I18N?.en?.[`status_${entity.messageCode}`]) return t(`status_${entity.messageCode}`);
+  return entity.message || '';
 }
 
 function renderQuotaCell(rawWindow, isSingle) {
@@ -151,7 +187,8 @@ function renderQuotaCell(rawWindow, isSingle) {
   const view = VibeFormat.formatWindow(window);
   const quota = element('div', 'quota' + (view.percent !== null && view.percent <= 20 ? ' low' : '') + (isSingle ? ' span-full' : ''));
   const line = element('div', 'quota-line');
-  line.append(element('span', 'quota-label', window.label), element('span', 'quota-value', view.value));
+  const valueText = view.percent !== null && !window.valueText ? t('percentRemaining', { n: view.value }) : view.value;
+  line.append(element('span', 'quota-label', window.label), element('span', 'quota-value', valueText));
   quota.append(line);
   if (view.percent !== null) {
     const track = element('div', 'track');
@@ -165,15 +202,15 @@ function renderQuotaCell(rawWindow, isSingle) {
     track.setAttribute('aria-valuemax', '100');
     quota.append(track);
   }
-  let desc = '';
-  if (window.detail && view.reset) {
-    desc = `${window.detail} · ${t('resetsAt', { date: view.reset })}`;
-  } else if (view.reset) {
-    desc = t('resetsAt', { date: view.reset });
-  } else {
-    desc = window.detail || view.note || '';
+  // Countdown first so it survives truncation; the exact date and full detail stay in the tooltip.
+  const resetText = view.reset ? (view.resetInMs <= 0 ? t('resetsNow') : t('resetsIn', { time: view.resetIn })) : '';
+  const detail = window.detail || (view.reset ? '' : view.note) || '';
+  const desc = [resetText, detail].filter(Boolean).join(' · ');
+  if (desc) {
+    const node = element('div', 'quota-description', desc);
+    node.title = [detail, view.reset ? t('resetsAt', { date: view.reset }) : ''].filter(Boolean).join('\n');
+    quota.append(node);
   }
-  if (desc) quota.append(element('div', 'quota-description', desc));
   return quota;
 }
 
@@ -197,7 +234,7 @@ function accountSection(provider) {
     const select = element('select', 'account-picker');
     select.setAttribute('aria-label', `${provider.name} ${t('accountLabelPlaceholder')}`);
     for (const account of accounts) {
-      const option = element('option', '', `${account.primary ? '★ ' : ''}${localizeAccountLabel(account.label)}`);
+      const option = element('option', '', `${account.primary ? '★ ' : ''}${localizeAccountLabel(account.label, provider.name)}`);
       option.value = account.id;
       select.append(option);
     }
@@ -208,7 +245,7 @@ function accountSection(provider) {
     });
     headerMeta.append(select);
   } else if (current && current.label) {
-    const displayLabel = localizeAccountLabel(current.label);
+    const displayLabel = localizeAccountLabel(current.label, provider.name);
     if (displayLabel !== t('defaultAccount') && displayLabel !== 'Mevcut hesap' && displayLabel !== 'Default account') {
       headerMeta.append(element('span', 'account-pill', displayLabel));
     }
@@ -262,9 +299,9 @@ function accountSection(provider) {
     }
 
     if (!current.windows?.length) {
-      section.append(element('div', 'empty', current.message || provider.message || t('noDataYet')));
-    } else if (current.message) {
-      section.append(element('div', 'empty', current.message));
+      section.append(element('div', 'empty', statusMessage(current) || statusMessage(provider) || t('noDataYet')));
+    } else if (statusMessage(current)) {
+      section.append(element('div', 'empty', statusMessage(current)));
     }
 
     if (provider.id === 'claude' && current.configDir && current.status === 'ok') {
@@ -287,7 +324,7 @@ function accountSection(provider) {
       section.append(loginBtn);
     }
   } else {
-    section.append(element('div', 'empty', provider.message || t('noConnectedAccounts')));
+    section.append(element('div', 'empty', statusMessage(provider) || t('noConnectedAccounts')));
     const loginBtn = element('button', 'launch-button', t('loginProviderBtn', { name: provider.name }));
     loginBtn.addEventListener('click', () => action(async () => {
       await window.vibe.loginProvider(provider.id);
@@ -324,7 +361,13 @@ function render(snapshot) {
     return (indexA === -1 ? 999 : indexA) - (indexB === -1 ? 999 : indexB);
   });
 
+  // Re-rendering rebuilds the cards; keep expanded spending sections open.
+  const openSpending = new Set([...document.querySelectorAll('.provider details.spending[open]')].map(d => d.closest('.provider')?.dataset.provider));
   $('#providers').replaceChildren(...sortedProviders.map(accountSection));
+  for (const id of openSpending) {
+    const details = document.querySelector(`.provider[data-provider="${id}"] details.spending`);
+    if (details) details.open = true;
+  }
   $('#overall-status').textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: snapshot.providers.length });
   $('#refresh').disabled = snapshot.refreshing;
   $('#pin').setAttribute('aria-pressed', String(!!snapshot.settings.pinned));
@@ -705,4 +748,6 @@ $('#add-profile').addEventListener('click', () => action(async () => {
 }));
 
 window.vibe.onSnapshot(render);
+// Countdowns and "x min ago" are relative to now; keep them current between snapshots.
+setInterval(() => { if (state && !document.hidden) render(state); }, 30000);
 action(async () => render(await window.vibe.snapshot()));

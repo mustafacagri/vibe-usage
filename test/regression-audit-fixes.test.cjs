@@ -2274,3 +2274,77 @@ test('Cursor model discovery: parses `--list-models` output and caches it in the
   assert.equal(await refreshCursorModels({ cacheDir, binary: '/nonexistent', now: 1000 + 25 * 3600e3 }), null);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(cacheDir, 'cursor-models.json'), 'utf8')).models, cached.models);
 });
+
+test('Quota display: an empty valueText never hides the measured percentage; resets are countdowns', () => {
+  const { formatWindow, formatDuration } = require('../src/shared.cjs');
+  const now = Date.parse('2026-10-16T20:00:00Z');
+  const w = formatWindow({ remainingPercent: 76, valueText: '', resetsAt: '2026-10-16T23:11:00Z' }, 'en-US', now);
+  assert.equal(w.value, '76%');
+  assert.equal(w.percent, 76);
+  assert.equal(w.resetIn, '3h 11m');
+  assert.ok(w.reset, 'absolute date kept for the tooltip');
+  assert.equal(formatWindow({ remainingPercent: 5, resetsAt: '2026-10-16T19:00:00Z' }, 'en-US', now).resetInMs < 0, true);
+
+  const m = 60e3, h = 60 * m;
+  assert.deepEqual([42 * m, 9 * h + 59 * m, 49 * h, 4 * 24 * h + 5 * h].map(x => formatDuration(x, 'en-US')), ['42m', '9h 59m', '49h', '4d 5h']);
+  // Turkish narrow units are ambiguous ('3s 11d'), so the short style is used.
+  assert.equal(formatDuration(3 * h + 11 * m, 'tr-TR'), '3 sa. 11 dk.');
+});
+
+test('i18n: all languages define the same keys, and every key the UI and providers reference exists', async () => {
+  const { I18N } = require('../src/ui/i18n.js');
+  const en = Object.keys(I18N.en).sort();
+  for (const [lang, table] of Object.entries(I18N)) assert.deepEqual(Object.keys(table).sort(), en, `${lang} keys differ from en`);
+
+  const read = f => fs.readFile(path.join(__dirname, '..', f), 'utf8');
+  const sources = await Promise.all(['src/ui/app.js', 'src/ui/index.html', 'src/providers/claude.cjs', 'src/providers/codex.cjs', 'src/providers/cursor.cjs', 'src/providers/antigravity.cjs', 'src/core/service.cjs'].map(read));
+  const used = new Set();
+  for (const src of sources) {
+    for (const m of src.matchAll(/\bt\('([A-Za-z0-9_]+)'/g)) used.add(m[1]);
+    for (const m of src.matchAll(/data-i18n(?:-title|-placeholder)?="([A-Za-z0-9_]+)"/g)) used.add(m[1]);
+    for (const m of src.matchAll(/(?:labelKey|detailKey|valueKey)\s*:\s*'([A-Za-z0-9_]+)'/g)) used.add(m[1]);
+  }
+  for (const m of sources[6].match(/const MESSAGES = \{([\s\S]*?)\n\};/)[1].matchAll(/^\s+(\w+):/gm)) used.add(`status_${m[1]}`);
+  const missing = [...used].filter(k => !(k in I18N.en));
+  assert.deepEqual(missing, []);
+});
+
+test('Provider data is language-neutral: day windows, Cursor amounts and team pools carry keys', () => {
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const codex = parseCodexRateLimits({ rateLimits: { primary: { usedPercent: 11, windowDurationMins: 43200, resetsAt: 1780000000 } } });
+  assert.equal(codex.windows[0].labelKey, 'labelNDays');
+  assert.deepEqual(codex.windows[0].labelParams, { n: 30 });
+
+  const cursor = parseCursorUsage({
+    individualUsage: { plan: { autoPercentUsed: 10, apiPercentUsed: 0, totalPercentUsed: 5, used: 750, limit: 2000, remaining: 1250 } },
+    teamUsage: { onDemand: { enabled: false } }
+  });
+  const spend = cursor.windows.find(w => w.id === 'plan:spend');
+  assert.deepEqual(spend.amounts, { used: 750, limit: 2000, remaining: 1250 });
+  assert.equal(spend.valueKey, undefined, 'the UI words the remaining amount itself');
+  const team = cursor.windows.find(w => w.id === 'team:onDemand');
+  assert.equal(team.group, 'team');
+  assert.equal(team.labelKey, 'labelOnDemandSpend');
+  assert.equal(team.valueKey, 'disabled');
+});
+
+test('Service status carries a messageCode for the UI and clears it after a successful read', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const { ProviderError } = require('../src/providers/common.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-msgcode-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  let fail = true;
+  const provider = {
+    id: 'codex', name: 'Codex',
+    discover: async () => [{ id: 'codex:default', providerId: 'codex', label: 'Mevcut hesap', primary: true, enabled: true }],
+    fetch: async () => { if (fail) throw new ProviderError('transport_error'); return { windows: [{ id: 'w', remainingPercent: 50 }] }; }
+  };
+  const svc = await createService({ settingsPath: path.join(dir, 'settings.json'), providers: [provider] });
+  await svc.refresh();
+  const failed = svc.snapshot().providers[0].accounts[0];
+  assert.equal(failed.messageCode, 'transport_error');
+  fail = false;
+  await svc.refresh();
+  assert.equal(svc.snapshot().providers[0].accounts[0].messageCode, undefined);
+});

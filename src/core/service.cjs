@@ -246,18 +246,20 @@ async function createService(options = {}) {
           targetAccount.windows = [];
           targetAccount.status = 'no_limits_reported';
           targetAccount.message = MESSAGES.no_limits_reported;
+          targetAccount.messageCode = 'no_limits_reported';
           targetAccount.fetchedAt = stamp;
         } else if (!windows.length) {
           throw new ProviderError('invalid_response');
         } else {
           for (const prior of targetAccount.windows || []) {
             if (!windows.some(w => w.id === prior.id)) {
-              windows.push({ ...prior, stale: true, detail: 'Önceki ölçüm; son yanıtta bu kapsam bildirilmedi.' });
+              windows.push({ ...prior, stale: true, detailKey: 'staleWindowDetail', detail: 'Önceki ölçüm; son yanıtta bu kapsam bildirilmedi.' });
             }
           }
           targetAccount.windows = windows;
           targetAccount.status = 'ok';
           targetAccount.message = result.message || '';
+          delete targetAccount.messageCode;
           targetAccount.fetchedAt = stamp;
         }
         if (result.plan) targetAccount.plan = result.plan;
@@ -277,6 +279,7 @@ async function createService(options = {}) {
         const code = safeError(error);
         targetAccount.status = targetAccount.fetchedAt ? 'stale' : code;
         targetAccount.message = MESSAGES[code] || 'Kullanım verisi okunamadı. Bir sonraki yenilemede tekrar denenecek.';
+        targetAccount.messageCode = MESSAGES[code] ? code : 'unknown';
         if (code === 'rate_limited') {
           cooldown.set(account.id, attempt + (error.retryAfterSeconds || 120) * 1000);
         }
@@ -289,6 +292,7 @@ async function createService(options = {}) {
       provider.fetchedAt = new Date(now(clock)).toISOString();
     }
     provider.message = provider.accounts.length ? '' : 'Bağlı hesap bulunamadı.';
+    if (provider.accounts.length) delete provider.messageCode; else provider.messageCode = 'no_accounts';
   }
 
   function getOrStartProviderRefresh(adapter) {

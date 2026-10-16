@@ -24,6 +24,16 @@ function normalizeWindow(input = {}) {
   if (typeof input.active === 'boolean') result.active = input.active;
   if (typeof input.detail === 'string') result.detail = safeText(input.detail, '', 360);
   if (typeof input.valueText === 'string') result.valueText = safeText(input.valueText, '', 100);
+  // Language-neutral fields; the UI words them (the Turkish label/detail/valueText remain for the CLI).
+  if (typeof input.valueKey === 'string') result.valueKey = safeText(input.valueKey, '', 60);
+  if (input.group === 'team') result.group = 'team';
+  if (input.amounts && typeof input.amounts === 'object') {
+    const amounts = {};
+    for (const k of ['used', 'limit', 'remaining', 'bonus']) {
+      if (typeof input.amounts[k] === 'number' && Number.isFinite(input.amounts[k])) amounts[k] = input.amounts[k];
+    }
+    if (Object.keys(amounts).length) result.amounts = amounts;
+  }
   return result;
 }
 // Passive/absent model metadata does not establish entitlement. This helper only

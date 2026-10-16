@@ -12,7 +12,7 @@
   }
   return 'tr-TR';
  }
- function formatWindow(window, customLocale){
+ function formatWindow(window, customLocale, now=Date.now()){
   const locale = customLocale || getLocale();
   const isTr = locale.startsWith('tr');
   const percent=value=>new Intl.NumberFormat(locale,{maximumFractionDigits:1}).format(value);
@@ -30,11 +30,29 @@
    const usedLabel = isTr ? 'kullanılan' : (root.VibeI18n?.t ? root.VibeI18n.t('used') : 'used');
    value=used===null ? passiveLabel : (isTr ? `%${percent(used)} ${usedLabel}` : `${percent(used)}% ${usedLabel}`);
   }
-  if(typeof window.valueText==='string'&&window.valueText.length<=100)value=window.valueText;
+  if(typeof window.valueText==='string'&&window.valueText&&window.valueText.length<=100)value=window.valueText;
   const resetDate=window.resetsAt?new Date(window.resetsAt):null;
   const reset=resetDate&&Number.isFinite(resetDate.getTime())?new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hour12:false}).format(resetDate):'';
   const defaultNote = passiveModel ? (isTr ? 'Kaynakta pasif; model erişimi doğrulanmadı' : (root.VibeI18n?.t ? root.VibeI18n.t('passiveSourceDetail') : 'Passive at source; model access not verified')) : (window.detail||'');
-  return {value,percent:passiveModel?null:remaining,reset,note:defaultNote};
+  const resetInMs=reset?resetDate.getTime()-now:null;
+  const resetIn=resetInMs===null?'':formatDuration(resetInMs,locale);
+  return {value,percent:passiveModel?null:remaining,reset,resetIn,resetInMs,note:defaultNote};
+ }
+ // Compact, localized countdown: 42m · 3h 11m · 49h · 4d 5h. Coarser as the distance grows.
+ function formatDuration(ms,locale){
+  const total=Math.max(1,Math.round(Math.max(0,ms)/60000));
+  let parts;
+  if(total<60)parts={minutes:total};
+  else if(total<600)parts={hours:Math.floor(total/60),minutes:total%60};
+  else if(total<72*60)parts={hours:Math.round(total/60)};
+  else{const hours=Math.round(total/60);parts={days:Math.floor(hours/24),hours:hours%24};}
+  for(const k of Object.keys(parts))if(!parts[k])delete parts[k];
+  if(typeof Intl.DurationFormat==='function'){
+   // CLDR's narrow units are ambiguous in some languages (tr: '3s 11d' = 3 hours 11 minutes; ja falls back to Latin '3h11m').
+   const style=/^(tr|de|nl|ja)\b/i.test(locale)?'short':'narrow';
+   try{return new Intl.DurationFormat(locale,{style}).format(parts);}catch{}
+  }
+  return [['days','d'],['hours','h'],['minutes','m']].filter(([k])=>parts[k]).map(([k,u])=>`${parts[k]}${u}`).join(' ');
  }
  function formatFreshness(iso,status,now=Date.now(),customLocale){
   const locale = customLocale || getLocale();
@@ -51,6 +69,6 @@
   const stalePrefix = status === 'stale' ? (root.VibeI18n?.t ? root.VibeI18n.t('stalePrefix') : (isTr ? 'Eski veri · ' : 'Stale data · ')) : '';
   return `${stalePrefix}${age}`;
  }
- const api={formatWindow,formatFreshness};
+ const api={formatWindow,formatFreshness,formatDuration};
  if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.VibeFormat=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

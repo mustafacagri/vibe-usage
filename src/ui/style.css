@@ -1269,3 +1269,21 @@ dialog header h2 {
 [hidden] {
   display: none !important;
 }
+
+/* Layout helpers (CSP forbids inline style attributes) */
+.field.field-tight { margin: 6px 0 0; }
+.gap-top-sm { margin-top: 10px; }
+.gap-top-md { margin-top: 16px; }
+.full-width { max-width: 100%; width: 100%; }
+.smart-value.smart-value-small { font-size: 11px; }
+
+/* "57% remaining" must stay on one line; the label yields space first. */
+.quota-value { white-space: nowrap; flex-shrink: 0; }
+
+/* Narrow windows (default 430px, minimum 340px): one quota per row, and let the
+   summary actions drop below the status instead of clipping it. */
+@media (max-width: 479px) {
+  .quota-grid { grid-template-columns: minmax(0, 1fr); }
+  .summary { flex-wrap: wrap; }
+  .summary-actions { margin-left: auto; }
+}

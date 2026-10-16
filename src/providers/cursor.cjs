@@ -22,14 +22,17 @@ function parseCursorUsage(summary) {
     const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
     const amounts = ['used', 'limit', 'remaining'].filter(k => typeof plan[k] === 'number' && Number.isFinite(plan[k])).map(k => `${names[k]}: ${plan[k]} cents`);
     if (typeof plan.breakdown?.bonus === 'number') amounts.push(`Bonus kaydı: ${plan.breakdown.bonus} cents`);
-    windows.push(normalizeWindow({ id: 'plan:spend', label: 'Dahil kullanım · tutar', labelKey: 'labelIncludedSpend', resetsAt, valueText:typeof plan.remaining==='number'?`${plan.remaining} cent kalan`:'Tutar bildirilmedi', detail: amounts.join('; ') || 'Tutar bildirilmedi.' }));
+    const planAmounts = { used: plan.used, limit: plan.limit, remaining: plan.remaining, bonus: plan.breakdown?.bonus };
+    windows.push(normalizeWindow({ id: 'plan:spend', label: 'Dahil kullanım · tutar', labelKey: 'labelIncludedSpend', resetsAt, amounts: planAmounts, ...(typeof plan.remaining === 'number' ? {} : { valueKey: 'amountNotReported' }), valueText:typeof plan.remaining==='number'?`${plan.remaining} cent kalan`:'Tutar bildirilmedi', detail: amounts.join('; ') || 'Tutar bildirilmedi.' }));
   }
   for (const [group, usage] of [['individual', summary.individualUsage], ['team', summary.teamUsage]]) {
     for (const key of ['onDemand', 'overall', 'pooled']) {
       const pool = usage?.[key]; if (!pool) continue;
       const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
       const detail = ['used', 'limit', 'remaining'].filter(k => typeof pool[k] === 'number' && Number.isFinite(pool[k])).map(k => `${names[k]}: ${pool[k]} cents`).join('; ');
-      windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, labelKey: key === 'onDemand' ? 'labelOnDemandSpend' : undefined, resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
+      const poolLabelKey = { onDemand: 'labelOnDemandSpend', overall: 'labelOverallSpend', pooled: 'labelPooledSpend' }[key];
+      const poolValueKey = pool.enabled === false ? 'disabled' : typeof pool.remaining === 'number' ? undefined : 'amountNotReported';
+      windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, labelKey: poolLabelKey, group, amounts: { used: pool.used, limit: pool.limit, remaining: pool.remaining }, ...(poolValueKey ? { valueKey: poolValueKey } : {}), resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
     }
   }
   const result = { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };

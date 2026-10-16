@@ -5,6 +5,7 @@ function durationMeta(minutes){
  if(minutes===10080)return {label:'Haftalık',labelKey:'labelWeekly',durationMinutes:10080};
  if(minutes===300)return {label:'5 saat',labelKey:'label5Hours',durationMinutes:300};
  if(Number.isFinite(minutes)&&minutes>0){
+  if(minutes>=2880&&minutes%1440===0)return {label:`${minutes/1440} gün`,labelKey:'labelNDays',labelParams:{n:minutes/1440},durationMinutes:minutes};
   if(minutes%60===0)return {label:`${minutes/60} saat`,labelKey:'labelNHours',labelParams:{n:minutes/60},durationMinutes:minutes};
   return {label:`${minutes} dakika`,labelKey:'labelNMins',labelParams:{n:minutes},durationMinutes:minutes};
  }

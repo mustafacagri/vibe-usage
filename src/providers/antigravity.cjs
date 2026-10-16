@@ -15,7 +15,7 @@ function parseAntigravityDiagnostic(result) {
     label: row.bucketId || row.window || (row.scope === 'model' ? 'Model quota (name unavailable)' : 'Quota window (name unavailable)'),
     remainingPercent: row.remainingFractionPresent && typeof row.remainingFraction === 'number' && Number.isFinite(row.remainingFraction) ? row.remainingFraction * 100 : null,
     resetsAt: row.resetTime, ...(row.group ? { scope: row.group } : {}), active: typeof row.disabled === 'boolean' ? !row.disabled : undefined,
-    detail: 'Source: existing Antigravity local service.',
+    detailKey: 'antigravitySourceNote', detail: 'Source: existing Antigravity local service.',
   }));
   return { windows };
 }
@@ -57,7 +57,7 @@ function parseAntigravitySummary(raw) {
       const durationMinutes = isFiveHour ? 300 : isWeekly ? 10080 : undefined;
       const remaining = bucket.remainingFraction ?? bucket.remaining?.remainingFraction ?? (bucket.remaining?.case === 'remainingFraction' ? bucket.remaining.value : null);
       const scope = safeText(group.displayName || group.name, 'Quota group');
-      windows.push(normalizeWindow({ id, label, labelKey, durationMinutes, scope, remainingPercent: fractionPercent(remaining), resetsAt: rawReset(bucket.resetTime), active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined, detail: 'Source: existing Antigravity local service.' }));
+      windows.push(normalizeWindow({ id, label, labelKey, durationMinutes, scope, remainingPercent: fractionPercent(remaining), resetsAt: rawReset(bucket.resetTime), active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined, detailKey: 'antigravitySourceNote', detail: 'Source: existing Antigravity local service.' }));
     }
   }
   if (!windows.length) throw new common.ProviderError('invalid_response');
@@ -79,7 +79,7 @@ function parseAntigravityUserStatus(raw) {
     const id = stableWindowId('model', modelKey);
     if (ids.has(id)) throw new common.ProviderError('invalid_response');
     ids.add(id);
-    return [normalizeWindow({ id, label, scope: label, remainingPercent: fractionPercent(model.quotaInfo.remainingFraction), resetsAt: rawReset(model.quotaInfo.resetTime), detail: 'Model quota; period not reported by source.' })];
+    return [normalizeWindow({ id, label, scope: label, remainingPercent: fractionPercent(model.quotaInfo.remainingFraction), resetsAt: rawReset(model.quotaInfo.resetTime), detailKey: 'modelQuotaNoPeriod', detail: 'Model quota; period not reported by source.' })];
   });
   if (!windows.length) throw new common.ProviderError('invalid_response');
   const result = { windows };

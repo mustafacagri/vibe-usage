@@ -37,7 +37,7 @@
      <span class="card-icon">🌐</span>
      <strong class="card-title" data-i18n="languageLabel">Language</strong>
     </div>
-    <div class="field" style="margin: 6px 0 0;">
+    <div class="field field-tight">
      <select id="language-select">
       <option value="en">English (US)</option>
       <option value="tr">Türkçe</option>
@@ -119,7 +119,7 @@
      <span class="card-icon">⏱️</span>
      <strong class="card-title" data-i18n="refreshIntervalTitle">Refresh Interval</strong>
     </div>
-    <div class="field" style="margin: 6px 0 0;">
+    <div class="field field-tight">
      <select id="interval">
       <option value="60" data-i18n="interval1m">1 minute</option>
       <option value="120" data-i18n="interval2m">2 minutes</option>
@@ -137,7 +137,7 @@
      </div>
     </div>
     <div id="account-settings"></div>
-    <button id="add-profile" class="secondary-button" style="margin-top: 10px;" data-i18n="addProfileBtn">+ Add saved profile directory</button>
+    <button id="add-profile" class="secondary-button gap-top-sm" data-i18n="addProfileBtn">+ Add saved profile directory</button>
     <p class="help" data-i18n="settingsHelp">Initial login for each account is done in a separate profile. 1st priority tool manages home layout and smart launch.</p>
     <div id="settings-message" role="status"></div>
    </div>
@@ -177,7 +177,7 @@
     </select>
    </label>
    <label class="field"><span data-i18n="targetModel">Target Model</span>
-    <select id="handover-model" class="model-select" style="max-width: 100%; width: 100%;"></select>
+    <select id="handover-model" class="model-select full-width"></select>
    </label>
    <div class="handover-note" data-i18n="handoverNote">
     Target tool will be launched after writing VIBE_HANDOVER.md briefing to selected project directory.
@@ -196,9 +196,9 @@
     <div class="smart-preview-row"><span class="smart-label" data-i18n="slRecommendedTool">Recommended Tool:</span><strong id="sl-provider" class="smart-value">-</strong></div>
     <div class="smart-preview-row"><span class="smart-label" data-i18n="slQuotaStatus">Quota Status:</span><span id="sl-quota" class="smart-value">-</span></div>
     <div class="smart-preview-row"><span class="smart-label" data-i18n="slSelectedModel">Selected Model:</span><strong id="sl-model" class="smart-value">-</strong></div>
-    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision">Smart Decision:</span><span id="sl-reason" class="smart-value" style="font-size: 11px;">-</span></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision">Smart Decision:</span><span id="sl-reason" class="smart-value smart-value-small">-</span></div>
    </div>
-   <div class="dialog-actions" style="margin-top: 16px;">
+   <div class="dialog-actions gap-top-md">
     <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
     <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch">Select Project & Launch ↗</button>
    </div>
