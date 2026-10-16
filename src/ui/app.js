@@ -70,12 +70,8 @@ async function getModels() {
       cachedModels = await window.vibe.getDiscoveredModels();
     } catch {}
   }
-  return cachedModels || {
-    codex: ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-reserve', 'o3-mini'],
-    claude: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-sonnet-4-5', 'claude-3-7-sonnet'],
-    cursor: ['grok-4.7', 'claude-opus-4-7', 'cursor-opus-4.5', 'claude-3.7-sonnet', 'gpt-5', 'cursor-small'],
-    antigravity: ['gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-pro', 'gemini-2.5-flash']
-  };
+  // Lists come from the main process (live CLI / local config); never invent model names here.
+  return cachedModels || { claude: [], codex: [], cursor: [], antigravity: [] };
 }
 
 function localizeWindow(win) {
@@ -84,15 +80,22 @@ function localizeWindow(win) {
   let detail = win.detail || '';
   let valueText = win.valueText || '';
 
-  // Localize standard labels
-  if (/^5 saat$/i.test(label) || /^5 hours?$/i.test(label)) {
+  // 1. Direct semantic keys (primary clean architectural path)
+  if (win.labelKey) {
+    label = t(win.labelKey, win.labelParams || {});
+  } else if (typeof win.durationMinutes === 'number') {
+    if (win.durationMinutes === 10080) label = t('labelWeekly');
+    else if (win.durationMinutes === 300) label = t('label5Hours');
+    else if (win.durationMinutes % 60 === 0) label = t('labelNHours', { n: win.durationMinutes / 60 });
+    else label = t('labelNMins', { n: win.durationMinutes });
+  } else if (/^5 saat$/i.test(label) || /^5 hours?$/i.test(label)) {
     label = t('label5Hours');
   } else if (/^haftal[ıi]k$/i.test(label) || /^weekly$/i.test(label)) {
     label = t('labelWeekly');
   } else if (/^opus\s*·\s*haftal[ıi]k$/i.test(label)) {
-    label = `Opus · ${t('labelWeekly').toLowerCase()}`;
+    label = t('labelOpusWeekly');
   } else if (/^sonnet\s*·\s*haftal[ıi]k$/i.test(label)) {
-    label = `Sonnet · ${t('labelWeekly').toLowerCase()}`;
+    label = t('labelSonnetWeekly');
   } else if (/^(\d+)\s*saat$/i.test(label) || /^(\d+)\s*hours?$/i.test(label)) {
     const hours = label.match(/^(\d+)\s*(?:saat|hours?)$/i)[1];
     label = t('labelNHours', { n: hours });
@@ -268,7 +271,7 @@ function accountSection(provider) {
       const launch = element('button', 'launch-button', t('launchClaudeBtn'));
       launch.addEventListener('click', () => action(async () => {
         const response = await window.vibe.launch({ accountId: current.id });
-        if (response?.message) toast(response.message);
+        if (response?.message && !response?.canceled) toast(response.message);
       }));
       section.append(launch);
       section.append(element('div', 'quota-description', t('safeLocalNote')));
@@ -472,6 +475,61 @@ async function renderSettings() {
   }
 }
 
+let currentHandoverProjectDir = '';
+
+function formatTimeAgo(ts) {
+  if (!ts) return '';
+  const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+  if (mins < 60) return mins === 0 ? t('justNow') : t('minsAgo', { n: mins });
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return t('labelNHours', { n: hours });
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+async function refreshHandoverSessions() {
+  const sessionSelect = $('#handover-session-select');
+  if (!sessionSelect) return;
+  sessionSelect.replaceChildren();
+
+  const defaultOpt = element('option', '', t('mostRecentSession'));
+  defaultOpt.value = 'auto';
+  sessionSelect.append(defaultOpt);
+
+  const projectDir = $('#handover-project-input')?.value || currentHandoverProjectDir;
+  const fromProvider = $('#handover-from')?.value || 'auto';
+
+  if (!projectDir) return;
+
+  try {
+    const sessions = await window.vibe.listSessions({ providerId: fromProvider, projectDir });
+    if (sessions && sessions.length > 0) {
+      const providerBadges = {
+        claude: '◈ Claude',
+        codex: '✺ Codex',
+        cursor: '✦ Cursor',
+        antigravity: '▲ Antigravity'
+      };
+      for (const s of sessions) {
+        const timeStr = formatTimeAgo(s.updatedAt);
+        const turnStr = s.turnCount ? ` · ${s.turnCount} turns` : '';
+        const sizeStr = s.sizeBytes ? ` · ${(s.sizeBytes / 1024 / 1024).toFixed(1)}MB` : '';
+        const badge = providerBadges[s.providerId] || (s.providerId ? s.providerId.toUpperCase() : '');
+        const prefix = (fromProvider === 'auto' && badge) ? `[${badge}] ` : '';
+        const modelStr = s.model ? ` · ${s.model}` : '';
+        const label = `${prefix}${s.title} (${timeStr}${turnStr}${modelStr}${sizeStr})`;
+        const opt = element('option', '', label);
+        opt.value = s.id;
+        opt.dataset.provider = s.providerId || '';
+        sessionSelect.append(opt);
+      }
+    } else {
+      const emptyOpt = element('option', '', t('noSessionsFound'));
+      emptyOpt.disabled = true;
+      sessionSelect.append(emptyOpt);
+    }
+  } catch {}
+}
+
 async function updateHandoverModelDropdown(targetProvider) {
   const models = await getModels();
   const select = $('#handover-model');
@@ -489,9 +547,46 @@ async function updateHandoverModelDropdown(targetProvider) {
 
 // Handover Modal Events
 $('#handover-btn')?.addEventListener('click', async () => {
+  if (!currentHandoverProjectDir) {
+    try {
+      currentHandoverProjectDir = (await window.vibe.getDefaultProjectDir?.()) || '';
+    } catch {
+      currentHandoverProjectDir = '';
+    }
+  }
+  const input = $('#handover-project-input');
+  if (input && currentHandoverProjectDir) input.value = currentHandoverProjectDir;
+
   const target = $('#handover-to')?.value || 'codex';
   await updateHandoverModelDropdown(target);
+  await refreshHandoverSessions();
   $('#handover-dialog')?.showModal();
+});
+
+$('#handover-project-input')?.addEventListener('change', async (e) => {
+  currentHandoverProjectDir = e.target.value.trim();
+  await refreshHandoverSessions();
+});
+
+$('#handover-browse-btn')?.addEventListener('click', async () => {
+  const dir = await window.vibe.selectDirectory({ defaultPath: currentHandoverProjectDir });
+  if (dir) {
+    currentHandoverProjectDir = dir;
+    const input = $('#handover-project-input');
+    if (input) input.value = dir;
+    await refreshHandoverSessions();
+  }
+});
+
+$('#handover-from')?.addEventListener('change', async (e) => {
+  const from = e.target.value;
+  const toSelect = $('#handover-to');
+  if (toSelect) {
+    if (from === 'claude' && toSelect.value === 'claude') toSelect.value = 'codex';
+    else if (from === 'codex' && toSelect.value === 'codex') toSelect.value = 'claude';
+    await updateHandoverModelDropdown(toSelect.value);
+  }
+  await refreshHandoverSessions();
 });
 
 $('#handover-to')?.addEventListener('change', async (e) => {
@@ -503,11 +598,15 @@ $('#handover-cancel-btn')?.addEventListener('click', () => {
 });
 
 $('#handover-execute-btn')?.addEventListener('click', () => action(async () => {
+  const projectDir = $('#handover-project-input')?.value || currentHandoverProjectDir;
   const fromProvider = $('#handover-from')?.value || 'auto';
   const toProvider = $('#handover-to')?.value || 'codex';
   const targetModel = $('#handover-model')?.value || '';
+  const sessionOpt = $('#handover-session-select')?.selectedOptions?.[0];
+  const sessionId = sessionOpt?.value || 'auto';
+  const sessionProvider = sessionId !== 'auto' ? sessionOpt?.dataset?.provider || undefined : undefined;
   $('#handover-dialog')?.close();
-  const res = await window.vibe.executeHandover({ fromProvider, toProvider, targetModel });
+  const res = await window.vibe.executeHandover({ projectDir, fromProvider, toProvider, targetModel, sessionId, sessionProvider });
   if (res?.message) toast(res.message);
 }));
 

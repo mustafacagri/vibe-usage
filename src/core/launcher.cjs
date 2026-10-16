@@ -2,6 +2,7 @@
 const fs=require('node:fs/promises');const fsSync=require('node:fs');const path=require('node:path');const os=require('node:os');const crypto=require('node:crypto');const {spawn}=require('node:child_process');const {randomBytes}=crypto;
 const {findBinary,cleanEnvironment}=require('../providers/common.cjs');const {validateConfigDir}=require('./settings.cjs');
 const {discoverModels,resolveModelTier,getMappedModel,DEFAULT_MODELS}=require('./models.cjs');
+const {sanitizeText,listProviderSessions,readSession}=require('./sessions.cjs');
 function resolveClaudeProfile(configDir, homeDir = os.homedir()) {
   const resolved = path.resolve(configDir);
   const defaultDir = path.resolve(path.join(homeDir, '.claude'));
@@ -107,14 +108,6 @@ async function loadClaudeSettingsFiles(projectDir, configDir) {
   return { projectSettings, localSettings, userSettings };
 }
 
-function sanitizeText(str) {
-  if (typeof str !== 'string') return '';
-  return str
-    .replace(/(?:sk-[a-zA-Z0-9_-]{20,}|ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|bearer\s+[a-zA-Z0-9_.-]{30,})/gi, '[REDACTED_SECRET]')
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, '')
-    .trim();
-}
-
 function getGitContext(cwd) {
   try {
     const { execSync } = require('node:child_process');
@@ -130,12 +123,15 @@ function getGitContext(cwd) {
 
 
 
-async function buildHandoverPrompt(projectDir, homeDir = os.homedir()) {
-  const slug = path.resolve(projectDir).replace(/[/\\:]/g, '-');
-  const projectClaudeDir = path.join(homeDir, '.claude', 'projects', slug);
+async function buildHandoverPrompt(projectDir, opts = {}) {
+  const homeDir = typeof opts === 'string' ? opts : (opts?.homeDir || os.homedir());
+  const sessionId = typeof opts === 'object' ? opts?.sessionId : undefined;
+  const providerId = (typeof opts === 'object' && opts?.providerId) || 'auto';
   const gitContext = getGitContext(projectDir);
   const summary = {
     hasSession: false,
+    providerId: '',
+    sessionTitle: '',
     sessionModel: '',
     initialGoal: '',
     lastUserMsg: '',
@@ -145,62 +141,27 @@ async function buildHandoverPrompt(projectDir, homeDir = os.homedir()) {
     recentFiles: [...gitContext.changedFiles],
     git: gitContext
   };
-
-  try {
-    const files = (await fs.readdir(projectClaudeDir))
-      .filter(f => f.endsWith('.jsonl'))
-      .map(f => {
-        try {
-          const stat = fsSync.statSync(path.join(projectClaudeDir, f));
-          return { name: f, time: stat.mtimeMs };
-        } catch { return null; }
-      })
-      .filter(Boolean)
-      .sort((a,b) => b.time - a.time);
-
-    if (files.length > 0) {
-      const latestFile = path.join(projectClaudeDir, files[0].name);
-      const content = await fs.readFile(latestFile, 'utf8');
-      const lines = content.split('\n').filter(Boolean);
-      const detectedFiles = new Set(summary.recentFiles);
-
-      for (const line of lines) {
-        try {
-          const obj = JSON.parse(line);
-          if (obj.message?.model && typeof obj.message.model === 'string') {
-            summary.sessionModel = obj.message.model;
-          }
-          if (obj.type === 'user' && obj.message?.content) {
-            const text = Array.isArray(obj.message.content) ? obj.message.content.map(c => c.text || '').join('\n') : String(obj.message.content);
-            const cleanText = sanitizeText(text);
-            if (cleanText) {
-              summary.turnCount++;
-              if (!summary.initialGoal) summary.initialGoal = cleanText;
-              summary.lastUserMsg = cleanText;
-            }
-          }
-          if (obj.type === 'assistant' && obj.message?.content) {
-            const text = Array.isArray(obj.message.content) ? obj.message.content.map(c => c.text || '').join('\n') : String(obj.message.content);
-            const cleanText = sanitizeText(text);
-            if (cleanText && !/usage limit|rate limit|limit reached|resets at/i.test(cleanText) && !obj.isApiErrorMessage) {
-              summary.lastAssistantMsg = cleanText;
-            }
-          }
-
-          const fileMatches = line.match(/(?:[a-zA-Z0-9_-]+\/)+[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+/g);
-          if (fileMatches) {
-            for (const fm of fileMatches) {
-              if (!fm.startsWith('node_modules/') && !fm.startsWith('.git/')) detectedFiles.add(fm);
-            }
-          }
-        } catch {}
-      }
-      summary.hasSession = true;
-      summary.sessionId = files[0].name.replace('.jsonl', '');
-      summary.recentFiles = Array.from(detectedFiles).slice(-10);
-    }
-  } catch {}
+  const transcript = await readSession({ providerId, sessionId, projectDir: path.resolve(projectDir), homeDir });
+  if (!transcript) {
+    if (sessionId && sessionId !== 'auto') throw Error(`Seçilen oturum bulunamadı: ${sessionId}`);
+    return summary;
+  }
+  const { files, ...rest } = transcript;
+  Object.assign(summary, rest, { hasSession: true });
+  summary.recentFiles = Array.from(new Set([...summary.recentFiles, ...files])).slice(0, 15);
   return summary;
+}
+
+async function listSessions({ providerId = 'claude', projectDir, homeDir = os.homedir() } = {}) {
+  if (!projectDir) return [];
+  let validDir;
+  try {
+    validDir = validateConfigDir(projectDir);
+  } catch {
+    return [];
+  }
+  if (!fsSync.existsSync(validDir)) return [];
+  return listProviderSessions(providerId, validDir, homeDir);
 }
 
 function evaluateProviderHealth(providerId, snapshot) {
@@ -330,22 +291,33 @@ function previewSmartLaunch({ projectDir, snapshot }) {
   };
 }
 
-async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = 'auto', toProvider = 'auto', targetModel }) {
+async function findCursorAgent() {
+  for (const name of ['cursor-agent', 'agent']) {
+    try { return await findBinary(name); } catch {}
+  }
+  return null;
+}
+
+async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = 'auto', toProvider = 'auto', targetModel, sessionId, sessionProvider, spawnProcess = spawn }) {
   const VALID_PROVIDERS = new Set(['claude', 'codex', 'cursor', 'antigravity', 'auto']);
   if (!VALID_PROVIDERS.has(fromProvider)) throw Error(`Geçersiz kaynak sağlayıcı: ${fromProvider}`);
   if (!VALID_PROVIDERS.has(toProvider)) throw Error(`Geçersiz hedef sağlayıcı: ${toProvider}`);
 
+  if (sessionProvider !== undefined && !VALID_PROVIDERS.has(sessionProvider)) throw Error(`Geçersiz oturum sağlayıcısı: ${sessionProvider}`);
+
   const cwd = validateConfigDir(projectDir);
-  const handover = await buildHandoverPrompt(cwd);
+  // A session picked under "auto" carries its own provider; never read it as another provider's.
+  const readFrom = fromProvider === 'auto' && sessionProvider ? sessionProvider : fromProvider;
+  const handover = await buildHandoverPrompt(cwd, { sessionId, providerId: readFrom });
+  const detectedFrom = handover.providerId || (fromProvider === 'auto' ? null : fromProvider);
 
   let targetId = toProvider;
   if (targetId === 'auto') {
-    const detectedFrom = fromProvider === 'auto' ? (handover.hasSession ? 'claude' : null) : fromProvider;
     const decision = smartSelectProvider(snapshot || { settings: { accounts: [] }, providers: [] }, { excludeProvider: detectedFrom });
     targetId = decision.providerId;
   }
 
-  const fromLabel = (fromProvider === 'auto' ? (handover.hasSession ? 'Claude' : 'Aktif Oturum') : fromProvider).toUpperCase();
+  const fromLabel = (detectedFrom || 'Aktif Oturum').toUpperCase();
   const toLabel = targetId.toUpperCase();
   const mapping = getMappedModel(handover.sessionModel, targetId, snapshot?.settings?.preferredModels);
   const finalModel = targetModel || snapshot?.settings?.preferredModels?.[targetId] || mapping.targetModel;
@@ -353,11 +325,12 @@ async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = '
   const briefContent = [
     `# VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ ${toLabel})`,
     '',
-    `> Bu dosya, ${fromLabel} oturumundan ${toLabel} ortamına güvenli geçiş için Vibe Usage tarafından otomatik derlenmiştir.`,
+    `> Bu dosya, ${fromLabel} oturumundan (${handover.sessionTitle || handover.sessionId || 'Aktif'}) ${toLabel} ortamına güvenli geçiş için Vibe Usage tarafından otomatik derlenmiştir.`,
     '',
     `**Kaynak:** ${fromLabel}`,
     `**Hedef:** ${toLabel}`,
     `**Tarih:** ${new Date().toISOString()}`,
+    handover.sessionTitle ? `**Oturum Başlığı:** ${handover.sessionTitle}` : '',
     handover.sessionModel ? `**Kaynak Model:** \`${handover.sessionModel}\` (${mapping.tierName})` : '',
     finalModel ? `**Denk Hedef Model:** \`${finalModel}\`` : '',
     handover.sessionId ? `**Oturum ID:** \`${handover.sessionId}\`` : '',
@@ -410,11 +383,11 @@ async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = '
       const script = path.join(launchDir, `codex-${randomBytes(6).toString('hex')}.command`);
       const scriptContent = `#!/bin/zsh\ncd -- ${shellQuote(cwd)} || exit 1\necho "================================================="\necho "⚡️ VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ CODEX)"\necho "Hedef Model: ${finalModel || 'varsayılan'}"\necho "Oturum özeti VIBE_HANDOVER.md dosyasına aktarıldı."\necho "=================================================\\n"\nexec ${shellQuote(binary)}${modelArg}${promptArg}\n`;
       await fs.writeFile(script, scriptContent, { mode: 0o700 });
-      const child = spawn('/usr/bin/open', ['-a', 'Terminal', script], { shell: false, detached: true, stdio: 'ignore' });
+      const child = spawnProcess('/usr/bin/open', ['-a', 'Terminal', script], { shell: false, detached: true, stdio: 'ignore' });
       await new Promise((res, rej) => { child.once('spawn', res); child.once('error', rej); });
       child.unref();
     } else if (process.platform === 'win32') {
-      const child = spawn('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${cwd}" && echo VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ CODEX) && "${binary}"${modelArg} "${handoverPrompt}"`], { detached: true, stdio: 'ignore' });
+      const child = spawnProcess('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${cwd}" && echo VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ CODEX) && "${binary}"${modelArg} "${handoverPrompt}"`], { detached: true, stdio: 'ignore' });
       child.unref();
     } else {
       throw Error('Bu platformda terminal başlatma desteklenmiyor');
@@ -426,25 +399,65 @@ async function executeHandover({ projectDir, dataDir, snapshot, fromProvider = '
   }
 
   if (targetId === 'cursor') {
-    if (process.platform === 'darwin') {
-      const child = spawn('/usr/bin/open', ['-a', 'Cursor', cwd], { shell: false, detached: true, stdio: 'ignore' });
-      child.unref();
+    // Only the Cursor Agent CLI runs a task in the terminal; the `cursor` launcher opens the GUI.
+    const agentBinary = await findCursorAgent();
+
+    if (agentBinary) {
+      const modelArg = finalModel ? ` --model ${shellQuote(finalModel)}` : '';
+      const promptArg = ` ${shellQuote(handoverPrompt)}`;
+      const trustFlag = ' --trust';
+
+      if (process.platform === 'darwin') {
+        const launchDir = path.join(dataDir, 'launchers');
+        await fs.mkdir(launchDir, { recursive: true });
+        const script = path.join(launchDir, `cursor-${randomBytes(6).toString('hex')}.command`);
+        const scriptContent = `#!/bin/zsh\ncd -- ${shellQuote(cwd)} || exit 1\necho "================================================="\necho "⚡️ VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ CURSOR AGENT)"\necho "Hedef Model: ${finalModel || 'varsayılan'}"\necho "Oturum özeti VIBE_HANDOVER.md dosyasına aktarıldı."\necho "=================================================\\n"\nexec ${shellQuote(agentBinary)}${trustFlag}${modelArg}${promptArg}\n`;
+        await fs.writeFile(script, scriptContent, { mode: 0o700 });
+        const child = spawnProcess('/usr/bin/open', ['-a', 'Terminal', script], { shell: false, detached: true, stdio: 'ignore' });
+        await new Promise((res, rej) => { child.once('spawn', res); child.once('error', rej); });
+        child.unref();
+      } else if (process.platform === 'win32') {
+        const child = spawnProcess('cmd.exe', ['/c', 'start', 'cmd.exe', '/k', `cd /d "${cwd}" && echo VIBE USAGE: GÖREV DEVRİ (${fromLabel} ➔ CURSOR AGENT) && "${agentBinary}"${trustFlag}${modelArg} "${handoverPrompt}"`], { detached: true, stdio: 'ignore' });
+        child.unref();
+      } else {
+        const child = spawnProcess(agentBinary, [trustFlag.trim(), modelArg.trim(), handoverPrompt].filter(Boolean), { cwd, detached: true, stdio: 'inherit' });
+        child.unref();
+      }
       const msg = lang === 'tr'
-        ? `${fromLabel} oturumu Cursor'a devredildi (VIBE_HANDOVER.md hazırlandı).`
-        : `${fromLabel} session handed over to Cursor (VIBE_HANDOVER.md generated).`;
+        ? `${fromLabel} oturumu Cursor Agent terminaline devredildi ve görev başlatıldı [Model: ${finalModel}].`
+        : `${fromLabel} session handed over to Cursor Agent terminal with resume prompt [Model: ${finalModel}].`;
       return { success: true, from: fromLabel, to: 'CURSOR', message: msg };
     }
+
+    let child;
+    if (process.platform === 'darwin') {
+      child = spawnProcess('/usr/bin/open', ['-a', 'Cursor', cwd], { shell: false, detached: true, stdio: 'ignore' });
+    } else if (process.platform === 'win32') {
+      child = spawnProcess('cmd.exe', ['/c', 'start', '', 'cursor', cwd], { detached: true, stdio: 'ignore' });
+    } else {
+      child = spawnProcess('cursor', [cwd], { shell: false, detached: true, stdio: 'ignore' });
+    }
+    child?.unref?.();
+    const msg = lang === 'tr'
+      ? `Cursor Agent CLI bulunamadı; Cursor uygulaması açıldı. VIBE_HANDOVER.md hazırlandı, görevi uygulama içinden başlatın.`
+      : `Cursor Agent CLI not found; opened the Cursor app instead. VIBE_HANDOVER.md is ready; start the task from the app.`;
+    return { success: true, from: fromLabel, to: 'CURSOR', message: msg };
   }
 
   if (targetId === 'antigravity') {
+    let child;
     if (process.platform === 'darwin') {
-      const child = spawn('/usr/bin/open', ['-a', 'Antigravity', cwd], { shell: false, detached: true, stdio: 'ignore' });
-      child.unref();
-      const msg = lang === 'tr'
-        ? `${fromLabel} oturumu Antigravity'ye devredildi (VIBE_HANDOVER.md hazırlandı).`
-        : `${fromLabel} session handed over to Antigravity (VIBE_HANDOVER.md generated).`;
-      return { success: true, from: fromLabel, to: 'ANTIGRAVITY', message: msg };
+      child = spawnProcess('/usr/bin/open', ['-a', 'Antigravity', cwd], { shell: false, detached: true, stdio: 'ignore' });
+    } else if (process.platform === 'win32') {
+      child = spawnProcess('cmd.exe', ['/c', 'start', '', 'antigravity', cwd], { detached: true, stdio: 'ignore' });
+    } else {
+      child = spawnProcess('antigravity', [cwd], { shell: false, detached: true, stdio: 'ignore' });
     }
+    child?.unref?.();
+    const msg = lang === 'tr'
+      ? `${fromLabel} oturumu Antigravity'ye devredildi (VIBE_HANDOVER.md hazırlandı).`
+      : `${fromLabel} session handed over to Antigravity (VIBE_HANDOVER.md generated).`;
+    return { success: true, from: fromLabel, to: 'ANTIGRAVITY', message: msg };
   }
 
   throw Error(`Desteklenmeyen hedef sağlayıcı: ${targetId}`);
@@ -479,6 +492,7 @@ module.exports = {
   loadClaudeSettingsFiles,
   resolveClaudeProfile,
   buildHandoverPrompt,
+  listSessions,
   smartSelectProvider,
   smartLaunch,
   previewSmartLaunch,

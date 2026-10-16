@@ -11,18 +11,25 @@ function parseCursorUsage(summary) {
   const plan = summary.individualUsage?.plan, windows = [];
   const resetsAt = summary.billingCycleEnd;
   if (plan) {
-    for (const [key, label] of [['auto', 'Auto kapsamı'], ['api', 'API kapsamı'], ['total', 'Toplam kullanım']]) windows.push(normalizeWindow({ id: `plan:${key}`, label, usedPercent: plan[`${key}PercentUsed`], resetsAt, detail: key==='api'?'Bu sınır hesabın bütün modellerde bittiği anlamına gelmez.':'' }));
+    const planMeta = {
+      auto: { label: 'Auto kapsamı', labelKey: 'labelAutoScope' },
+      api: { label: 'API kapsamı', labelKey: 'labelApiScope', detailKey: 'cursorApiLimitNote', detail: 'Bu sınır hesabın bütün modellerde bittiği anlamına gelmez.' },
+      total: { label: 'Toplam kullanım', labelKey: 'labelTotalUsage', detailKey: 'totalQuotaDesc' }
+    };
+    for (const [key, m] of Object.entries(planMeta)) {
+      windows.push(normalizeWindow({ id: `plan:${key}`, label: m.label, labelKey: m.labelKey, detailKey: m.detailKey, usedPercent: plan[`${key}PercentUsed`], resetsAt, detail: m.detail || '' }));
+    }
     const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
     const amounts = ['used', 'limit', 'remaining'].filter(k => typeof plan[k] === 'number' && Number.isFinite(plan[k])).map(k => `${names[k]}: ${plan[k]} cents`);
     if (typeof plan.breakdown?.bonus === 'number') amounts.push(`Bonus kaydı: ${plan.breakdown.bonus} cents`);
-    windows.push(normalizeWindow({ id: 'plan:spend', label: 'Dahil kullanım · tutar', resetsAt, valueText:typeof plan.remaining==='number'?`${plan.remaining} cent kalan`:'Tutar bildirilmedi', detail: amounts.join('; ') || 'Tutar bildirilmedi.' }));
+    windows.push(normalizeWindow({ id: 'plan:spend', label: 'Dahil kullanım · tutar', labelKey: 'labelIncludedSpend', resetsAt, valueText:typeof plan.remaining==='number'?`${plan.remaining} cent kalan`:'Tutar bildirilmedi', detail: amounts.join('; ') || 'Tutar bildirilmedi.' }));
   }
   for (const [group, usage] of [['individual', summary.individualUsage], ['team', summary.teamUsage]]) {
     for (const key of ['onDemand', 'overall', 'pooled']) {
       const pool = usage?.[key]; if (!pool) continue;
       const names={used:'Kullanılan',limit:'Limit',remaining:'Kalan'};
       const detail = ['used', 'limit', 'remaining'].filter(k => typeof pool[k] === 'number' && Number.isFinite(pool[k])).map(k => `${names[k]}: ${pool[k]} cents`).join('; ');
-      windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
+      windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, labelKey: key === 'onDemand' ? 'labelOnDemandSpend' : undefined, resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
     }
   }
   const result = { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };

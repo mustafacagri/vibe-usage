@@ -50,10 +50,14 @@ function parseAntigravitySummary(raw) {
       if (ids.has(id)) throw new common.ProviderError('invalid_response');
       ids.add(id);
       const cadence = safeText(bucket.window || bucket.displayName || bucket.name || bucketKey).toLowerCase();
-      const label = /^(5h|session|5-hour|five hour|five-hour)$/.test(cadence) ? '5 hours' : cadence === 'weekly' ? 'Weekly' : safeText(bucket.displayName || bucket.name || bucketKey);
+      const isFiveHour = /^(5h|session|5-hour|five hour|five-hour)$/.test(cadence);
+      const isWeekly = cadence === 'weekly';
+      const label = isFiveHour ? '5 hours' : isWeekly ? 'Weekly' : safeText(bucket.displayName || bucket.name || bucketKey);
+      const labelKey = isFiveHour ? 'label5Hours' : isWeekly ? 'labelWeekly' : undefined;
+      const durationMinutes = isFiveHour ? 300 : isWeekly ? 10080 : undefined;
       const remaining = bucket.remainingFraction ?? bucket.remaining?.remainingFraction ?? (bucket.remaining?.case === 'remainingFraction' ? bucket.remaining.value : null);
       const scope = safeText(group.displayName || group.name, 'Quota group');
-      windows.push(normalizeWindow({ id, label, scope, remainingPercent: fractionPercent(remaining), resetsAt: rawReset(bucket.resetTime), active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined, detail: 'Source: existing Antigravity local service.' }));
+      windows.push(normalizeWindow({ id, label, labelKey, durationMinutes, scope, remainingPercent: fractionPercent(remaining), resetsAt: rawReset(bucket.resetTime), active: typeof bucket.disabled === 'boolean' ? !bucket.disabled : undefined, detail: 'Source: existing Antigravity local service.' }));
     }
   }
   if (!windows.length) throw new common.ProviderError('invalid_response');

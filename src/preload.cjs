@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('vibe',{
  smartLaunch:options=>ipcRenderer.invoke('vibe:smart-launch',options),
  executeHandover:options=>ipcRenderer.invoke('vibe:execute-handover',options),
  handoverToCodex:()=>ipcRenderer.invoke('vibe:handover-to-codex'),
+ listSessions:options=>ipcRenderer.invoke('vibe:list-sessions',options),
+ selectDirectory:options=>ipcRenderer.invoke('vibe:select-directory',options),
+ getDefaultProjectDir:()=>ipcRenderer.invoke('vibe:get-default-project-dir'),
  getDiscoveredModels:()=>ipcRenderer.invoke('vibe:get-discovered-models'),
  onSnapshot:callback=>{const listener=(_event,state)=>callback(state);ipcRenderer.on('vibe:update',listener);return ()=>ipcRenderer.removeListener('vibe:update',listener);}
 });

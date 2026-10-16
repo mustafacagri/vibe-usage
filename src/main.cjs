@@ -1,7 +1,7 @@
 const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,dialog,screen,session,shell}=require('electron');
 const path=require('node:path');const fs=require('node:fs');const os=require('node:os');const crypto=require('node:crypto');const {pathToFileURL}=require('node:url');const {spawn}=require('node:child_process');
 const {createService}=require('./core/service.cjs');const {assertSender,validateRefresh}=require('./ipc-policy.cjs');
-const {launchExternal,loadClaudeSettingsFiles,launchWarnings,resolveClaudeProfile,smartLaunch,previewSmartLaunch,handoverToCodex,executeHandover,discoverModels}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');
+const {launchExternal,loadClaudeSettingsFiles,launchWarnings,resolveClaudeProfile,smartLaunch,previewSmartLaunch,handoverToCodex,executeHandover,discoverModels,listSessions}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');const {setModelCacheDir,refreshCursorModels}=require('./core/models.cjs');
 app.setName('Vibe Usage');
 if(process.env.VIBE_DATA_DIR)app.setPath('userData',path.resolve(process.env.VIBE_DATA_DIR));
 let win,tray,service,poll,quitting=false,boundsTimer;
@@ -15,6 +15,7 @@ if(!app.requestSingleInstanceLock())app.quit();else{
  app.on('second-instance',show);
  app.whenReady().then(async()=>{
   service=await createService({settingsPath:path.join(app.getPath('userData'),'settings.json')});
+  setModelCacheDir(app.getPath('userData'));
   const settings=service.snapshot().settings;const area=screen.getPrimaryDisplay().workArea;
   const saved=settings.window||{};const width=Math.min(Math.max(saved.width||430,340),Math.min(area.width,620));const height=Math.min(Math.max(saved.height||900,420),area.height-30);
   const bounds={width,height};if(Number.isFinite(saved.x)&&Number.isFinite(saved.y)&&screen.getAllDisplays().some(d=>saved.x>=d.workArea.x&&saved.x+width<=d.workArea.x+d.workArea.width&&saved.y>=d.workArea.y&&saved.y+height<=d.workArea.y+d.workArea.height)){bounds.x=saved.x;bounds.y=saved.y;}
@@ -92,26 +93,36 @@ if(!app.requestSingleInstanceLock())app.quit();else{
   handler('launch',async options=>{
    if(!options||typeof options.accountId!=='string')throw Error('Hesap gerekli');
    const account=service.snapshot().settings.accounts.find(a=>a.id===options.accountId&&a.providerId==='claude'&&a.enabled!==false);if(!account)throw Error('Geçersiz hesap');
-   const choice=await dialog.showOpenDialog(win,{title:'Claude Code için proje klasörü',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+   const choice=await dialog.showOpenDialog(win,{title:'Claude Code için proje klasörü',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
    const projectDir=choice.filePaths[0];
    const settingsFiles=await loadClaudeSettingsFiles(projectDir,account.configDir);
    const warnings=launchWarnings(service.snapshot(),account,{...settingsFiles});
    const riskWarnings=warnings.slice(2);
    if(riskWarnings.length>0&&dialog.showMessageBox){
     const choiceBtn=await dialog.showMessageBox(win,{type:'warning',buttons:['Başlat','İptal'],defaultId:0,cancelId:1,title:'Claude Code Başlatma Uyarısı',message:'Seçilen profil ve proje için dikkat edilmesi gereken riskler:\n\n'+riskWarnings.join('\n\n')});
-    if(choiceBtn.response===1)return {message:'Başlatma iptal edildi.'};
+    if(choiceBtn.response===1)return {canceled:true};
    }
    await launchExternal({account,projectDir,dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.',warnings};
   });
-  handler('get-discovered-models',async()=>discoverModels());
+  handler('get-discovered-models',async()=>{await refreshCursorModels().catch(()=>null);return discoverModels();});
   handler('preview-smart-launch',async()=>previewSmartLaunch({snapshot:service.snapshot()}));
+  handler('get-default-project-dir',async()=>process.cwd());
   handler('smart-launch',async(options={})=>{
    let projectDir=options?.projectDir;
    if(!projectDir){
-    const choice=await dialog.showOpenDialog(win,{title:'Çalışma alanı / Proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+    const choice=await dialog.showOpenDialog(win,{title:'Çalışma alanı / Proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
     projectDir=choice.filePaths[0];
    }
    return await smartLaunch({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),targetModel:options?.targetModel});
+  });
+  handler('list-sessions',async(options={})=>{
+   const projectDir=options?.projectDir||process.cwd();
+   const providerId=options?.providerId||'claude';
+   return await listSessions({providerId,projectDir});
+  });
+  handler('select-directory',async(options={})=>{
+   const choice=await dialog.showOpenDialog(win,{title:'Proje Klasörünü Seçin',defaultPath:options?.defaultPath||process.cwd(),properties:['openDirectory','createDirectory']});
+   return choice.canceled||!choice.filePaths.length?null:choice.filePaths[0];
   });
   handler('execute-handover',async(options={})=>{
    let projectDir=options?.projectDir;
@@ -119,10 +130,10 @@ if(!app.requestSingleInstanceLock())app.quit();else{
     const choice=await dialog.showOpenDialog(win,{title:'Devredilecek proje klasörünü seç',defaultPath:process.cwd(),properties:['openDirectory']});if(choice.canceled)return {canceled:true};
     projectDir=choice.filePaths[0];
    }
-   return await executeHandover({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),fromProvider:options?.fromProvider||'auto',toProvider:options?.toProvider||'auto',targetModel:options?.targetModel});
+   return await executeHandover({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),fromProvider:options?.fromProvider||'auto',toProvider:options?.toProvider||'auto',targetModel:options?.targetModel,sessionId:options?.sessionId,sessionProvider:options?.sessionProvider||undefined});
   });
   handler('handover-to-codex',async()=>{
-   const choice=await dialog.showOpenDialog(win,{title:'Claude oturumu bulunan proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+   const choice=await dialog.showOpenDialog(win,{title:'Claude oturumu bulunan proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {canceled:true};
    const projectDir=choice.filePaths[0];
    return await handoverToCodex({projectDir,dataDir:app.getPath('userData')});
   });

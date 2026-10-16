@@ -16,6 +16,10 @@ function normalizeWindow(input = {}) {
   if (usedPercent === null && remainingPercent !== null) usedPercent = 100 - remainingPercent;
   if (remainingPercent === null && usedPercent !== null) remainingPercent = 100 - usedPercent;
   const result = { id: safeText(input.id, 'unknown'), label: safeText(input.label, safeText(input.id, 'Unknown')), usedPercent, remainingPercent, resetsAt: isoDate(input.resetsAt) };
+  if (typeof input.labelKey === 'string') result.labelKey = safeText(input.labelKey, '', 60);
+  if (typeof input.detailKey === 'string') result.detailKey = safeText(input.detailKey, '', 60);
+  if (input.labelParams && typeof input.labelParams === 'object') result.labelParams = input.labelParams;
+  if (typeof input.durationMinutes === 'number' && Number.isFinite(input.durationMinutes)) result.durationMinutes = input.durationMinutes;
   if (typeof input.scope === 'string') result.scope = safeText(input.scope);
   if (typeof input.active === 'boolean') result.active = input.active;
   if (typeof input.detail === 'string') result.detail = safeText(input.detail, '', 360);

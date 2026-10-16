@@ -110,7 +110,17 @@ const I18N = {
     defaultAccount: 'Current account',
     centsRemaining: '{n} cents remaining',
     amountNotReported: 'Amount not reported',
-    disabled: 'Disabled'
+    disabled: 'Disabled',
+
+    // Session picker & extra keys
+    projectDirectory: 'Project Directory',
+    browseFolder: 'Browse…',
+    sessionToHandover: 'Session / Task to Handover',
+    mostRecentSession: '● Auto Detect (Most Recent Active Session)',
+    noSessionsFound: 'No previous sessions found in this folder',
+    executeHandoverBtn: 'Transfer Task ↗',
+    labelOpusWeekly: 'Opus · weekly',
+    labelSonnetWeekly: 'Sonnet · weekly'
   },
   tr: {
     name: 'Türkçe',
@@ -221,7 +231,17 @@ const I18N = {
     defaultAccount: 'Mevcut hesap',
     centsRemaining: '{n} cent kalan',
     amountNotReported: 'Tutar bildirilmedi',
-    disabled: 'Kapalı'
+    disabled: 'Kapalı',
+
+    // Session picker & extra keys
+    projectDirectory: 'Proje Klasörü',
+    browseFolder: 'Gözat…',
+    sessionToHandover: 'Devredilecek Oturum / Konu',
+    mostRecentSession: '● Otomatik Seç (En Son Aktif Oturum)',
+    noSessionsFound: 'Bu klasörde kayıtlı oturum bulunamadı',
+    executeHandoverBtn: 'Görevi Devret ↗',
+    labelOpusWeekly: 'Opus · haftalık',
+    labelSonnetWeekly: 'Sonnet · haftalık'
   },
   de: {
     name: 'Deutsch',
@@ -322,7 +342,17 @@ const I18N = {
     defaultAccount: 'Aktuelles Konto',
     centsRemaining: '{n} Cent verbleibend',
     amountNotReported: 'Betrag nicht gemeldet',
-    disabled: 'Deaktiviert'
+    disabled: 'Deaktiviert',
+
+    // Session picker & extra keys
+    projectDirectory: 'Projektverzeichnis',
+    browseFolder: 'Durchsuchen…',
+    sessionToHandover: 'Zu übertragende Sitzung / Aufgabe',
+    mostRecentSession: '● Automatisch erkennen (Neueste aktive Sitzung)',
+    noSessionsFound: 'Keine vorherigen Sitzungen in diesem Ordner gefunden',
+    executeHandoverBtn: 'Aufgabe übertragen ↗',
+    labelOpusWeekly: 'Opus · wöchentlich',
+    labelSonnetWeekly: 'Sonnet · wöchentlich'
   },
   es: {
     name: 'Español',
@@ -423,7 +453,17 @@ const I18N = {
     defaultAccount: 'Cuenta actual',
     centsRemaining: '{n} centavos restantes',
     amountNotReported: 'Monto no informado',
-    disabled: 'Desactivado'
+    disabled: 'Desactivado',
+
+    // Session picker & extra keys
+    projectDirectory: 'Directorio del proyecto',
+    browseFolder: 'Examinar…',
+    sessionToHandover: 'Sesión / Tarea a transferir',
+    mostRecentSession: '● Detección automática (Sesión activa más reciente)',
+    noSessionsFound: 'No se encontraron sesiones previas en esta carpeta',
+    executeHandoverBtn: 'Transferir tarea ↗',
+    labelOpusWeekly: 'Opus · semanal',
+    labelSonnetWeekly: 'Sonnet · semanal'
   },
   fr: {
     name: 'Français',
@@ -524,7 +564,17 @@ const I18N = {
     defaultAccount: 'Compte actuel',
     centsRemaining: '{n} cents restants',
     amountNotReported: 'Montant non renseigné',
-    disabled: 'Désactivé'
+    disabled: 'Désactivé',
+
+    // Session picker & extra keys
+    projectDirectory: 'Répertoire du projet',
+    browseFolder: 'Parcourir…',
+    sessionToHandover: 'Session / Tâche à transférer',
+    mostRecentSession: '● Détection auto (Session active la plus récente)',
+    noSessionsFound: 'Aucune session précédente trouvée dans ce dossier',
+    executeHandoverBtn: 'Transférer la tâche ↗',
+    labelOpusWeekly: 'Opus · hebdomadaire',
+    labelSonnetWeekly: 'Sonnet · hebdomadaire'
   },
   it: {
     name: 'Italiano',
@@ -625,7 +675,17 @@ const I18N = {
     defaultAccount: 'Account attuale',
     centsRemaining: '{n} centesimi rimanenti',
     amountNotReported: 'Importo non segnalato',
-    disabled: 'Disattivato'
+    disabled: 'Disattivato',
+
+    // Session picker & extra keys
+    projectDirectory: 'Directory del progetto',
+    browseFolder: 'Sfoglia…',
+    sessionToHandover: 'Sessione / Attività da trasferire',
+    mostRecentSession: '● Rilevamento automatico (Sessione attiva più recente)',
+    noSessionsFound: 'Nessuna sessione precedente trovata in questa cartella',
+    executeHandoverBtn: 'Trasferisci attività ↗',
+    labelOpusWeekly: 'Opus · settimanale',
+    labelSonnetWeekly: 'Sonnet · settimanale'
   },
   pt: {
     name: 'Português',
@@ -726,7 +786,17 @@ const I18N = {
     defaultAccount: 'Conta atual',
     centsRemaining: '{n} centavos restantes',
     amountNotReported: 'Valor não informado',
-    disabled: 'Desativado'
+    disabled: 'Desativado',
+
+    // Session picker & extra keys
+    projectDirectory: 'Diretório do projeto',
+    browseFolder: 'Procurar…',
+    sessionToHandover: 'Sessão / Tarefa a transferir',
+    mostRecentSession: '● Detecção automática (Sessão ativa mais recente)',
+    noSessionsFound: 'Nenhuma sessão anterior encontrada nesta pasta',
+    executeHandoverBtn: 'Transferir tarefa ↗',
+    labelOpusWeekly: 'Opus · semanal',
+    labelSonnetWeekly: 'Sonnet · semanal'
   },
   nl: {
     name: 'Nederlands',
@@ -827,7 +897,17 @@ const I18N = {
     defaultAccount: 'Huidig account',
     centsRemaining: '{n} cent resterend',
     amountNotReported: 'Bedrag niet gemeld',
-    disabled: 'Uitgeschakeld'
+    disabled: 'Uitgeschakeld',
+
+    // Session picker & extra keys
+    projectDirectory: 'Projectmap',
+    browseFolder: 'Bladeren…',
+    sessionToHandover: 'Over te dragen sessie / taak',
+    mostRecentSession: '● Automatisch detecteren (Meest recente actieve sessie)',
+    noSessionsFound: 'Geen eerdere sessies gevonden in deze map',
+    executeHandoverBtn: 'Taak overdragen ↗',
+    labelOpusWeekly: 'Opus · wekelijks',
+    labelSonnetWeekly: 'Sonnet · wekelijks'
   },
   pl: {
     name: 'Polski',
@@ -928,7 +1008,17 @@ const I18N = {
     defaultAccount: 'Bieżące konto',
     centsRemaining: 'Pozostało {n} centów',
     amountNotReported: 'Nie podano kwoty',
-    disabled: 'Wyłączone'
+    disabled: 'Wyłączone',
+
+    // Session picker & extra keys
+    projectDirectory: 'Katalog projektu',
+    browseFolder: 'Przeglądaj…',
+    sessionToHandover: 'Sesja / Zadanie do przekazania',
+    mostRecentSession: '● Automatyczne wykrywanie (Najnowsza aktywna sesja)',
+    noSessionsFound: 'Nie znaleziono wcześniejszych sesji w tym folderze',
+    executeHandoverBtn: 'Przekaż zadanie ↗',
+    labelOpusWeekly: 'Opus · tygodniowy',
+    labelSonnetWeekly: 'Sonnet · tygodniowy'
   },
   ja: {
     name: '日本語',
@@ -1029,7 +1119,17 @@ const I18N = {
     defaultAccount: '現在のアカウント',
     centsRemaining: '残り {n} セント',
     amountNotReported: '金額未報告',
-    disabled: '無効'
+    disabled: '無効',
+
+    // Session picker & extra keys
+    projectDirectory: 'プロジェクトディレクトリ',
+    browseFolder: '参照…',
+    sessionToHandover: '引き継ぐセッション / タスク',
+    mostRecentSession: '● 自動検出（最新のアクティブセッション）',
+    noSessionsFound: 'このフォルダに過去のセッションは見つかりませんでした',
+    executeHandoverBtn: 'タスクを引き継ぐ ↗',
+    labelOpusWeekly: 'Opus · 週間',
+    labelSonnetWeekly: 'Sonnet · 週間'
   },
   ko: {
     name: '한국어',
@@ -1130,7 +1230,17 @@ const I18N = {
     defaultAccount: '현재 계정',
     centsRemaining: '{n} 센트 남음',
     amountNotReported: '금액 미보고',
-    disabled: '비활성화됨'
+    disabled: '비활성화됨',
+
+    // Session picker & extra keys
+    projectDirectory: '프로젝트 디렉토리',
+    browseFolder: '찾아보기…',
+    sessionToHandover: '이어받을 세션 / 작업',
+    mostRecentSession: '● 자동 감지 (가장 최근 활성 세션)',
+    noSessionsFound: '이 폴더에서 이전 세션을 찾을 수 없습니다',
+    executeHandoverBtn: '작업 이어받기 ↗',
+    labelOpusWeekly: 'Opus · 주간',
+    labelSonnetWeekly: 'Sonnet · 주간'
   },
   zh: {
     name: '简体中文',
@@ -1231,7 +1341,17 @@ const I18N = {
     defaultAccount: '当前账户',
     centsRemaining: '剩余 {n} 美分',
     amountNotReported: '未报告金额',
-    disabled: '已禁用'
+    disabled: '已禁用',
+
+    // Session picker & extra keys
+    projectDirectory: '项目目录',
+    browseFolder: '浏览…',
+    sessionToHandover: '要移交的会话 / 任务',
+    mostRecentSession: '● 自动检测（最近活动的会话）',
+    noSessionsFound: '在此文件夹中未找到先前的会话',
+    executeHandoverBtn: '移交任务 ↗',
+    labelOpusWeekly: 'Opus · 每周',
+    labelSonnetWeekly: 'Sonnet · 每周'
   },
   ru: {
     name: 'Русский',
@@ -1332,7 +1452,17 @@ const I18N = {
     defaultAccount: 'Текущий аккаунт',
     centsRemaining: 'Осталось {n} центов',
     amountNotReported: 'Сумма не указана',
-    disabled: 'Отключено'
+    disabled: 'Отключено',
+
+    // Session picker & extra keys
+    projectDirectory: 'Каталог проекта',
+    browseFolder: 'Обзор…',
+    sessionToHandover: 'Сессия / Задача для передачи',
+    mostRecentSession: '● Автоопределение (Последняя активная сессия)',
+    noSessionsFound: 'В этой папке не найдено предыдущих сессий',
+    executeHandoverBtn: 'Передать задачу ↗',
+    labelOpusWeekly: 'Opus · еженедельно',
+    labelSonnetWeekly: 'Sonnet · еженедельно'
   }
 };
 

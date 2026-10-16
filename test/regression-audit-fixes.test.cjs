@@ -5,6 +5,60 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
+// Shared fixtures for session/handover tests. They mirror the on-disk formats the
+// providers really write (verified against local installs), at minimal size.
+function writeAntigravityDb(file, projectDir, modelName) {
+  const { DatabaseSync } = require('node:sqlite');
+  const { pathToFileURL } = require('node:url');
+  const uri = Buffer.from(pathToFileURL(path.resolve(projectDir)).href);
+  const db = new DatabaseSync(file);
+  db.exec('CREATE TABLE trajectory_metadata_blob (id TEXT DEFAULT "main", data BLOB, PRIMARY KEY (id)); CREATE TABLE gen_metadata (idx INTEGER, data BLOB, size INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (idx));');
+  db.prepare('INSERT INTO trajectory_metadata_blob (id, data) VALUES (?, ?)').run('main', Buffer.concat([Buffer.from([0x0a, uri.length]), uri, Buffer.from([0x12, 0x02, 0x08, 0x01])]));
+  if (modelName) {
+    const name = Buffer.from(modelName);
+    db.prepare('INSERT INTO gen_metadata (idx, data) VALUES (?, ?)').run(0, Buffer.concat([Buffer.from([0x0a, 0x01, 0x41, 0xaa, 0x01, name.length]), name]));
+  }
+  db.close();
+}
+
+function codexRollout({ id, cwd, source = 'vscode', model = 'gpt-6-luna', user = [], assistant = [] }) {
+  const lines = [{ type: 'session_meta', payload: { session_id: id, id, cwd, source, base_instructions: { text: 'x'.repeat(200) } } }, { type: 'turn_context', payload: { cwd, model } }];
+  lines.push({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: `# AGENTS.md instructions for ${cwd}\n\n<INSTRUCTIONS>x</INSTRUCTIONS>` }] } });
+  lines.push({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n  <cwd>x</cwd>\n</environment_context>' }] } });
+  user.forEach((u, i) => {
+    lines.push({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: u }] } });
+    if (assistant[i]) lines.push({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: assistant[i] }] } });
+  });
+  return lines.map(l => JSON.stringify({ timestamp: '2026-10-16T10:00:00.000Z', ...l })).join('\n') + '\n';
+}
+
+function writeCursorChat(chatsRoot, { id, cwd, name, user = [], assistant = [] }) {
+  const { DatabaseSync } = require('node:sqlite');
+  const fsSync = require('node:fs');
+  const dir = path.join(chatsRoot, 'a1b2c3', id);
+  fsSync.mkdirSync(dir, { recursive: true });
+  fsSync.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify({ schemaVersion: 1, hasConversation: true, updatedAtMs: Date.now(), cwd }));
+  const db = new DatabaseSync(path.join(dir, 'store.db'));
+  db.exec('CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT); CREATE TABLE blobs (id TEXT PRIMARY KEY, data BLOB);');
+  db.prepare("INSERT INTO meta VALUES ('0', ?)").run(Buffer.from(JSON.stringify({ agentId: id, name })).toString('hex'));
+  const put = (k, v) => db.prepare('INSERT INTO blobs VALUES (?, ?)').run(k, Buffer.from(typeof v === 'string' ? v : JSON.stringify(v)));
+  put('sys', { role: 'system', content: 'You are an AI coding assistant' });
+  put('info', { role: 'user', content: `<user_info>\nWorkspace Path: ${cwd}\n</user_info>` });
+  put('tree', '\x0a\x20internal-node');
+  user.forEach((u, i) => {
+    put(`u${i}`, { role: 'user', content: [{ type: 'text', text: `<user_query>\n${u}\n</user_query>` }] });
+    if (assistant[i]) put(`a${i}`, { role: 'assistant', content: [{ type: 'reasoning', text: '' }, { type: 'text', text: assistant[i] }] });
+  });
+  db.close();
+}
+
+function fakeSpawn(calls) {
+  return (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return { once(event, cb) { if (event === 'spawn') setImmediate(cb); }, unref() {} };
+  };
+}
+
 // Kusur 1: Windows Environment Variables Case-Insensitivity & Project Settings Env Warning
 test('Kusur 1: cleanEnvironment and launchEnvironment strip case-insensitive blocked keys on win32', () => {
   const { cleanEnvironment } = require('../src/providers/common.cjs');
@@ -1554,6 +1608,8 @@ test('Smart Launch & Handover: buildHandoverPrompt parses session transcript wit
   const sessionData = [
     JSON.stringify({ type: 'user', message: { role: 'user', content: 'Projeyi Next.js yerine Vanilla JS yapalım.' } }),
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: 'Anladım, index.html ve src/ui/app.js oluşturuyorum.' } }),
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'Write', input: { file_path: 'src/ui/app.js' } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'ok' }] }, toolUseResult: { filePath: 'src/ui/app.js' } }),
     JSON.stringify({ type: 'user', message: { role: 'user', content: 'Lütfen kota tablosunu 2 sütunlu yap.' } }),
     JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: 'Quota grid 2 sütun olarak düzenlendi.' } })
   ].join('\n');
@@ -1739,7 +1795,16 @@ test('Model Mapping: resolveModelTier and getMappedModel accurately maps Opus 5.
   assert.equal(resolveModelTier('claude-3-opus'), 'flagship');
   assert.equal(getMappedModel('claude-opus-5-5', 'codex').targetModel, 'gpt-6-luna');
   assert.equal(getMappedModel('claude-opus-5-5', 'antigravity').targetModel, 'gemini-2.5-pro');
-  assert.ok(['claude-opus-4-7', 'grok-4.7', 'cursor-opus-4.5'].includes(getMappedModel('claude-opus-5-5', 'cursor').targetModel));
+  const { setModelCacheDir } = require('../src/core/models.cjs');
+  const cacheDir = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'vibe-model-cache-'));
+  require('node:fs').writeFileSync(path.join(cacheDir, 'cursor-models.json'), JSON.stringify({ models: ['auto', 'claude-opus-5-5-high', 'claude-opus-5-5-thinking-high', 'claude-sonnet-5-5-high'], updatedAt: Date.now() }));
+  setModelCacheDir(cacheDir);
+  try {
+    assert.equal(getMappedModel('claude-opus-5-5', 'cursor').targetModel, 'claude-opus-5-5-high');
+  } finally {
+    setModelCacheDir(null);
+    require('node:fs').rmSync(cacheDir, { recursive: true, force: true });
+  }
 
   // Sonnet 3.7 is Balanced
   assert.equal(resolveModelTier('claude-3-7-sonnet-20250219'), 'balanced');
@@ -1896,9 +1961,316 @@ test('Handover automation & localized formatting: automated prompt and locale fo
   assert.equal(enJustNow, 'just now');
 });
 
+test('Session Discovery & Specific Handover: listSessions discovers AI titles and buildHandoverPrompt selects target session', async t => {
+  const { listSessions, buildHandoverPrompt } = require('../src/core/launcher.cjs');
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-sessions-home-'));
+  const tempProj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-sessions-proj-'));
+  t.after(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true });
+    await fs.rm(tempProj, { recursive: true, force: true });
+  });
+
+  const slug = path.resolve(tempProj).replace(/[/\\:]/g, '-');
+  const claudeProjDir = path.join(tempHome, '.claude', 'projects', slug);
+  await fs.mkdir(claudeProjDir, { recursive: true });
+
+  // Session 1: Older, title from ai-title
+  const s1Data = [
+    JSON.stringify({ type: 'ai-title', aiTitle: 'Codex startup ve OSS araştırma süreci' }),
+    JSON.stringify({ type: 'user', message: { content: 'Startup araştırmasına başla.' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'Araştırma başlatıldı.' } })
+  ].join('\n');
+  await fs.writeFile(path.join(claudeProjDir, 'sess-1.jsonl'), s1Data, 'utf8');
+
+  // Session 2: Newer, title from user message
+  const s2Data = [
+    JSON.stringify({ type: 'user', message: { content: 'Admin reviews sayfası tablo tasarımı' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'Tablo tasarımı tamamlandı.' } })
+  ].join('\n');
+  await fs.writeFile(path.join(claudeProjDir, 'sess-2.jsonl'), s2Data, 'utf8');
+
+  // Discover sessions
+  const sessions = await listSessions({ providerId: 'claude', projectDir: tempProj, homeDir: tempHome });
+  assert.equal(sessions.length, 2);
+  const s1 = sessions.find(s => s.id === 'sess-1');
+  const s2 = sessions.find(s => s.id === 'sess-2');
+  assert.equal(s1.title, 'Codex startup ve OSS araştırma süreci');
+  assert.equal(s2.title, 'Admin reviews sayfası tablo tasarımı');
+
+  // Specific session selection (select sess-1 explicitly even if sess-2 is newer)
+  const handoverS1 = await buildHandoverPrompt(tempProj, { sessionId: 'sess-1', homeDir: tempHome });
+  assert.equal(handoverS1.hasSession, true);
+  assert.equal(handoverS1.sessionId, 'sess-1');
+  assert.equal(handoverS1.sessionTitle, 'Codex startup ve OSS araştırma süreci');
+  assert.equal(handoverS1.initialGoal, 'Startup araştırmasına başla.');
+
+  // Default auto selection picks sess-2 (most recent)
+  const handoverAuto = await buildHandoverPrompt(tempProj, { homeDir: tempHome });
+  assert.equal(handoverAuto.sessionId, 'sess-2');
+});
+
+test('Semantic Window Architecture: providers emit semantic labelKey, detailKey, and durationMinutes', () => {
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+
+  // Cursor semantic keys
+  const cursorUsage = parseCursorUsage({
+    individualUsage: {
+      plan: { autoPercentUsed: 50, apiPercentUsed: 0, totalPercentUsed: 25, remaining: 100 }
+    }
+  });
+  const autoWin = cursorUsage.windows.find(w => w.id === 'plan:auto');
+  const apiWin = cursorUsage.windows.find(w => w.id === 'plan:api');
+  assert.equal(autoWin.labelKey, 'labelAutoScope');
+  assert.equal(apiWin.labelKey, 'labelApiScope');
+  assert.equal(apiWin.detailKey, 'cursorApiLimitNote');
+
+  // Codex semantic duration
+  const codexRate = parseCodexRateLimits({
+    rateLimits: {
+      primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: 1780000000 }
+    }
+  });
+  const codexWin = codexRate.windows[0];
+  assert.equal(codexWin.labelKey, 'label5Hours');
+  assert.equal(codexWin.durationMinutes, 300);
+});
+
+test('Handover Multi-target: executeHandover prepares VIBE_HANDOVER.md for Cursor and Antigravity', async t => {
+  const { executeHandover } = require('../src/core/launcher.cjs');
+  const tempProj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-handover-proj-'));
+  const tempData = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-handover-data-'));
+  t.after(async () => {
+    await fs.rm(tempProj, { recursive: true, force: true });
+    await fs.rm(tempData, { recursive: true, force: true });
+  });
+
+  // Handover to Cursor (spawn is faked: tests must never launch real apps or agents)
+  const calls = [];
+  const resCursor = await executeHandover({
+    projectDir: tempProj,
+    dataDir: tempData,
+    fromProvider: 'claude',
+    toProvider: 'cursor',
+    spawnProcess: fakeSpawn(calls)
+  });
+  assert.equal(resCursor.success, true);
+  assert.equal(resCursor.to, 'CURSOR');
+  const cursorMd = await fs.readFile(path.join(tempProj, 'VIBE_HANDOVER.md'), 'utf8');
+  assert.match(cursorMd, /# VIBE USAGE: GÖREV DEVRİ \(CLAUDE ➔ CURSOR\)/);
+
+  // Handover to Antigravity
+  const resAnti = await executeHandover({
+    projectDir: tempProj,
+    dataDir: tempData,
+    fromProvider: 'claude',
+    toProvider: 'antigravity',
+    spawnProcess: fakeSpawn(calls)
+  });
+  assert.equal(resAnti.success, true);
+  assert.equal(resAnti.to, 'ANTIGRAVITY');
+  const antiMd = await fs.readFile(path.join(tempProj, 'VIBE_HANDOVER.md'), 'utf8');
+  assert.match(antiMd, /# VIBE USAGE: GÖREV DEVRİ \(CLAUDE ➔ ANTIGRAVITY\)/);
+  assert.equal(calls.length, 2);
+});
+
+test('Multi-provider Session Discovery: listSessions discovers Antigravity and Claude sessions with providerId', async t => {
+  const { listSessions, buildHandoverPrompt } = require('../src/core/launcher.cjs');
+  const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-multi-sess-home-'));
+  const tempProj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-multi-sess-proj-'));
+  t.after(async () => {
+    await fs.rm(tempHome, { recursive: true, force: true });
+    await fs.rm(tempProj, { recursive: true, force: true });
+  });
+
+  // 1. Setup mock Claude session
+  const slug = path.resolve(tempProj).replace(/[/\\:]/g, '-');
+  const claudeDir = path.join(tempHome, '.claude', 'projects', slug);
+  await fs.mkdir(claudeDir, { recursive: true });
+  await fs.writeFile(path.join(claudeDir, 'claude-sess.jsonl'), JSON.stringify({ type: 'ai-title', aiTitle: 'Claude Session Title' }) + '\n' + JSON.stringify({ type: 'user', message: { content: 'Task 1' } }), 'utf8');
+
+  // 2. Setup mock Antigravity session
+  const convDir = path.join(tempHome, '.gemini', 'antigravity-ide', 'conversations');
+  const brainDir = path.join(tempHome, '.gemini', 'antigravity-ide', 'brain');
+  const convId = 'ag-test-conv-123';
+  await fs.mkdir(convDir, { recursive: true });
+  await fs.mkdir(path.join(brainDir, convId, '.system_generated', 'logs'), { recursive: true });
+
+  // Same layout as Antigravity: workspace URI inside a protobuf blob, terminated by a field tag.
+  writeAntigravityDb(path.join(convDir, `${convId}.db`), tempProj, 'Gemini 3.8 Flash (High)');
+
+  const agTranscript = [
+    JSON.stringify({ type: 'USER_INPUT', content: 'Antigravity Arch Plan Task' }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', content: 'Step 1 completed' })
+  ].join('\n');
+  await fs.writeFile(path.join(brainDir, convId, '.system_generated', 'logs', 'transcript.jsonl'), agTranscript, 'utf8');
+
+  // Test listSessions with providerId: 'auto'
+  const autoSessions = await listSessions({ providerId: 'auto', projectDir: tempProj, homeDir: tempHome });
+  assert.ok(autoSessions.length >= 2);
+  const foundClaude = autoSessions.find(s => s.providerId === 'claude');
+  const foundAg = autoSessions.find(s => s.providerId === 'antigravity');
+  assert.ok(foundClaude);
+  assert.ok(foundAg);
+  assert.equal(foundClaude.title, 'Claude Session Title');
+  assert.equal(foundAg.title, 'Antigravity Arch Plan Task');
+
+  // Test buildHandoverPrompt targeting Antigravity session explicitly
+  const handoverAg = await buildHandoverPrompt(tempProj, { sessionId: convId, homeDir: tempHome });
+  assert.equal(handoverAg.hasSession, true);
+  assert.equal(handoverAg.sessionId, convId);
+  assert.equal(handoverAg.providerId, 'antigravity');
+  assert.equal(handoverAg.sessionTitle, 'Antigravity Arch Plan Task');
+});
+
+test('Dynamic Cursor Models: list comes only from the CLI cache, never from invented names', () => {
+  const { discoverModels, setModelCacheDir, resolveModelTier } = require('../src/core/models.cjs');
+  const fsSync = require('node:fs');
+  const home = fsSync.mkdtempSync(path.join(os.tmpdir(), 'vibe-cursor-home-'));
+  const cacheDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'vibe-cursor-cache-'));
+  try {
+    setModelCacheDir(cacheDir);
+    // No CLI output and no CLI history: only the CLI's own default.
+    assert.deepEqual(discoverModels(home).cursor, ['auto']);
+
+    // Models the user really picked in the CLI are offered when no live list exists.
+    fsSync.mkdirSync(path.join(home, '.cursor'));
+    fsSync.writeFileSync(path.join(home, '.cursor', 'cli-config.json'), JSON.stringify({ selectedModel: { modelId: 'gpt-5.6-sol-high' }, modelSelectionHistory: ['default', 'claude-opus-5-5-high'] }));
+    assert.deepEqual(discoverModels(home).cursor, ['auto', 'gpt-5.6-sol-high', 'claude-opus-5-5-high']);
+
+    // A live list (even a stale one) replaces everything else, in CLI order.
+    fsSync.writeFileSync(path.join(cacheDir, 'cursor-models.json'), JSON.stringify({ models: ['auto', 'composer-2.5', 'claude-4-sonnet'], updatedAt: 1 }));
+    assert.deepEqual(discoverModels(home).cursor, ['auto', 'composer-2.5', 'claude-4-sonnet']);
+  } finally {
+    setModelCacheDir(null);
+    fsSync.rmSync(home, { recursive: true, force: true });
+    fsSync.rmSync(cacheDir, { recursive: true, force: true });
+  }
+  assert.equal(resolveModelTier('claude-opus-5-5-high'), 'flagship');
+  assert.equal(resolveModelTier('gemini-3.8-flash'), 'balanced', 'gemini must not match the "mini" fast rule');
+  assert.equal(resolveModelTier('gpt-5.4-mini-high'), 'fast');
+});
 
 
+test('Codex sessions: only this project, compressed rollouts included, subagents and fork snapshots excluded', async t => {
+  const { listSessions, buildHandoverPrompt } = require('../src/core/launcher.cjs');
+  const zlib = require('node:zlib');
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-home-'));
+  const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-proj-'));
+  const other = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-codex-other-'));
+  t.after(async () => { for (const d of [home, proj, other]) await fs.rm(d, { recursive: true, force: true }); });
 
+  const day = path.join(home, '.codex', 'sessions', '2026', '10', '16');
+  await fs.mkdir(day, { recursive: true });
+  const A = '01a1aaaa-0000-7000-8000-000000000001';
+  const B = '01a1bbbb-0000-7000-8000-000000000002';
+  await fs.writeFile(path.join(day, `rollout-2026-10-16T10-00-00-${A}.jsonl`), codexRollout({ id: A, cwd: proj, model: 'gpt-6-luna', user: ['Kota ekranını düzelt', 'Testleri de ekle'], assistant: ['Düzelttim', 'Testler eklendi'] }));
+  await fs.writeFile(path.join(day, `rollout-2026-10-16T09-00-00-${B}.jsonl.zst`), zlib.zstdCompressSync(Buffer.from(codexRollout({ id: B, cwd: proj, user: ['Eski sıkıştırılmış oturum'] }))));
+  // Fork snapshot of A: begins with A's session_meta, must not duplicate A.
+  await fs.writeFile(path.join(day, `rollout-2026-10-16T11-00-00-${A}_01a1cccc-0000-7000-8000-000000000003.jsonl`), codexRollout({ id: A, cwd: proj, user: ['snapshot'] }));
+  // Guardian reviewer thread and another project's session.
+  await fs.writeFile(path.join(day, 'rollout-2026-10-16T12-00-00-01a1dddd-0000-7000-8000-000000000004.jsonl'), codexRollout({ id: '01a1dddd-0000-7000-8000-000000000004', cwd: proj, source: { subagent: { other: 'guardian' } }, user: ['review'] }));
+  await fs.writeFile(path.join(day, 'rollout-2026-10-16T12-30-00-01a1eeee-0000-7000-8000-000000000005.jsonl'), codexRollout({ id: '01a1eeee-0000-7000-8000-000000000005', cwd: other, user: ['Başka proje'] }));
+  await fs.writeFile(path.join(home, '.codex', 'session_index.jsonl'), JSON.stringify({ id: A, thread_name: 'Kota ekranı', updated_at: '2026-10-16T10:00:00Z' }) + '\n');
 
+  const sessions = await listSessions({ providerId: 'codex', projectDir: proj, homeDir: home });
+  assert.deepEqual(sessions.map(s => s.id).sort(), [A, B].sort());
+  const a = sessions.find(s => s.id === A);
+  assert.equal(a.title, 'Kota ekranı');
+  assert.equal(a.turnCount, 2, 'injected AGENTS.md / environment messages are not user turns');
+  assert.equal(a.model, 'gpt-6-luna');
+  assert.equal(sessions.find(s => s.id === B).title, 'Eski sıkıştırılmış oturum');
 
+  const h = await buildHandoverPrompt(proj, { sessionId: A, providerId: 'codex', homeDir: home });
+  assert.equal(h.providerId, 'codex');
+  assert.equal(h.initialGoal, 'Kota ekranını düzelt');
+  assert.equal(h.lastUserMsg, 'Testleri de ekle');
+  assert.equal(h.lastAssistantMsg, 'Testler eklendi');
 
+  assert.deepEqual(await listSessions({ providerId: 'codex', projectDir: other, homeDir: home }).then(x => x.map(s => s.id)), ['01a1eeee-0000-7000-8000-000000000005']);
+});
+
+test('Cursor CLI sessions: matched by cwd and read from store.db; no synthetic workspace entries', async t => {
+  const { listSessions, buildHandoverPrompt } = require('../src/core/launcher.cjs');
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-home-'));
+  const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-proj-'));
+  t.after(async () => { for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true }); });
+
+  const chats = path.join(home, '.cursor', 'chats');
+  writeCursorChat(chats, { id: 'chat-mine', cwd: proj, name: 'Refactor storage', user: ['Storage katmanını ayır'], assistant: ['Ayırdım'] });
+  writeCursorChat(chats, { id: 'chat-other', cwd: path.join(proj, 'nested'), name: 'Other', user: ['x'] });
+  writeCursorChat(chats, { id: 'chat-empty', cwd: proj, name: 'New Agent' });
+
+  const sessions = await listSessions({ providerId: 'cursor', projectDir: proj, homeDir: home });
+  assert.deepEqual(sessions.map(s => [s.id, s.title, s.turnCount, s.providerId]), [['chat-mine', 'Refactor storage', 1, 'cursor']]);
+
+  const h = await buildHandoverPrompt(proj, { sessionId: 'chat-mine', providerId: 'cursor', homeDir: home });
+  assert.equal(h.lastUserMsg, 'Storage katmanını ayır');
+  assert.equal(h.lastAssistantMsg, 'Ayırdım');
+});
+
+test('Antigravity sessions: workspace must match exactly and the recorded model is reported', async t => {
+  const { listSessions } = require('../src/core/launcher.cjs');
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ag-home-'));
+  const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ag-proj-'));
+  t.after(async () => { for (const d of [home, proj]) await fs.rm(d, { recursive: true, force: true }); });
+
+  const conv = path.join(home, '.gemini', 'antigravity-ide', 'conversations');
+  await fs.mkdir(conv, { recursive: true });
+  writeAntigravityDb(path.join(conv, 'exact.db'), proj, 'Gemini 3.8 Flash (High)');
+  writeAntigravityDb(path.join(conv, 'prefix.db'), `${proj}-2`, 'Gemini 3.8 Flash (High)');
+  writeAntigravityDb(path.join(conv, 'nomodel.db'), proj, null);
+
+  const sessions = await listSessions({ providerId: 'antigravity', projectDir: proj, homeDir: home });
+  assert.deepEqual(sessions.map(s => s.id).sort(), ['exact', 'nomodel']);
+  assert.equal(sessions.find(s => s.id === 'exact').model, 'Gemini 3.8 Flash (High)');
+  assert.equal(sessions.find(s => s.id === 'nomodel').model, '', 'unknown model stays unknown');
+});
+
+test('Handover source: a selected session is read from its own provider, never replaced by Claude', async t => {
+  const { executeHandover, buildHandoverPrompt } = require('../src/core/launcher.cjs');
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-home-'));
+  const proj = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-proj-'));
+  const data = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-data-'));
+  t.after(async () => { for (const d of [home, proj, data]) await fs.rm(d, { recursive: true, force: true }); });
+
+  // A newer Claude session exists for the same project.
+  const slug = path.resolve(proj).replace(/[/\\:]/g, '-');
+  await fs.mkdir(path.join(home, '.claude', 'projects', slug), { recursive: true });
+  await fs.writeFile(path.join(home, '.claude', 'projects', slug, 'claude-1.jsonl'), JSON.stringify({ type: 'user', message: { content: 'CLAUDE TASK' } }) + '\n');
+  writeCursorChat(path.join(home, '.cursor', 'chats'), { id: 'chat-1', cwd: proj, name: 'Cursor görevi', user: ['CURSOR TASK'], assistant: ['cursor done'] });
+
+  await assert.rejects(() => buildHandoverPrompt(proj, { sessionId: 'chat-1', providerId: 'codex', homeDir: home }), /Seçilen oturum bulunamadı/);
+
+  const realHome = os.homedir;
+  os.homedir = () => home;
+  t.after(() => { os.homedir = realHome; });
+  const calls = [];
+  const res = await executeHandover({ projectDir: proj, dataDir: data, fromProvider: 'auto', toProvider: 'antigravity', sessionId: 'chat-1', sessionProvider: 'cursor', spawnProcess: fakeSpawn(calls) });
+  assert.equal(res.from, 'CURSOR');
+  const md = await fs.readFile(path.join(proj, 'VIBE_HANDOVER.md'), 'utf8');
+  assert.match(md, /\(CURSOR ➔ ANTIGRAVITY\)/);
+  assert.match(md, /CURSOR TASK/);
+  assert.doesNotMatch(md, /CLAUDE TASK/);
+  await assert.rejects(() => executeHandover({ projectDir: proj, dataDir: data, sessionId: 'x', sessionProvider: 'evil; rm -rf /', spawnProcess: fakeSpawn(calls) }), /Geçersiz oturum sağlayıcısı/);
+});
+
+test('Cursor model discovery: parses `--list-models` output and caches it in the app data dir', async t => {
+  const { parseCursorModelList, refreshCursorModels } = require('../src/core/models.cjs');
+  const output = 'Available models\n\nauto - Auto (default)\ngpt-5.3-codex - Codex 5.3\nclaude-opus-5-5-high - Claude Opus 5.5 High\n\nTip: use --model <id>\n';
+  assert.deepEqual(parseCursorModelList(output), ['auto', 'gpt-5.3-codex', 'claude-opus-5-5-high']);
+
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-cursor-cli-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  if (process.platform === 'win32') return; // the fake CLI below is a POSIX shell script
+  const bin = path.join(dir, 'fake-agent');
+  await fs.writeFile(bin, `#!/bin/sh\n[ "$1" = "--list-models" ] || exit 2\ncat <<'EOF'\n${output}EOF\n`, { mode: 0o755 });
+  const cacheDir = path.join(dir, 'cache');
+  assert.deepEqual(await refreshCursorModels({ cacheDir, binary: bin, now: 1000 }), ['auto', 'gpt-5.3-codex', 'claude-opus-5-5-high']);
+  const cached = JSON.parse(await fs.readFile(path.join(cacheDir, 'cursor-models.json'), 'utf8'));
+  assert.equal(cached.updatedAt, 1000);
+  // Fresh cache is reused without running the CLI; a failing CLI never wipes the cache.
+  assert.deepEqual(await refreshCursorModels({ cacheDir, binary: '/nonexistent', now: 2000 }), cached.models);
+  assert.equal(await refreshCursorModels({ cacheDir, binary: '/nonexistent', now: 1000 + 25 * 3600e3 }), null);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(cacheDir, 'cursor-models.json'), 'utf8')).models, cached.models);
+});

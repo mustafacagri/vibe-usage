@@ -1,14 +1,24 @@
 'use strict';
 const path=require('node:path');const os=require('node:os');const {spawn}=require('node:child_process');
 const {normalizeWindow,isoDate,safeText}=require('../core/model.cjs');const common=require('./common.cjs');
-function duration(minutes){if(minutes===10080)return 'Haftalık';if(minutes===300)return '5 saat';if(Number.isFinite(minutes)&&minutes>0)return minutes%60===0?`${minutes/60} saat`:`${minutes} dakika`;return 'Dönem bildirilmedi';}
+function durationMeta(minutes){
+ if(minutes===10080)return {label:'Haftalık',labelKey:'labelWeekly',durationMinutes:10080};
+ if(minutes===300)return {label:'5 saat',labelKey:'label5Hours',durationMinutes:300};
+ if(Number.isFinite(minutes)&&minutes>0){
+  if(minutes%60===0)return {label:`${minutes/60} saat`,labelKey:'labelNHours',labelParams:{n:minutes/60},durationMinutes:minutes};
+  return {label:`${minutes} dakika`,labelKey:'labelNMins',labelParams:{n:minutes},durationMinutes:minutes};
+ }
+ return {label:'Dönem bildirilmedi',labelKey:'labelNoPeriodReported'};
+}
+function duration(minutes){return durationMeta(minutes).label;}
 function parseCodexRateLimits(response){
  if(!response||typeof response!=='object'||Array.isArray(response))throw new common.ProviderError('invalid_response');
  if(!response.rateLimitsByLimitId&&!response.rateLimits)throw new common.ProviderError('invalid_response');
  const buckets=response.rateLimitsByLimitId||(response.rateLimits?{codex:response.rateLimits}:{});const windows=[];
  for(const [bucketId,bucket] of Object.entries(buckets))for(const key of ['primary','secondary']){
   const raw=bucket?.[key];if(!raw)continue;
-  windows.push(normalizeWindow({id:`${bucketId}:${key}`,label:duration(raw.windowDurationMins),usedPercent:raw.usedPercent,resetsAt:isoDate(raw.resetsAt,true),...(bucketId!=='codex'?{scope:safeText(bucketId)}:{})}));
+  const d=durationMeta(raw.windowDurationMins);
+  windows.push(normalizeWindow({id:`${bucketId}:${key}`,label:d.label,labelKey:d.labelKey,labelParams:d.labelParams,durationMinutes:d.durationMinutes,usedPercent:raw.usedPercent,resetsAt:isoDate(raw.resetsAt,true),...(bucketId!=='codex'?{scope:safeText(bucketId)}:{})}));
  }
  const result={windows};
  if(!windows.length)result.status='no_limits_reported';

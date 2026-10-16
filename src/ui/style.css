@@ -184,6 +184,7 @@ main {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 8px 12px;
   margin-bottom: 14px;
   background: rgba(255, 255, 255, 0.025);
@@ -198,6 +199,10 @@ main {
   align-items: center;
   gap: 7px;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 #overall-status::before {
@@ -220,6 +225,7 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .summary-btn {
@@ -233,6 +239,8 @@ main {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .smart-btn {
@@ -1151,6 +1159,34 @@ dialog header h2 {
   color: var(--text-secondary);
   line-height: 1.5;
   margin-bottom: 12px;
+}
+
+.project-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.project-dir-row input {
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-dir-row button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 7px 12px;
+  font-size: 11.5px;
 }
 
 .handover-note {

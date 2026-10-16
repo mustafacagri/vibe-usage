@@ -10,9 +10,11 @@ function parseClaudeUsage(usage) {
   if (!usage || typeof usage !== 'object' || Array.isArray(usage)) throw new common.ProviderError('invalid_response');
   const windows = [];
   const labels = { five_hour: '5 saat', seven_day: 'Haftalık', seven_day_opus: 'Opus · haftalık', seven_day_sonnet: 'Sonnet · haftalık' };
+  const labelKeys = { five_hour: 'label5Hours', seven_day: 'labelWeekly', seven_day_opus: 'labelOpusWeekly', seven_day_sonnet: 'labelSonnetWeekly' };
+  const durations = { five_hour: 300, seven_day: 10080, seven_day_opus: 10080, seven_day_sonnet: 10080 };
   for (const key of Object.keys(labels)) {
     if (!['five_hour', 'seven_day'].includes(key) && !usage[key]) continue;
-    windows.push(normalizeWindow({ id: key, label: labels[key], usedPercent: usage[key]?.utilization, resetsAt: usage[key]?.resets_at, ...(key === 'seven_day_opus' ? { scope: 'Opus' } : key === 'seven_day_sonnet' ? { scope: 'Sonnet' } : {}) }));
+    windows.push(normalizeWindow({ id: key, label: labels[key], labelKey: labelKeys[key], durationMinutes: durations[key], usedPercent: usage[key]?.utilization, resetsAt: usage[key]?.resets_at, ...(key === 'seven_day_opus' ? { scope: 'Opus' } : key === 'seven_day_sonnet' ? { scope: 'Sonnet' } : {}) }));
   }
   for (const record of (Array.isArray(usage.limits) ? usage.limits : [])) {
     if (!record || typeof record !== 'object') continue;

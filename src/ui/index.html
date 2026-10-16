@@ -148,6 +148,12 @@
   <form method="dialog"><header><h2 data-i18n="handoverTitle">🔄 Handover Task</h2><button class="text-button" aria-label="Close">✕</button></header></form>
   <div class="dialog-body">
    <p class="dialog-desc" data-i18n="handoverDesc">Compiles current session terminal/project logs, git status, and modified files to hand over to the selected AI tool.</p>
+   <label class="field"><span data-i18n="projectDirectory">Project Directory</span>
+    <div class="project-dir-row">
+     <input id="handover-project-input" type="text" readonly placeholder="/path/to/project" />
+     <button id="handover-browse-btn" class="secondary-button" type="button" data-i18n="browseFolder">Browse…</button>
+    </div>
+   </label>
    <label class="field"><span data-i18n="sourceProvider">Source Provider</span>
     <select id="handover-from">
      <option value="auto" data-i18n="autoDetectSession">Auto Detect (Most Recent Active Session)</option>
@@ -155,6 +161,11 @@
      <option value="codex">Codex</option>
      <option value="cursor">Cursor</option>
      <option value="antigravity">Antigravity</option>
+    </select>
+   </label>
+   <label class="field" id="handover-session-label"><span data-i18n="sessionToHandover">Session / Task to Handover</span>
+    <select id="handover-session-select">
+     <option value="auto" data-i18n="mostRecentSession">Auto Detect (Most Recent Active Session)</option>
     </select>
    </label>
    <label class="field"><span data-i18n="targetProvider">Target Provider</span>
@@ -173,7 +184,7 @@
    </div>
    <div class="dialog-actions">
     <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
-    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="selectProjectAndHandover">Select Project & Handover ↗</button>
+    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="executeHandoverBtn">Transfer Task ↗</button>
    </div>
   </div>
  </dialog>

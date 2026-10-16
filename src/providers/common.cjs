@@ -67,7 +67,7 @@ async function findBinary(name, { env = process.env, home = os.homedir(), platfo
   }
   let candidates = directories.map(directory => path.join(directory, filename));
   if (name === 'codex' && platform === 'win32') candidates.unshift(path.join(env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Programs/OpenAI/Codex/bin/codex.exe'));
-  if (name === 'claude') candidates.unshift(path.join(home, '.local/bin', filename));
+  if (name === 'claude' || name === 'cursor-agent' || name === 'agent') candidates.unshift(path.join(home, '.local/bin', filename));
   for (const candidate of candidates) { if (!validBinary(candidate, platform)) continue; try { if ((await fs.stat(candidate)).isFile()) return candidate; } catch {} }
   throw new ProviderError('binary_missing');
 }
