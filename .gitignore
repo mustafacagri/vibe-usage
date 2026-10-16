@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+artifacts/
+.worktrees/
+.vs/
+*.user
+*.suo
+*.log
+*.secrets.json
+node_modules/
+release/
+coverage/

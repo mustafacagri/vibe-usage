@@ -1,0 +1,30 @@
+name: Build desktop
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  package:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build:win
+        if: runner.os == 'Windows'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - run: npm run build:mac
+        if: runner.os == 'macOS'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Vibe-Usage-${{ runner.os }}
+          path: |
+            release/*.zip
+            release/*.dmg

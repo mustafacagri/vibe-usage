@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="tr">
+<head>
+ <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+ <title>Vibe Usage</title><link rel="stylesheet" href="style.css">
+</head>
+<body>
+ <header class="titlebar"><div class="brand">vibe<span>Kullanım hakları</span></div><div class="window-actions"><button id="pin" aria-label="Pencereyi sabitle" aria-pressed="false">♧</button><button id="settings-button" aria-label="Ayarlar">⚙</button><button id="hide" aria-label="Sistem tepsisine gizle">−</button></div></header>
+ <main>
+  <div class="summary"><span id="overall-status">Hesaplar hazırlanıyor…</span><button id="refresh" class="text-button">Yenile ↻</button></div>
+  <div class="column-label"><span>Hesap / kullanım kapsamı</span><span>Kalan</span></div>
+  <div id="providers" aria-live="polite"></div>
+  <p class="local-note">Veriler bu cihazdaki oturumlardan okunur.</p>
+ </main>
+ <footer><span id="platform-label"></span><span id="refresh-label">Otomatik yenileme · 2 dk</span></footer>
+ <dialog id="settings-dialog"><form method="dialog"><header><h2>Ayarlar</h2><button class="text-button" aria-label="Ayarları kapat">Kapat</button></header></form><label class="field">Yenileme sıklığı<select id="interval"><option value="60">1 dakika</option><option value="120">2 dakika</option><option value="300">5 dakika</option><option value="600">10 dakika</option></select></label><h3>Claude hesapları</h3><div id="account-settings"></div><button id="add-profile" class="secondary-button">Kayıtlı profil klasörü ekle</button><p class="help">Her hesabın ilk girişi ayrı profilde yapılır. Ana hesap tercihi yeni CLI işleri içindir.</p><p class="help">Devam eden işte otomatik hesap devri bu sürümde yok.</p><div id="settings-message" role="status"></div></dialog>
+ <div id="toast" role="status" hidden></div>
+ <script src="../shared.cjs"></script><script src="app.js"></script>
+</body>
+</html>

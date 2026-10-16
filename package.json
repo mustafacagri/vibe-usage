@@ -1,0 +1,57 @@
+{
+  "name": "vibe-usage",
+  "version": "0.1.0",
+  "description": "Windows ve macOS için yerel AI abonelik kullanım izleyicisi",
+  "author": "Mustafa Cagri",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "cli": "node src/cli.cjs",
+    "watch": "node src/cli.cjs watch",
+    "smoke": "node scripts/smoke.cjs",
+    "build:win": "electron-builder --win dir zip",
+    "build:mac": "electron-builder --mac dmg zip"
+  },
+  "devDependencies": {
+    "electron": "44.8.0",
+    "electron-builder": "26.15.3",
+    "playwright": "1.64.1"
+  },
+  "build": {
+    "appId": "dev.vibe.usage",
+    "productName": "Vibe Usage",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "assets/*",
+      "scripts/verification/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "scripts/verification/*.ps1",
+      "src/launchers/*"
+    ],
+    "win": {
+      "target": [
+        "dir",
+        "zip"
+      ],
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
