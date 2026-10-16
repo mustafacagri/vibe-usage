@@ -1,0 +1,2874 @@
+# Tur 6: Son Kabul ve Nihai İnceleme (Gemini 3.8 Flash -> Claude CLI)
+
+Claude, Tur 5 değerlendirmende (docs/reviews/claude-round-05.md) son kabul için belirlediğin F1, F2 ve F3 maddelerinin tamamı kodda uygulandı, UI ve IPC entegrasyonu tamamlandı, özel regresyon testleri eklendi ve tüm test paketi (89 geçen, 0 kalan, 1 atlanan) eksiksiz olarak doğrulandı.
+
+## F1, F2 ve F3 Maddelerinin Çözüm Kanıtları
+
+### 1. F1: Antigravity Kısmi Başarısızlık ve Süreç Yaşam Döngüsü Semantiği
+- **Kısmi Başarısızlıkta Fail-Closed:** `src/providers/antigravity.cjs` içindeki `discover()` fonksiyonunda:
+  `const unresolved = queries.some(q => q.status === 'rejected') || queries.filter(q => q.status === 'fulfilled').some(q => !q.value.email);`
+  `if (unresolved) throw new common.ProviderError('local_service_unavailable');`
+  Eğer App çalışıp IDE GetUserStatus aşamasında başarısız olursa veya e-postası çözülemezse, kısmi liste (`[app@corp.com]`) dönülerek diğer hesabın miss sayılması engellendi; adapter doğrudan `local_service_unavailable` fırlatıyor.
+- **Süreç vs Disk Yapılandırması Ayrımı:** `src/core/service.cjs` içindeki `reconcileDiscovery()` döngüsünde:
+  `if (acc.providerId !== 'antigravity' && ...)`
+  Antigravity hesapları diskteki statik konfigürasyona değil çalışan işletim sistemi süreçlerine dayandığından, kullanıcının IDE veya App penceresini kapatması normal bir yaşam döngüsüdür. Bu nedenle Antigravity hesapları 3 ardışık miss kuralından muaf tutuldu; süreç kapandığında kullanıcının Antigravity hesabı ayarlarından asla otomatik olarak silinmez.
+- **Kanıt Testleri:**
+  - `Claude F1: discover() fails closed when any running server fails GetUserStatus or returns no email`
+  - `Claude F1: reconcileDiscovery preserves Antigravity accounts when process is closed`
+
+### 2. F2: Çoklu Sunucu Kimlik Doğrulaması ve Port Geri Dönüşü
+- **Port Döngüsü Koruması:** `src/providers/antigravity.cjs` içindeki `fetchServerWindows()` fonksiyonunda, `needsEmail` aktif olduğunda ilk portta e-posta çözülemezse `continue` edilerek sunucunun sonraki portları taranır. Asla e-postasız erken dönüş yapılmaz.
+- **Çoklu Sunucuda Katı Birleştirme Reddi:** `src/providers/antigravity.cjs` içindeki `fetch()` fonksiyonunda:
+  `if (servers.length > 1 && (queries.some(q => q.status === 'rejected') || successful.some(s => !s.email))) throw new common.ProviderError('local_service_unavailable');`
+  Birden çok sunucu çalışırken herhangi bir sunucunun sorgusu reddedilirse veya kimliği doğrulanamazsa, eksik ya da yanlış kota birleştirmesini önlemek için işlem fail-closed olarak `local_service_unavailable` fırlatır.
+- **Kanıt Testleri:**
+  - `Claude F2: fetch refuses to merge when multiple servers run and any server lacks verified identity`
+  - `Claude F2: fetchServerWindows checks subsequent ports if first port has no email`
+
+### 3. F3: GUI / Renderer Entegrasyonu, Güvenlik İletişimi ve Ayar Koruması
+- **UI Kaldır Butonu:** `src/ui/app.js` içindeki `renderSettings()` fonksiyonuna her hesap satırı için "✕ Kaldır" butonu eklendi. Tıklandığında `window.vibe.dismissAccount(account.id)` çağrılıyor ve arayüz anında güncelleniyor. `src/ui/style.css` içinde `.account-setting-actions` ve `.remove-account` stilleri tanımlandı.
+- **Terminal Öncesi Güvenlik İletişimi:** `src/main.cjs` içindeki `launch` IPC handler'ında `launchWarnings` terminal açılmadan *önce* hesaplanıyor. Uyarı varsa `dialog.showMessageBoxSync` ile kullanıcıya modal onay kutusu gösteriliyor; kullanıcı iptal ederse terminal açılmıyor.
+- **Silinen Profilin Yeniden Eklenmesi:** `src/main.cjs` içindeki `add-profile` handler'ı eklenen klasörün ID'sini `dismissedAccountIds` listesinden temizleyerek kullanıcının daha önce sildiği bir profili manuel olarak geri ekleyebilmesini sağlıyor.
+- **API ve Ayar Güvenliği:**
+  - `src/core/service.cjs` içindeki `dismissAccount(accountId)` hesap ID'sini regex ile doğrular ve `dismissedAccountIds` listesini en fazla 100 girdiyle sınırlar.
+  - `updateSettings(patch)` hesapların göreceli sırasını (`thisAccountMoved`) bağımsız kontrol ederek gereksiz `origin: 'user'` damgalamasını önler ve istemciden gelen `origin` stringlerini reddeder.
+- **Kanıt Testi:**
+  - `Claude F3: dismissAccount validates id format, bounds dismissedAccountIds, and supports un-dismissing`
+
+---
+
+## Gerçek Çalışma ve Test Kanıtları
+
+### 1. Test Paketi Çalıştırma Çıktısı (npm test)
+```
+> vibe-usage@0.1.1 test
+> node --test test/*.test.cjs
+
+✔ window settings saved during refresh do not detach accounts from results (31.112333ms)
+✔ normalization keeps unknown numbers/reset unknown and clamps measured percentages (0.542ms)
+✔ eligibility refuses unknown, stale, exhausted, inactive model records and absent scope (0.133708ms)
+✔ settings reject invalid intervals, relative/network paths, duplicate primary and credential fields (0.427166ms)
+✔ atomic settings round trip persists only public settings (7.3025ms)
+✔ service isolates accounts, deduplicates refresh, preserves last-good on failure and sanitizes errors (22.402875ms)
+✔ rate-limited account waits for bounded backoff without classifying exhaustion (10.275625ms)
+✔ only the local main frame may invoke privileged actions (0.846041ms)
+✔ refresh accepts only known provider names (0.186333ms)
+✔ account label must remain bounded plain text (0.234208ms)
+✔ new job prefers primary account and skips exhausted primary (5.475417ms)
+✔ unknown weekly data or stale data never silently qualify for auto selection (0.239417ms)
+✔ explicit account choice remains distinct from changing primary (0.089334ms)
+✔ passive Fable metadata is not inferred as included entitlement (0.075791ms)
+✔ unknown default model never bypasses known exhausted scoped windows (0.222709ms)
+✔ Mac command arguments quote literal shell metacharacters (0.117833ms)
+✔ launch environment uses the same unset default credential selector as monitoring (0.148125ms)
+✔ explicit launch warns about unresolved scoped limits (0.246625ms)
+✔ raw Antigravity summary preserves direct/nested/oneof and unknown fractions without identity (16.191291ms)
+✔ model quota fallback emits only actual model windows (0.207875ms)
+✔ Antigravity group/bucket IDs survive reordering without misattributing retained quota (0.219625ms)
+✔ Antigravity model IDs survive order changes and use source identity over label (0.125042ms)
+✔ Antigravity source success codes accept case-insensitive ok and success (0.123459ms)
+✔ Windows discovery invokes built-in Windows PowerShell with only static script argv (0.804167ms)
+✔ Windows discovery script is read-only and limits output to internal server descriptors (4.404792ms)
+﹣ Windows discovery rejects a foreign-user fixture before reading its ports (0.094ms) # SKIP
+✔ macOS source-derived process discovery rejects unrelated servers and binds lsof to PID (0.735125ms)
+✔ macOS listening-port parser binds exact IPv4 loopback or wildcard and excludes foreign PID (0.1305ms)
+✔ macOS process parser fails closed for missing/foreign UID even with a valid app path (0.128833ms)
+✔ closed app is unavailable without any quota requests (0.335042ms)
+✔ provider reads summary from only discovered ports and returns no internal descriptor (0.244833ms)
+✔ loopback request fixes host/path/TLS scope and rejects unowned ports and redirects (0.343125ms)
+✔ loopback response byte limit rejects oversized bodies (0.107375ms)
+✔ rejected loopback responses destroy both streams and handle late error/abort events (10.5525ms)
+✔ loopback request has an absolute deadline and rate-limit retry remains bounded (5.248084ms)
+✔ Claude exact Keychain selector keeps unset default distinct from explicit default and custom (0.665708ms)
+✔ Claude Keychain selector respects raw NFC selector without path resolution or sibling fallback (0.137208ms)
+✔ Claude Keychain read uses one exact service, bounded argv and sanitized failures (0.160042ms)
+✔ unknown quota is not treated as full and has no fabricated reset (0.395125ms)
+✔ zero remaining is preserved and inactive model scope remains visible (11.947042ms)
+✔ inactive session metadata never hides measured remaining allowance (2.048792ms)
+✔ monetary pools use explicit amount text without inventing a percentage (0.2225ms)
+✔ invalid numeric and reset fields cannot leak NaN or invalid date into UI (0.169083ms)
+✔ failed refresh explicitly labels retained data as old (0.188542ms)
+✔ Claude scoped identity survives reorder and partial response (9.810667ms)
+✔ transport enforces total deadline even while response keeps sending data (36.733708ms)
+✔ Claude dynamic kinds and inactive Fable survive with missing weekly/reset unknown (0.632875ms)
+✔ Codex all rate limit buckets derive duration from source and prefer map (0.462292ms)
+✔ Cursor auto/api/total pools remain distinct and cents have units (0.893875ms)
+✔ Antigravity exact sanitized diagnostic output maps group buckets without model inference (0.549667ms)
+✔ Claude discovery reads immediate legitimate credential roots, excludes backups and symlinks (21.070792ms)
+✔ transport rejects nonallowlisted hosts and process runner uses no shell (0.541917ms)
+✔ Claude adapter passes existing token only to exact usage GET and never refreshes expired token (4.947291ms)
+✔ Kusur 1: cleanEnvironment and launchEnvironment strip case-insensitive blocked keys on win32 (11.636125ms)
+✔ Kusur 1: launchWarnings warns if project-level settings.json has env overrides (0.805666ms)
+✔ Kusur 2: Antigravity fetch combines App and IDE servers, preserving Gemini windows without double-counting (2.039792ms)
+✔ Kusur 3: Concurrent refresh(claude) and refresh() never skips remaining providers (30.853666ms)
+✔ Kusur 4: reconcileDiscovery adds newly discovered profiles and removes after 3 consecutive misses (14.463416ms)
+✔ Kusur 5: empty raw responses throw invalid_response while valid limit-free schemas produce no_limits_reported (1.06625ms)
+✔ Kusur 6: configDirExplicit is preserved and resolves distinct keychain services (0.3285ms)
+✔ Claude B1: Provider-scoped generation prevents concurrent refreshes from discarding results (6.689958ms)
+✔ Claude B4: Settings changes during in-flight fetch prevent zombie account resurrection (9.341792ms)
+✔ Claude B5: reconcileDiscovery does not increment misses on error and preserves user customizations (13.655375ms)
+✔ Claude B6: Antigravity multi-server separates accounts by email and merges windows atomically with reset precedence (0.505833ms)
+✔ Claude B7: cleanEnvironment blocks cloud/codex variables and launchWarnings checks setting files and helpers (0.227875ms)
+✔ Claude Round 2 Guarantee: Quota monitoring performs zero filesystem writes or token modifications (0.562542ms)
+✔ Claude R1: Antigravity app closed error re-thrown during discover, preventing account deletion across 3+ cycles (4.72175ms)
+✔ Claude R2: Transition from 1 to 2 accounts prevents cross-account quota pollution (0.322834ms)
+✔ Claude R3: Discovery and updateSettings are serialized via pendingSave and dismissed accounts are not resurrected (8.598166ms)
+✔ Claude R4: origin: user and enabled: false persist across restart and are never auto-deleted (12.895042ms)
+✔ Claude R2: legacy antigravity:current seamlessly migrates to antigravity:${hash} while preserving user customizations (4.942ms)
+✔ Claude E1: Dismissed accounts persist across cold restarts and are never auto-re-added by discovery (9.038334ms)
+✔ Claude E2: Email with + character (user+tag@gmail.com) and long email validate cleanly without crash (5.095167ms)
+✔ Claude E3: Quota summary without identity relies on pid->email mapping via GetUserStatus (0.319958ms)
+✔ Claude E4: Running servers with unreadable identity do not delete existing accounts across 5 cycles (0.847708ms)
+✔ Claude Y1: updateSettings does not infer deletion and dismissAccount is explicit (15.744208ms)
+✔ Claude Y2: loadClaudeSettingsFiles reads real disk files and triggers launchWarnings (1.402042ms)
+✔ Claude Y3: macOS launcher script contains unset ANTHROPIC_BEDROCK_BASE_URL (0.178291ms)
+✔ Claude F1: discover() fails closed when any running server fails GetUserStatus or returns no email (0.260083ms)
+✔ Claude F1: reconcileDiscovery preserves Antigravity accounts when process is closed (4.943042ms)
+✔ Claude F2: fetch refuses to merge when multiple servers run and any server lacks verified identity (0.152583ms)
+✔ Claude F2: fetchServerWindows checks subsequent ports if first port has no email (0.074625ms)
+✔ Claude F3: dismissAccount validates id format, bounds dismissedAccountIds, and supports un-dismissing (19.839792ms)
+✔ quota trust includes OS roots and configured defaults without changing global TLS policy (2.643625ms)
+✔ a certificate trusted only by the OS source passes a real TLS handshake (17.273458ms)
+✔ untrusted certificates are rejected before any HTTP request (3.317708ms)
+✔ OS trust never bypasses hostname verification (3.590667ms)
+✔ unavailable platform trust fails explicitly instead of silently using a different trust policy (0.265458ms)
+✔ shared quota HTTP requests use a private agent with platform trust and verification enabled (25.614375ms)
+✔ shared quota HTTP exposes a safe certificate error without raw certificate details (0.179ms)
+ℹ tests 90
+ℹ suites 0
+ℹ pass 89
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 1
+ℹ todo 0
+ℹ duration_ms 246.683125
+```
+
+### 2. Canlı Terminal Durumu (npm run cli -- status --json)
+```json
+{
+  "providers": [
+    {
+      "id": "codex",
+      "name": "Codex",
+      "status": "ok",
+      "accounts": [
+        {
+          "id": "codex:default",
+          "providerId": "codex",
+          "label": "Mevcut hesap",
+          "configDir": "/Users/cagri/.codex",
+          "origin": "discovered",
+          "primary": true,
+          "enabled": true,
+          "status": "ok",
+          "windows": [
+            {
+              "id": "codex:primary",
+              "label": "720 saat",
+              "usedPercent": 11,
+              "remainingPercent": 89,
+              "resetsAt": "2026-11-11T11:46:00.000Z"
+            }
+          ],
+          "lastAttemptAt": "2026-10-16T15:11:16.748Z",
+          "message": "",
+          "fetchedAt": "2026-10-16T15:11:18.032Z",
+          "plan": "free"
+        }
+      ],
+      "lastAttemptAt": "2026-10-16T15:11:16.748Z",
+      "fetchedAt": "2026-10-16T15:11:18.032Z",
+      "message": ""
+    },
+    {
+      "id": "claude",
+      "name": "Claude",
+      "status": "stale",
+      "accounts": [
+        {
+          "id": "claude:valid1",
+          "providerId": "claude",
+          "label": "Valid 1",
+          "origin": "discovered",
+          "primary": true,
+          "enabled": true,
+          "status": "keychain_unavailable",
+          "windows": [],
+          "lastAttemptAt": "2026-10-16T15:11:16.748Z",
+          "message": "Keychain girişi okunamadı."
+        },
+        {
+          "id": "claude:default",
+          "providerId": "claude",
+          "label": "Hesap A",
+          "configDir": "/Users/cagri/.claude",
+          "configDirExplicit": false,
+          "origin": "discovered",
+          "primary": false,
+          "enabled": true,
+          "status": "ok",
+          "windows": [
+            {
+              "id": "five_hour",
+              "label": "5 saat",
+              "usedPercent": 72,
+              "remainingPercent": 28,
+              "resetsAt": "2026-10-16T16:19:59.880Z",
+              "active": true
+            },
+            {
+              "id": "seven_day",
+              "label": "Haftalık",
+              "usedPercent": 22,
+              "remainingPercent": 78,
+              "resetsAt": "2026-10-18T13:59:59.880Z",
+              "active": false
+            }
+          ],
+          "lastAttemptAt": "2026-10-16T15:11:16.749Z",
+          "message": "",
+          "fetchedAt": "2026-10-16T15:11:17.074Z",
+          "plan": "pro"
+        }
+      ],
+      "lastAttemptAt": "2026-10-16T15:11:16.748Z",
+      "fetchedAt": "2026-10-16T15:11:17.074Z",
+      "message": ""
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "status": "auth_missing",
+      "accounts": [
+        {
+          "id": "cursor:default",
+          "providerId": "cursor",
+          "label": "Mevcut hesap",
+          "origin": "discovered",
+          "primary": true,
+          "enabled": true,
+          "status": "auth_missing",
+          "windows": [],
+          "lastAttemptAt": "2026-10-16T15:11:16.749Z",
+          "message": "Bu cihazda giriş bulunamadı."
+        }
+      ],
+      "lastAttemptAt": "2026-10-16T15:11:16.749Z",
+      "message": ""
+    },
+    {
+      "id": "antigravity",
+      "name": "Antigravity",
+      "status": "ok",
+      "accounts": [
+        {
+          "id": "antigravity:5a116e8f9b501f9c",
+          "providerId": "antigravity",
+          "label": "Antigravity (mustafacagriguven@gmail.com)",
+          "origin": "discovered",
+          "email": "mustafacagriguven@gmail.com",
+          "primary": true,
+          "enabled": true,
+          "status": "ok",
+          "windows": [
+            {
+              "id": "quota:7bc987abb25680b6891d2af5",
+              "label": "Weekly",
+              "usedPercent": 13.135993,
+              "remainingPercent": 86.864007,
+              "resetsAt": "2026-10-23T06:40:11.000Z",
+              "scope": "Gemini Models",
+              "detail": "Source: existing Antigravity local service."
+            },
+            {
+              "id": "quota:6017a39acdc2fa69ea0b8b5e",
+              "label": "5 hours",
+              "usedPercent": 37.18323,
+              "remainingPercent": 62.81677,
+              "resetsAt": "2026-10-16T16:40:11.000Z",
+              "scope": "Gemini Models",
+              "detail": "Source: existing Antigravity local service."
+            },
+            {
+              "id": "quota:fcd80d9e221e72171539d8ef",
+              "label": "Weekly",
+              "usedPercent": 0,
+              "remainingPercent": 100,
+              "resetsAt": "2026-10-23T15:11:07.000Z",
+              "scope": "Claude and GPT models",
+              "detail": "Source: existing Antigravity local service."
+            },
+            {
+              "id": "quota:3b24cad6d5ef7b9d4cb1b9df",
+              "label": "5 hours",
+              "usedPercent": 0,
+              "remainingPercent": 100,
+              "resetsAt": "2026-10-16T20:11:07.000Z",
+              "scope": "Claude and GPT models",
+              "detail": "Source: existing Antigravity local service."
+            }
+          ],
+          "lastAttemptAt": "2026-10-16T15:11:16.750Z",
+          "message": "",
+          "fetchedAt": "2026-10-16T15:11:17.137Z"
+        }
+      ],
+      "lastAttemptAt": "2026-10-16T15:11:16.750Z",
+      "fetchedAt": "2026-10-16T15:11:17.137Z",
+      "message": ""
+    }
+  ],
+  "refreshing": false,
+  "settings": {
+    "pinned": false,
+    "intervalSeconds": 120,
+    "accounts": [
+      {
+        "id": "claude:valid1",
+        "providerId": "claude",
+        "label": "Valid 1",
+        "origin": "discovered",
+        "primary": true,
+        "enabled": true
+      },
+      {
+        "id": "codex:default",
+        "providerId": "codex",
+        "label": "Mevcut hesap",
+        "configDir": "/Users/cagri/.codex",
+        "origin": "discovered",
+        "primary": true,
+        "enabled": true
+      },
+      {
+        "id": "claude:default",
+        "providerId": "claude",
+        "label": "Hesap A",
+        "configDir": "/Users/cagri/.claude",
+        "configDirExplicit": false,
+        "origin": "discovered",
+        "primary": false,
+        "enabled": true
+      },
+      {
+        "id": "cursor:default",
+        "providerId": "cursor",
+        "label": "Mevcut hesap",
+        "origin": "discovered",
+        "primary": true,
+        "enabled": true
+      },
+      {
+        "id": "antigravity:5a116e8f9b501f9c",
+        "providerId": "antigravity",
+        "label": "Antigravity (mustafacagriguven@gmail.com)",
+        "origin": "discovered",
+        "email": "mustafacagriguven@gmail.com",
+        "primary": true,
+        "enabled": true
+      }
+    ],
+    "dismissedAccountIds": []
+  }
+}
+```
+
+### 3. Canlı CLI Kuru Çalıştırma (npm run cli -- run claude --dry-run)
+```json
+{
+  "provider": "claude",
+  "accountId": "claude:default",
+  "label": "Hesap A",
+  "projectDir": "/Users/cagri/Documents/GitHub/mustafacagri/vibe-usage",
+  "model": "default",
+  "newProcessOnly": true,
+  "warnings": [
+    "Yeni süreç açılır; devam eden iş devredilmez.",
+    "Model ve ücretli kullanım/kredi tercihlerini Claude Code yönetir. Fable planınıza göre kullanım kredisi gerektirebilir."
+  ]
+}
+```
+
+---
+
+## Tüm Kaynak Değişiklikleri (git diff src/)
+```diff
+diff --git a/src/cli.cjs b/src/cli.cjs
+index 8cb8405..04e2f7b 100644
+--- a/src/cli.cjs
++++ b/src/cli.cjs
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env node
+ 'use strict';
+-const path=require('node:path');const {spawn}=require('node:child_process');const {createService}=require('./core/service.cjs');const {selectClaudeAccount,launchEnvironment,launchWarnings}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');const {formatWindow,formatFreshness}=require('./shared.cjs');
++const path=require('node:path');const {spawn}=require('node:child_process');const {createService}=require('./core/service.cjs');const {selectClaudeAccount,launchEnvironment,launchWarnings,loadClaudeSettingsFiles}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');const {formatWindow,formatFreshness}=require('./shared.cjs');
+ async function main(){
+  const args=process.argv.slice(2),command=args.shift()||'status';
+  if(command==='help'||command==='--help'){console.log('Vibe Usage\n  status [--json]\n  watch\n  run claude [--account ID] [--cwd PATH] [--model MODEL] [--dry-run]\nHesap devri/resume yok; yalnız yeni süreç başlatılır.');return;}
+@@ -13,7 +13,8 @@ async function main(){
+  const options={};let dryRun=false;while(args.length){const flag=args.shift();if(flag==='--dry-run'){dryRun=true;continue;}const keys={'--account':'accountId','--cwd':'cwd','--model':'model'};if(!keys[flag]||!args.length)throw Error('Geçersiz argüman');options[keys[flag]]=args.shift();}
+  const snapshot=await service.refresh('claude');const account=selectClaudeAccount(snapshot,options);const cwd=path.resolve(options.cwd||process.cwd());const binary=await findBinary('claude');
+  if(options.model&&!/^[A-Za-z0-9_.[\]:/-]{1,100}$/.test(options.model))throw Error('Geçersiz model');
+- const warnings=launchWarnings(snapshot,account,options);
++ const settingsFiles=await loadClaudeSettingsFiles(cwd,account.configDir);
++ const warnings=launchWarnings(snapshot,account,{...options,...settingsFiles});
+  if(dryRun){console.log(JSON.stringify({provider:'claude',accountId:account.id,label:account.label,projectDir:cwd,model:options.model||'default',newProcessOnly:true,warnings},null,2));return;}
+  for(const warning of warnings)console.log(warning);
+  console.log(`Vibe · ${account.label} · yeni Claude Code süreci`);
+diff --git a/src/core/launcher.cjs b/src/core/launcher.cjs
+index fca090b..d9d867a 100644
+--- a/src/core/launcher.cjs
++++ b/src/core/launcher.cjs
+@@ -2,19 +2,49 @@
+ const fs=require('node:fs/promises');const path=require('node:path');const {spawn}=require('node:child_process');const {randomBytes}=require('node:crypto');
+ const {findBinary,cleanEnvironment}=require('../providers/common.cjs');const {validateConfigDir}=require('./settings.cjs');
+ function shellQuote(value){if(typeof value!=='string'||/[\x00-\x1f]/.test(value))throw Error('invalid_argument');return "'"+value.replace(/'/g,"'\\''")+"'";}
+-function launchEnvironment(account,source=process.env){
+- const env={...source};for(const key of ['ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_PROFILE','CLAUDE_SECURESTORAGE_CONFIG_DIR','CLAUDE_CODE_USE_BEDROCK','CLAUDE_CODE_USE_VERTEX','CLAUDE_CODE_USE_FOUNDRY'])delete env[key];
+- if(account.id==='claude:default')delete env.CLAUDE_CONFIG_DIR;else env.CLAUDE_CONFIG_DIR=account.configDir;return env;
++function launchEnvironment(account, source = process.env, platform = process.platform) {
++  const env = { ...source };
++  const blocked = new Set(['anthropic_api_key', 'anthropic_auth_token', 'anthropic_base_url', 'claude_code_oauth_token', 'anthropic_profile', 'claude_securestorage_config_dir', 'claude_code_use_bedrock', 'claude_code_use_vertex', 'claude_code_use_foundry', 'anthropic_vertex_project_id', 'anthropic_bedrock_base_url', 'aws_access_key_id', 'aws_secret_access_key', 'aws_session_token']);
++  const isDefault = account.id === 'claude:default' || account.configDirExplicit === false;
++  if (platform === 'win32') {
++    for (const key of Object.keys(env)) {
++      const lower = key.toLowerCase();
++      if (blocked.has(lower) || lower === 'claude_config_dir') delete env[key];
++    }
++    if (!isDefault) env.CLAUDE_CONFIG_DIR = account.configDir;
++  } else {
++    for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_PROFILE', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'ANTHROPIC_VERTEX_PROJECT_ID', 'ANTHROPIC_BEDROCK_BASE_URL', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']) delete env[key];
++    if (isDefault) delete env.CLAUDE_CONFIG_DIR;
++    else env.CLAUDE_CONFIG_DIR = account.configDir;
++  }
++  return env;
+ }
+-function launchWarnings(snapshot,account,{model}={}){
+- const warnings=['Yeni süreç açılır; devam eden iş devredilmez.','Model ve ücretli kullanım/kredi tercihlerini Claude Code yönetir. Fable planınıza göre kullanım kredisi gerektirebilir.'];
+- const measured=snapshot.providers.find(p=>p.id==='claude')?.accounts.find(a=>a.id===account.id);
+- const family=model?.toLowerCase().match(/fable|sonnet|opus|haiku/)?.[0];
+- const scoped=(measured?.windows||[]).filter(w=>w.scope&&(!family||w.scope.toLowerCase().includes(family)));
+- const relevant=[...(measured?.windows||[]).filter(w=>!w.scope),...scoped];
+- const unknown=measured?.status!=='ok'||!measured.fetchedAt||Date.now()-Date.parse(measured.fetchedAt)>300000||relevant.some(w=>w.stale||w.remainingPercent===null||(w.scope&&w.active===false))||(family==='fable'&&!scoped.length);
+- if(unknown)warnings.push('Bu hesabın tüm ilgili limitleri doğrulanamadı; hesap seçimi yeterli kota garantisi değildir.');
+- if(relevant.some(w=>w.remainingPercent===0))warnings.push('Seçilen kapsamda dolu bir limit var; Claude Code isteği durdurabilir.');return warnings;
++function launchWarnings(snapshot, account, { model, projectSettings, localSettings, userSettings } = {}) {
++  const warnings = ['Yeni süreç açılır; devam eden iş devredilmez.', 'Model ve ücretli kullanım/kredi tercihlerini Claude Code yönetir. Fable planınıza göre kullanım kredisi gerektirebilir.'];
++  const settingsList = [
++    { name: '.claude/settings.json', s: projectSettings },
++    { name: '.claude/settings.local.json', s: localSettings },
++    { name: 'profil settings.json', s: userSettings }
++  ];
++  for (const { name, s } of settingsList) {
++    if (s?.env && Object.keys(s.env).some(k => {
++      const up = k.toUpperCase();
++      return up.includes('ANTHROPIC_') || up.includes('CLAUDE_') || up.includes('AWS_');
++    })) {
++      warnings.push(`Ayar dosyalarında (${name}) tanımlı ortam değişkenleri seçilen profil kimliğini veya faturalandırmayı ezebilir.`);
++    }
++    if (s?.apiKeyHelper) {
++      warnings.push(`Ayar dosyalarında (${name}) tanımlı apiKeyHelper seçilen profil kimliğini ezebilir.`);
++    }
++  }
++  const measured = snapshot.providers.find(p => p.id === 'claude')?.accounts.find(a => a.id === account.id);
++  const family = model?.toLowerCase().match(/fable|sonnet|opus|haiku/)?.[0];
++  const scoped = (measured?.windows || []).filter(w => w.scope && (!family || w.scope.toLowerCase().includes(family)));
++  const relevant = [...(measured?.windows || []).filter(w => !w.scope), ...scoped];
++  const unknown = measured?.status !== 'ok' || !measured.fetchedAt || Date.now() - Date.parse(measured.fetchedAt) > 300000 || relevant.some(w => w.stale || w.remainingPercent === null || (w.scope && w.active === false)) || (family === 'fable' && !scoped.length);
++  if (unknown) warnings.push('Bu hesabın tüm ilgili limitleri doğrulanamadı; hesap seçimi yeterli kota garantisi değildir.');
++  if (relevant.some(w => w.remainingPercent === 0)) warnings.push('Seçilen kapsamda dolu bir limit var; Claude Code isteği durdurabilir.');
++  return warnings;
+ }
+ function selectClaudeAccount(snapshot,{accountId,model}={}){
+  const profiles=snapshot.settings.accounts.filter(a=>a.providerId==='claude'&&a.enabled!==false);
+@@ -34,15 +64,34 @@ async function launchExternal({account,projectDir,dataDir}){
+  const configDir=validateConfigDir(account.configDir);const cwd=validateConfigDir(projectDir);
+  if(!(await fs.stat(cwd)).isDirectory()||!(await fs.stat(configDir)).isDirectory())throw Error('Klasör bulunamadı');
+  const binary=await findBinary('claude');let child;
++ const isDefault = account.id === 'claude:default' || account.configDirExplicit === false;
+  if(process.platform==='win32'){
+   const ps=path.join(process.env.SystemRoot||'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe');
+   const helper=path.resolve(__dirname,'../launchers/claude.ps1').replace(/([\\/])app\.asar([\\/])/,'$1app.asar.unpacked$2');
+-  child=spawn(ps,['-NoLogo','-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File',helper,'-ConfigDirectory',configDir,'-ProjectDirectory',cwd,'-ClaudeBinary',binary,...(account.id==='claude:default'?['-DefaultProfile']:[])],{shell:false,detached:true,windowsHide:false,stdio:'ignore',env:launchEnvironment(account)});
++  child=spawn(ps,['-NoLogo','-NoProfile','-NoExit','-ExecutionPolicy','Bypass','-File',helper,'-ConfigDirectory',configDir,'-ProjectDirectory',cwd,'-ClaudeBinary',binary,...(isDefault?['-DefaultProfile']:[])],{shell:false,detached:true,windowsHide:false,stdio:'ignore',env:launchEnvironment(account)});
+  }else if(process.platform==='darwin'){
+   const launchDir=path.join(dataDir,'launchers');await fs.mkdir(launchDir,{recursive:true});const script=path.join(launchDir,`claude-${randomBytes(6).toString('hex')}.command`);
+-  const content=`#!/bin/zsh\ncd -- ${shellQuote(cwd)} || exit 1\nunset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_PROFILE CLAUDE_SECURESTORAGE_CONFIG_DIR CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY\n${account.id==='claude:default'?'unset CLAUDE_CONFIG_DIR':`export CLAUDE_CONFIG_DIR=${shellQuote(configDir)}`}\nexec ${shellQuote(binary)}\n`;
++  const content=`#!/bin/zsh\ncd -- ${shellQuote(cwd)} || exit 1\nunset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_PROFILE CLAUDE_SECURESTORAGE_CONFIG_DIR CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_BEDROCK_BASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN\n${isDefault?'unset CLAUDE_CONFIG_DIR':`export CLAUDE_CONFIG_DIR=${shellQuote(configDir)}`}\nexec ${shellQuote(binary)}\n`;
+   await fs.writeFile(script,content,{mode:0o700});child=spawn('/usr/bin/open',['-a','Terminal',script],{shell:false,detached:true,stdio:'ignore'});
+  }else throw Error('Bu platformda terminal başlatma desteklenmiyor');
+  await new Promise((resolve,reject)=>{child.once('spawn',resolve);child.once('error',()=>reject(Error('Terminal açılamadı')));});child.unref();
+ }
+-module.exports={selectClaudeAccount,shellQuote,launchEnvironment,launchWarnings,launchExternal};
++async function loadClaudeSettingsFiles(projectDir, configDir) {
++  let projectSettings = null, localSettings = null, userSettings = null;
++  if (projectDir) {
++    try {
++      projectSettings = JSON.parse(await fs.readFile(path.join(projectDir, '.claude', 'settings.json'), 'utf8'));
++    } catch {}
++    try {
++      localSettings = JSON.parse(await fs.readFile(path.join(projectDir, '.claude', 'settings.local.json'), 'utf8'));
++    } catch {}
++  }
++  if (configDir) {
++    try {
++      userSettings = JSON.parse(await fs.readFile(path.join(configDir, 'settings.json'), 'utf8'));
++    } catch {}
++  }
++  return { projectSettings, localSettings, userSettings };
++}
++module.exports={selectClaudeAccount,shellQuote,launchEnvironment,launchWarnings,launchExternal,loadClaudeSettingsFiles};
++
+diff --git a/src/core/service.cjs b/src/core/service.cjs
+index c284ec5..94c785d 100644
+--- a/src/core/service.cjs
++++ b/src/core/service.cjs
+@@ -1,49 +1,385 @@
+ 'use strict';
+-const {loadSettings,saveSettings,defaultSettingsPath,DEFAULT_SETTINGS,validateSettings}=require('./settings.cjs');
+-const {normalizeWindow}=require('./model.cjs');const {safeError,now}=require('../providers/common.cjs');
+-const MESSAGES={auth_missing:'Bu cihazda giriş bulunamadı.',auth_expired:'Oturum süresi dolmuş; sağlayıcıda yeniden giriş gerekli.',auth_invalid:'Kayıtlı oturum okunamadı.',auth_rejected:'Sağlayıcı oturumu kabul etmedi.',rate_limited:'Okuma sıklığı sınırlandı; yeniden denemeden önce bekleniyor.',app_closed:'Kota için Antigravity uygulamasını açın.',unsupported_platform:'Bu işletim sisteminde bu veri kaynağı henüz desteklenmiyor.',unsupported_profile:'Bu profilin kimlik deposu henüz desteklenmiyor.',keychain_unavailable:'Keychain girişi okunamadı.',binary_missing:'Gerekli yerel uygulama veya CLI bulunamadı.',transport_error:'Sağlayıcıya bağlanılamadı.',local_service_unavailable:'Antigravity yerel servisine ulaşılamadı.'};
+-MESSAGES.tls_certificate_error='TLS sertifikası doğrulanamadı. Ağın ve sistemin sertifika güvenini kontrol edin.';
+-MESSAGES.trust_store_unavailable='İşletim sisteminin sertifika deposu okunamadı. Kurulumu ve desteklenen Node.js sürümünü kontrol edin.';
+-const copy=value=>structuredClone(value);
+-async function createService(options={}){
+- const clock=options.clock||Date.now;const settingsPath=options.settingsPath||defaultSettingsPath();
+- const adapters=options.providers||[
+-  require('../providers/codex.cjs').createCodexProvider(),require('../providers/claude.cjs').createClaudeProvider(),require('../providers/cursor.cjs').createCursorProvider(),require('../providers/antigravity.cjs').createAntigravityProvider()
+- ];
+- let settings=await loadSettings(settingsPath)||copy(DEFAULT_SETTINGS);let changed=false;
+- for(const adapter of adapters){const found=await adapter.discover();for(const account of found){if(!settings.accounts.some(a=>a.id===account.id)){settings.accounts.push({...account,primary:account.primary&&!settings.accounts.some(a=>a.providerId===adapter.id&&a.primary)});changed=true;}}}
+- settings=validateSettings(settings);if(changed)await saveSettings(settingsPath,settings);
+- let providers=adapters.map(p=>({id:p.id,name:p.name,status:'pending',accounts:[]}));let refreshing=false,pendingRefresh=null,pendingSave=Promise.resolve();const cooldown=new Map();
+- function rebuild(){for(const provider of providers){const old=provider.accounts;provider.accounts=settings.accounts.filter(a=>a.providerId===provider.id&&a.enabled!==false).map(a=>{const previous=old.find(b=>b.id===a.id);return previous&&previous.configDir===a.configDir?{...previous,...a}:{...a,status:'pending',windows:[]};});}}
+- rebuild();
+- function snapshot(){return copy({providers,refreshing,settings});}
+- async function refresh(providerId){
+-  if(providerId!==undefined&&!adapters.some(a=>a.id===providerId))throw Error('invalid_provider');
+-  if(pendingRefresh){await pendingRefresh;if(providerId)return refresh(providerId);return snapshot();}
+-  refreshing=true;
+-  pendingRefresh=(async()=>{
+-   await Promise.all(adapters.filter(a=>providerId===undefined||a.id===providerId).map(async adapter=>{
+-    const provider=providers.find(p=>p.id===adapter.id);provider.lastAttemptAt=new Date(now(clock)).toISOString();
+-    await Promise.all(provider.accounts.map(async account=>{
+-     const attempt=now(clock);if((cooldown.get(account.id)||0)>attempt)return;
+-     account.lastAttemptAt=new Date(attempt).toISOString();
+-     try{
+-      const result=await adapter.fetch(account);const stamp=new Date(now(clock)).toISOString();const windows=(result.windows||[]).map(normalizeWindow);
+-      for(const prior of account.windows||[])if(!windows.some(w=>w.id===prior.id))windows.push({...prior,stale:true,detail:'Önceki ölçüm; son yanıtta bu kapsam bildirilmedi.'});
+-      account.windows=windows;account.status='ok';account.message=result.message||'';account.fetchedAt=stamp;if(result.plan)account.plan=result.plan;
+-     }catch(error){const code=safeError(error);account.status=account.fetchedAt?'stale':code;account.message=MESSAGES[code]||'Kullanım verisi okunamadı. Bir sonraki yenilemede tekrar denenecek.';
+-      if(code==='rate_limited')cooldown.set(account.id,attempt+(error.retryAfterSeconds||120)*1000);
+-     }
++const { loadSettings, saveSettings, defaultSettingsPath, DEFAULT_SETTINGS, validateSettings } = require('./settings.cjs');
++const { normalizeWindow } = require('./model.cjs');
++const { safeError, now, ProviderError } = require('../providers/common.cjs');
++const { antigravityAccountId } = require('../providers/antigravity.cjs');
++
++const MESSAGES = {
++  auth_missing: 'Bu cihazda giriş bulunamadı.',
++  auth_expired: 'Oturum süresi dolmuş; sağlayıcıda yeniden giriş gerekli.',
++  auth_invalid: 'Kayıtlı oturum okunamadı.',
++  auth_rejected: 'Sağlayıcı oturumu kabul etmedi.',
++  rate_limited: 'Okuma sıklığı sınırlandı; yeniden denemeden önce bekleniyor.',
++  app_closed: 'Kota için Antigravity uygulamasını açın.',
++  unsupported_platform: 'Bu işletim sisteminde bu veri kaynağı henüz desteklenmiyor.',
++  unsupported_profile: 'Bu profilin kimlik deposu henüz desteklenmiyor.',
++  keychain_unavailable: 'Keychain girişi okunamadı.',
++  binary_missing: 'Gerekli yerel uygulama veya CLI bulunamadı.',
++  transport_error: 'Sağlayıcıya bağlanılamadı.',
++  local_service_unavailable: 'Antigravity yerel servisine ulaşılamadı.',
++  tls_certificate_error: 'TLS sertifikası doğrulanamadı. Ağın ve sistemin sertifika güvenini kontrol edin.',
++  trust_store_unavailable: 'İşletim sisteminin sertifika deposu okunamadı. Kurulumu ve desteklenen Node.js sürümünü kontrol edin.',
++  no_limits_reported: 'Bu hesap için bildirilen aktif kota limiti bulunmuyor.',
++  request_timeout: 'İstek zaman aşımına uğradı.'
++};
++
++const copy = value => structuredClone(value);
++
++function migrateAntigravityAccounts(currentSettings, found) {
++  let modified = false;
++  // Migrate any legacy unhashed accounts like antigravity:user@...
++  for (const acc of currentSettings.accounts) {
++    if (acc.providerId === 'antigravity' && acc.id.startsWith('antigravity:') && acc.id.includes('@')) {
++      const email = (acc.email || acc.id.slice(12)).toLowerCase().trim();
++      acc.id = antigravityAccountId(email);
++      acc.email = email;
++      modified = true;
++    }
++  }
++
++  // Only migrate antigravity:current if EXACTLY 1 email account was discovered
++  // (per Claude's finding: do not arbitrarily migrate if multiple distinct accounts exist)
++  const emailAccounts = found.filter(a => a.providerId === 'antigravity' && a.email);
++  if (emailAccounts.length === 1) {
++    const target = emailAccounts[0];
++    const legacy = currentSettings.accounts.find(a => a.id === 'antigravity:current');
++    if (legacy && !currentSettings.accounts.some(a => a.id === target.id)) {
++      legacy.id = target.id;
++      legacy.email = target.email;
++      if (!legacy.label || legacy.label === 'Mevcut uygulama') legacy.label = target.label;
++      modified = true;
++    }
++  }
++  return modified;
++}
++
++async function createService(options = {}) {
++  const clock = options.clock || Date.now;
++  const settingsPath = options.settingsPath || defaultSettingsPath();
++  const adapters = options.providers || [
++    require('../providers/codex.cjs').createCodexProvider(),
++    require('../providers/claude.cjs').createClaudeProvider(),
++    require('../providers/cursor.cjs').createCursorProvider(),
++    require('../providers/antigravity.cjs').createAntigravityProvider()
++  ];
++
++  let settings = await loadSettings(settingsPath) || copy(DEFAULT_SETTINGS);
++  let changed = false;
++
++  // Migrate legacy accounts without origin to origin: 'user'
++  for (const a of settings.accounts) {
++    if (!a.origin) {
++      a.origin = 'user';
++      changed = true;
++    }
++  }
++
++  settings = validateSettings(settings);
++  if (changed) await saveSettings(settingsPath, settings);
++
++  let providers = adapters.map(p => ({ id: p.id, name: p.name, status: 'pending', accounts: [] }));
++  let pendingSave = Promise.resolve();
++  const cooldown = new Map();
++  const inFlight = new Map(); // providerId -> Promise
++  const consecutiveMisses = new Map(); // accountId -> number
++  const providerGenerations = new Map(); // providerId -> number
++  const accountGenerations = new Map(); // accountId -> number
++  let lastDiscoveryTime = now(clock);
++  let discoveryRunning = null;
++  let settingsRevision = 0;
++
++  function rebuild() {
++    for (const provider of providers) {
++      const old = provider.accounts;
++      provider.accounts = settings.accounts
++        .filter(a => a.providerId === provider.id && a.enabled !== false)
++        .map(a => {
++          const previous = old.find(b => b.id === a.id);
++          return previous && previous.configDir === a.configDir ? { ...previous, ...a } : { ...a, status: 'pending', windows: [] };
++        });
++    }
++  }
++
++  rebuild();
++
++  function snapshot() {
++    return copy({ providers, refreshing: inFlight.size > 0, settings });
++  }
++
++  async function reconcileDiscovery() {
++    if (discoveryRunning) return discoveryRunning;
++    discoveryRunning = (async () => {
++      // Step 1: Run discover() on all adapters in parallel outside pendingSave
++      const discoveryResults = await Promise.allSettled(adapters.map(async adapter => {
++        try {
++          const found = await adapter.discover();
++          return { adapterId: adapter.id, ok: true, found: Array.isArray(found) ? found : [] };
++        } catch (err) {
++          return { adapterId: adapter.id, ok: false, error: err };
++        }
++      }));
++
++      // Step 2: Enter pendingSave solely for fast in-memory reconciliation and atomic file save
++      const operation = pendingSave.catch(() => {}).then(async () => {
++        let modified = false;
++        const currentSettings = copy(settings);
++        const dismissed = new Set(currentSettings.dismissedAccountIds || []);
++
++        for (const res of discoveryResults) {
++          if (res.status !== 'fulfilled' || !res.value.ok) {
++            // R1 / E4: Adapter unavailable or errored. Never increment misses on error!
++            continue;
++          }
++          const { adapterId, found } = res.value;
++          const foundIds = new Set(found.map(a => a.id));
++
++          if (adapterId === 'antigravity') {
++            if (migrateAntigravityAccounts(currentSettings, found)) {
++              modified = true;
++            }
++          }
++
++          for (const account of found) {
++            consecutiveMisses.delete(account.id);
++            // E1 & R3: User dismissed accounts are NEVER auto re-added
++            if (dismissed.has(account.id)) continue;
++
++            const existing = currentSettings.accounts.find(a => a.id === account.id);
++            if (!existing) {
++              currentSettings.accounts.push({
++                ...account,
++                origin: 'discovered',
++                primary: account.primary && !currentSettings.accounts.some(a => a.providerId === adapterId && a.primary)
++              });
++              modified = true;
++            }
++          }
++
++          // Reconcile missing accounts: only auto-delete active discovered accounts after 3 consecutive clean misses
++          // R4: NEVER delete an account that was disabled by user (enabled === false) or customized (origin === 'user')!
++          // F1: Antigravity accounts reflect running processes, not disk configs. NEVER auto-delete Antigravity accounts!
++          for (let i = currentSettings.accounts.length - 1; i >= 0; i--) {
++            const acc = currentSettings.accounts[i];
++            if (acc.providerId !== 'antigravity' && acc.providerId === adapterId && acc.origin === 'discovered' && acc.enabled !== false && !foundIds.has(acc.id)) {
++              const misses = (consecutiveMisses.get(acc.id) || 0) + 1;
++              consecutiveMisses.set(acc.id, misses);
++              if (misses >= 3) {
++                currentSettings.accounts.splice(i, 1);
++                consecutiveMisses.delete(acc.id);
++                modified = true;
++              }
++            }
++          }
++        }
++        if (modified) {
++          const next = validateSettings(currentSettings);
++          await saveSettings(settingsPath, next);
++          settings = next;
++          rebuild();
++        }
++      });
++      pendingSave = operation;
++      return operation;
++    })();
++    try {
++      return await discoveryRunning;
++    } finally {
++      discoveryRunning = null;
++    }
++  }
++
++  // Initial discovery reconciliation runs on startup using the exact same logic
++  await reconcileDiscovery().catch(() => {});
++
++  async function refreshSingleProvider(adapter) {
++    const provider = providers.find(p => p.id === adapter.id);
++    if (!provider) return;
++    provider.lastAttemptAt = new Date(now(clock)).toISOString();
++    const providerGen = (providerGenerations.get(adapter.id) || 0) + 1;
++    providerGenerations.set(adapter.id, providerGen);
++    const currentGen = providerGen;
++
++    await Promise.all(provider.accounts.map(async account => {
++      const attempt = now(clock);
++      if ((cooldown.get(account.id) || 0) > attempt) return;
++      account.lastAttemptAt = new Date(attempt).toISOString();
++
++      let timer;
++      const timeoutPromise = new Promise((_, reject) => {
++        timer = setTimeout(() => reject(new ProviderError('request_timeout')), 12000);
++        timer.unref?.();
++      });
++
++      try {
++        const result = await Promise.race([
++          adapter.fetch(account),
++          timeoutPromise
++        ]);
++        clearTimeout(timer);
++
++        const lastGen = accountGenerations.get(account.id) || 0;
++        if (lastGen > currentGen) return; // newer fetch already completed
++        accountGenerations.set(account.id, currentGen);
++
++        // B4: verify account still exists in settings.accounts with matching configDir
++        const currentAccount = settings.accounts.find(a => a.id === account.id);
++        if (!currentAccount || currentAccount.configDir !== account.configDir || currentAccount.enabled === false) {
++          return;
++        }
++
++        const stamp = new Date(now(clock)).toISOString();
++        const windows = (result.windows || []).map(normalizeWindow);
++        const targetAccount = provider.accounts.find(a => a.id === account.id) || account;
++
++        if (result.status === 'no_limits_reported' || (!windows.length && result.status !== 'ok')) {
++          targetAccount.windows = [];
++          targetAccount.status = 'no_limits_reported';
++          targetAccount.message = MESSAGES.no_limits_reported;
++          targetAccount.fetchedAt = stamp;
++        } else {
++          for (const prior of targetAccount.windows || []) {
++            if (!windows.some(w => w.id === prior.id)) {
++              windows.push({ ...prior, stale: true, detail: 'Önceki ölçüm; son yanıtta bu kapsam bildirilmedi.' });
++            }
++          }
++          targetAccount.windows = windows;
++          targetAccount.status = 'ok';
++          targetAccount.message = result.message || '';
++          targetAccount.fetchedAt = stamp;
++        }
++        if (result.plan) targetAccount.plan = result.plan;
++      } catch (error) {
++        clearTimeout(timer);
++        const lastGen = accountGenerations.get(account.id) || 0;
++        if (lastGen > currentGen) return;
++        accountGenerations.set(account.id, currentGen);
++
++        // B4: verify account still exists in settings.accounts
++        const currentAccount = settings.accounts.find(a => a.id === account.id);
++        if (!currentAccount || currentAccount.configDir !== account.configDir || currentAccount.enabled === false) {
++          return;
++        }
++
++        const targetAccount = provider.accounts.find(a => a.id === account.id) || account;
++        const code = safeError(error);
++        targetAccount.status = targetAccount.fetchedAt ? 'stale' : code;
++        targetAccount.message = MESSAGES[code] || 'Kullanım verisi okunamadı. Bir sonraki yenilemede tekrar denenecek.';
++        if (code === 'rate_limited') {
++          cooldown.set(account.id, attempt + (error.retryAfterSeconds || 120) * 1000);
++        }
++      }
+     }));
+-    const allOk=provider.accounts.length>0&&provider.accounts.every(a=>a.status==='ok');provider.status=allOk?'ok':provider.accounts.some(a=>a.fetchedAt)?'stale':provider.accounts[0]?.status||'unavailable';
+-    if(allOk)provider.fetchedAt=new Date(now(clock)).toISOString();provider.message=provider.accounts.length?'':'Bağlı hesap bulunamadı.';
+-   }));
+-  })();
+-  try{await pendingRefresh;}finally{pendingRefresh=null;refreshing=false;}return snapshot();
+- }
+- async function updateSettings(patch){
+-  const operation=pendingSave.catch(()=>{}).then(async()=>{if(patch.accounts&&pendingRefresh)await pendingRefresh;const next=validateSettings({...settings,...patch});await saveSettings(settingsPath,next);if(patch.accounts)while(pendingRefresh)await pendingRefresh;settings=next;if(patch.accounts)rebuild();return snapshot();});pendingSave=operation;return operation;
+- }
+- return {snapshot,refresh,updateSettings};
++
++    const allOk = provider.accounts.length > 0 && provider.accounts.every(a => a.status === 'ok' || a.status === 'no_limits_reported');
++    provider.status = allOk ? 'ok' : provider.accounts.some(a => a.fetchedAt) ? 'stale' : (provider.accounts[0]?.status || 'unavailable');
++    if (allOk || provider.accounts.some(a => a.status === 'ok')) {
++      provider.fetchedAt = new Date(now(clock)).toISOString();
++    }
++    provider.message = provider.accounts.length ? '' : 'Bağlı hesap bulunamadı.';
++  }
++
++  function getOrStartProviderRefresh(adapter) {
++    if (inFlight.has(adapter.id)) {
++      return inFlight.get(adapter.id);
++    }
++    const promise = refreshSingleProvider(adapter).finally(() => {
++      if (inFlight.get(adapter.id) === promise) {
++        inFlight.delete(adapter.id);
++      }
++    });
++    inFlight.set(adapter.id, promise);
++    return promise;
++  }
++
++  async function refresh(providerId) {
++    if (providerId !== undefined && !adapters.some(a => a.id === providerId)) {
++      throw Error('invalid_provider');
++    }
++
++    // Periodic discovery reconciliation (every 60s)
++    if (now(clock) - lastDiscoveryTime > 60000) {
++      lastDiscoveryTime = now(clock);
++      await reconcileDiscovery().catch(() => {});
++    }
++
++    if (providerId !== undefined) {
++      const target = adapters.find(a => a.id === providerId);
++      await getOrStartProviderRefresh(target);
++      return snapshot();
++    }
++
++    // Full refresh: ensure all providers are started in parallel and awaited without skipping
++    await Promise.allSettled(adapters.map(adapter => getOrStartProviderRefresh(adapter)));
++    return snapshot();
++  }
++
++  async function dismissAccount(accountId) {
++    if (typeof accountId !== 'string' || !/^[a-zA-Z0-9:@._+-]{1,120}$/.test(accountId)) {
++      throw new Error('invalid_account');
++    }
++    const operation = pendingSave.catch(() => {}).then(async () => {
++      settingsRevision++;
++      const currentSettings = copy(settings);
++      const dismissed = new Set(currentSettings.dismissedAccountIds || []);
++      dismissed.add(accountId);
++      currentSettings.dismissedAccountIds = Array.from(dismissed).slice(0, 100);
++      currentSettings.accounts = currentSettings.accounts.filter(a => a.id !== accountId);
++      consecutiveMisses.delete(accountId);
++      const next = validateSettings(currentSettings);
++      await saveSettings(settingsPath, next);
++      settings = next;
++      rebuild();
++      return snapshot();
++    });
++    pendingSave = operation;
++    return operation;
++  }
++
++  async function updateSettings(patch) {
++    const operation = pendingSave.catch(() => {}).then(async () => {
++      settingsRevision++;
++      let updatedPatch = { ...patch };
++      if (patch.dismissedAccountIds !== undefined) {
++        updatedPatch.dismissedAccountIds = [...new Set(patch.dismissedAccountIds)].slice(0, 100);
++      }
++      if (patch.accounts) {
++        // R4: Preserve origin and mark user customizations (label, primary, enabled, true order change) as origin = 'user'
++        const oldOrder = settings.accounts.map(a => a.id);
++        const newIds = new Set(patch.accounts.map(a => a.id));
++        const oldIds = new Set(oldOrder);
++        // Compare relative order of common accounts to avoid false positives on deletion
++        const commonOld = oldOrder.filter(id => newIds.has(id));
++        const commonNew = patch.accounts.map(a => a.id).filter(id => oldIds.has(id));
++
++        updatedPatch.accounts = patch.accounts.map(acc => {
++          const existing = settings.accounts.find(a => a.id === acc.id);
++          const existingOrigin = existing?.origin || 'user';
++          const labelChanged = acc.label !== undefined && existing && acc.label !== existing.label;
++          const primaryChanged = acc.primary !== undefined && existing && acc.primary !== existing.primary;
++          const enabledChanged = acc.enabled !== undefined && existing && acc.enabled !== existing.enabled;
++
++          // Check if this specific account's relative position changed
++          const oldRel = commonOld.indexOf(acc.id);
++          const newRel = commonNew.indexOf(acc.id);
++          const thisAccountMoved = oldRel !== -1 && newRel !== -1 && oldRel !== newRel;
++
++          const isUser = labelChanged || primaryChanged || enabledChanged || thisAccountMoved;
++          // Origin is NOT trusted from client input
++          const origin = isUser ? 'user' : existingOrigin;
++          return { ...acc, origin };
++        });
++      }
++      const next = validateSettings({ ...settings, ...updatedPatch });
++      await saveSettings(settingsPath, next);
++      settings = next;
++      if (patch.accounts) rebuild();
++      return snapshot();
++    });
++    pendingSave = operation;
++    return operation;
++  }
++
++  return { snapshot, refresh, updateSettings, dismissAccount, reconcileDiscovery };
+ }
+-module.exports={createService};
++
++module.exports = { createService };
+diff --git a/src/core/settings.cjs b/src/core/settings.cjs
+index 53cd8ea..cf127a4 100644
+--- a/src/core/settings.cjs
++++ b/src/core/settings.cjs
+@@ -4,7 +4,7 @@ const path = require('node:path');
+ const os = require('node:os');
+ const crypto = require('node:crypto');
+ const PROVIDERS = ['codex', 'claude', 'cursor', 'antigravity'];
+-const DEFAULT_SETTINGS = Object.freeze({ pinned: false, intervalSeconds: 120, accounts: [] });
++const DEFAULT_SETTINGS = Object.freeze({ pinned: false, intervalSeconds: 120, accounts: [], dismissedAccountIds: [] });
+ function assertKeys(value, allowed, error) {
+   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(k => !allowed.includes(k))) throw new Error(error);
+ }
+@@ -13,22 +13,42 @@ function validateConfigDir(value) {
+   return path.normalize(value);
+ }
+ function validateSettings(input) {
+-  assertKeys(input, ['pinned', 'intervalSeconds', 'accounts', 'window'], 'unknown_setting');
++  assertKeys(input, ['pinned', 'intervalSeconds', 'accounts', 'window', 'dismissedAccountIds'], 'unknown_setting');
+   if (typeof input.pinned !== 'boolean') throw new Error('invalid_pinned');
+   if (!Number.isInteger(input.intervalSeconds) || input.intervalSeconds < 30 || input.intervalSeconds > 900) throw new Error('invalid_interval');
+   if (!Array.isArray(input.accounts) || input.accounts.length > 40) throw new Error('invalid_accounts');
++  if (input.dismissedAccountIds !== undefined && (!Array.isArray(input.dismissedAccountIds) || input.dismissedAccountIds.some(id => typeof id !== 'string' || id.length > 120))) throw new Error('invalid_settings');
+   const ids = new Set(), primaries = new Set();
+   const accounts = input.accounts.map(a => {
+-    assertKeys(a, ['id', 'providerId', 'label', 'configDir', 'primary', 'enabled'], 'unknown_account_setting');
+-    if (typeof a.id !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(a.id) || ids.has(a.id) || !PROVIDERS.includes(a.providerId)) throw new Error('invalid_account');
++    assertKeys(a, ['id', 'providerId', 'label', 'configDir', 'primary', 'enabled', 'configDirExplicit', 'origin', 'email'], 'unknown_account_setting');
++    if (typeof a.id !== 'string' || !/^[a-zA-Z0-9:@._+-]{1,120}$/.test(a.id) || ids.has(a.id) || !PROVIDERS.includes(a.providerId)) throw new Error('invalid_account');
+     ids.add(a.id);
+-    if (typeof a.label !== 'string' || !a.label.trim() || a.label.length > 80 || /[\x00-\x1f\x7f]/.test(a.label)) throw new Error('invalid_account_label');
++    const cleanLabel = typeof a.label === 'string' ? a.label.slice(0, 80).trim() : '';
++    if (!cleanLabel || /[\x00-\x1f\x7f]/.test(cleanLabel)) throw new Error('invalid_account_label');
+     if (typeof a.primary !== 'boolean' || typeof a.enabled !== 'boolean') throw new Error('invalid_account_flags');
++    if (a.configDirExplicit !== undefined && typeof a.configDirExplicit !== 'boolean') throw new Error('invalid_account_flags');
++    if (a.origin !== undefined && !['discovered', 'user'].includes(a.origin)) throw new Error('invalid_account_flags');
++    if (a.email !== undefined && (typeof a.email !== 'string' || a.email.length > 256 || /[\x00-\x1f\x7f]/.test(a.email))) throw new Error('invalid_account_flags');
+     if (a.primary && primaries.has(a.providerId)) throw new Error('duplicate_primary');
+     if (a.primary) primaries.add(a.providerId);
+-    return { id: a.id, providerId: a.providerId, label: a.label.trim(), ...(a.configDir !== undefined ? { configDir: validateConfigDir(a.configDir) } : {}), primary: a.primary, enabled: a.enabled };
++    return {
++      id: a.id,
++      providerId: a.providerId,
++      label: cleanLabel,
++      ...(a.configDir !== undefined ? { configDir: validateConfigDir(a.configDir) } : {}),
++      ...(a.configDirExplicit !== undefined ? { configDirExplicit: a.configDirExplicit } : {}),
++      ...(a.origin !== undefined ? { origin: a.origin } : {}),
++      ...(a.email !== undefined ? { email: a.email.toLowerCase().trim() } : {}),
++      primary: a.primary,
++      enabled: a.enabled
++    };
+   });
+-  const result = { pinned: input.pinned, intervalSeconds: input.intervalSeconds, accounts };
++  const result = {
++    pinned: input.pinned,
++    intervalSeconds: input.intervalSeconds,
++    accounts,
++    ...(input.dismissedAccountIds !== undefined ? { dismissedAccountIds: [...new Set(input.dismissedAccountIds)] } : {})
++  };
+   if (input.window !== undefined) {
+     assertKeys(input.window, ['x', 'y', 'width', 'height'], 'invalid_window');
+     const { x, y, width, height } = input.window;
+diff --git a/src/main.cjs b/src/main.cjs
+index 93c42da..a318a7d 100644
+--- a/src/main.cjs
++++ b/src/main.cjs
+@@ -1,7 +1,7 @@
+ const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,dialog,screen,session}=require('electron');
+ const path=require('node:path');const fs=require('node:fs');const crypto=require('node:crypto');const {pathToFileURL}=require('node:url');
+ const {createService}=require('./core/service.cjs');const {assertSender,validateRefresh}=require('./ipc-policy.cjs');
+-const {launchExternal}=require('./core/launcher.cjs');
++const {launchExternal,loadClaudeSettingsFiles,launchWarnings}=require('./core/launcher.cjs');
+ app.setName('Vibe Usage');
+ if(process.env.VIBE_DATA_DIR)app.setPath('userData',path.resolve(process.env.VIBE_DATA_DIR));
+ let win,tray,service,poll,quitting=false,boundsTimer;
+@@ -30,17 +30,34 @@ if(!app.requestSingleInstanceLock())app.quit();else{
+   handler('settings',async patch=>{await service.updateSettings(patch);win.setAlwaysOnTop(!!service.snapshot().settings.pinned);schedule();return publish();});
+   handler('pin',async()=>{await service.updateSettings({pinned:!service.snapshot().settings.pinned});win.setAlwaysOnTop(!!service.snapshot().settings.pinned);return publish();});
+   handler('hide',()=>win.hide());
++  handler('dismiss-account',async id=>{
++   if(typeof id!=='string'||!/^[a-zA-Z0-9:@._+-]{1,120}$/.test(id))throw Error('Geçersiz hesap');
++   const accounts=service.snapshot().settings.accounts;
++   if(!accounts.some(a=>a.id===id))throw Error('Hesap bulunamadı');
++   await service.dismissAccount(id);
++   return publish();
++  });
+   handler('add-profile',async()=>{
+    const choice=await dialog.showOpenDialog(win,{title:'Giriş yapılmış Claude profil klasörünü seç',properties:['openDirectory','showHiddenFiles']});if(choice.canceled)return {message:'İptal edildi.'};
+    const configDir=choice.filePaths[0];if(!fs.existsSync(path.join(configDir,'.credentials.json'))&&process.platform!=='darwin')return {message:'Bu klasörde kayıtlı Claude girişi bulunamadı.'};
+    const accounts=service.snapshot().settings.accounts;if(accounts.some(a=>a.providerId==='claude'&&a.configDir===configDir))return {message:'Bu profil zaten bağlı.'};
+-   await service.updateSettings({accounts:[...accounts,{id:'claude:'+crypto.createHash('sha256').update(configDir).digest('hex').slice(0,12),providerId:'claude',configDir,label:path.basename(configDir),primary:!accounts.some(a=>a.providerId==='claude'),enabled:true}]});await refresh('claude');return {message:'Profil eklendi.'};
++   const newId='claude:'+crypto.createHash('sha256').update(configDir).digest('hex').slice(0,12);
++   const currentDismissed=service.snapshot().settings.dismissedAccountIds||[];
++   const nextDismissed=currentDismissed.filter(id=>id!==newId);
++   await service.updateSettings({dismissedAccountIds:nextDismissed,accounts:[...accounts,{id:newId,providerId:'claude',configDir,label:path.basename(configDir),primary:!accounts.some(a=>a.providerId==='claude'),enabled:true}]});await refresh('claude');return {message:'Profil eklendi.'};
+   });
+   handler('launch',async options=>{
+    if(!options||typeof options.accountId!=='string')throw Error('Hesap gerekli');
+    const account=service.snapshot().settings.accounts.find(a=>a.id===options.accountId&&a.providerId==='claude'&&a.enabled!==false);if(!account)throw Error('Geçersiz hesap');
+    const choice=await dialog.showOpenDialog(win,{title:'Claude Code için proje klasörü',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+-   await launchExternal({account,projectDir:choice.filePaths[0],dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.'};
++   const projectDir=choice.filePaths[0];
++   const settingsFiles=await loadClaudeSettingsFiles(projectDir,account.configDir);
++   const warnings=launchWarnings(service.snapshot(),account,{...settingsFiles});
++   if(warnings.length>0&&dialog.showMessageBoxSync){
++    const choiceBtn=dialog.showMessageBoxSync(win,{type:'warning',buttons:['Başlat','İptal'],defaultId:0,cancelId:1,title:'Claude Code Başlatma Uyarısı',message:'Seçilen profil ve proje için dikkat edilmesi gereken durumlar:\n\n'+warnings.join('\n\n')});
++    if(choiceBtn===1)return {message:'Başlatma iptal edildi.'};
++   }
++   await launchExternal({account,projectDir,dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.',warnings};
+   });
+   await win.loadFile(html);win.once('ready-to-show',()=>{if(process.env.VIBE_START_HIDDEN!=='1')show();});
+   if(process.env.VIBE_START_HIDDEN!=='1')show();schedule();await refresh();
+diff --git a/src/preload.cjs b/src/preload.cjs
+index c5e9456..30e82ba 100644
+--- a/src/preload.cjs
++++ b/src/preload.cjs
+@@ -2,6 +2,7 @@ const {contextBridge,ipcRenderer}=require('electron');
+ contextBridge.exposeInMainWorld('vibe',{
+  snapshot:()=>ipcRenderer.invoke('vibe:snapshot'),refresh:provider=>ipcRenderer.invoke('vibe:refresh',provider),
+  saveSettings:patch=>ipcRenderer.invoke('vibe:settings',patch),
++ dismissAccount:accountId=>ipcRenderer.invoke('vibe:dismiss-account',accountId),
+  addClaudeProfile:()=>ipcRenderer.invoke('vibe:add-profile'),
+  pin:()=>ipcRenderer.invoke('vibe:pin'),hide:()=>ipcRenderer.invoke('vibe:hide'),
+  launch:options=>ipcRenderer.invoke('vibe:launch',options),
+diff --git a/src/providers/antigravity.cjs b/src/providers/antigravity.cjs
+index 9c52137..6a0e247 100644
+--- a/src/providers/antigravity.cjs
++++ b/src/providers/antigravity.cjs
+@@ -36,6 +36,7 @@ function parseAntigravitySummary(raw) {
+   checkedCode(raw?.code);
+   const groups = raw?.response?.groups ?? raw?.summary?.groups ?? raw?.groups;
+   if (!Array.isArray(groups)) throw new common.ProviderError('invalid_response');
++  const email = raw?.userStatus?.email || raw?.userEmail || raw?.email || raw?.response?.userStatus?.email || null;
+   const windows = [];
+   const ids = new Set();
+   for (const group of groups) {
+@@ -56,10 +57,13 @@ function parseAntigravitySummary(raw) {
+     }
+   }
+   if (!windows.length) throw new common.ProviderError('invalid_response');
+-  return { windows };
++  const result = { windows };
++  if (email) Object.defineProperty(result, 'email', { value: email, enumerable: false, writable: true });
++  return result;
+ }
+ function parseAntigravityUserStatus(raw) {
+   checkedCode(raw?.code);
++  const email = raw?.userStatus?.email || raw?.email || raw?.user?.email || null;
+   const models = raw?.userStatus?.cascadeModelConfigData?.clientModelConfigs ?? raw?.clientModelConfigs;
+   if (!Array.isArray(models)) throw new common.ProviderError('invalid_response');
+   const ids = new Set();
+@@ -74,19 +78,22 @@ function parseAntigravityUserStatus(raw) {
+     return [normalizeWindow({ id, label, scope: label, remainingPercent: fractionPercent(model.quotaInfo.remainingFraction), resetsAt: rawReset(model.quotaInfo.resetTime), detail: 'Model quota; period not reported by source.' })];
+   });
+   if (!windows.length) throw new common.ProviderError('invalid_response');
+-  return { windows };
++  const result = { windows };
++  if (email) Object.defineProperty(result, 'email', { value: email, enumerable: false, writable: true });
++  return result;
+ }
+-async function powerShellBinary(env = process.env) {
+-  if (env.VIBE_POWERSHELL_BINARY) { if (!common.validBinary(env.VIBE_POWERSHELL_BINARY)) throw new common.ProviderError('invalid_binary'); return env.VIBE_POWERSHELL_BINARY; }
++async function powerShellBinary(env = process.env, platform = 'win32') {
++  if (env.VIBE_POWERSHELL_BINARY) { if (!common.validBinary(env.VIBE_POWERSHELL_BINARY, platform)) throw new common.ProviderError('invalid_binary'); return env.VIBE_POWERSHELL_BINARY; }
+   // Windows ships this interpreter. It is sufficient for CIM/TCP discovery;
+   // networking stays in Node and needs neither PS7 nor a downloaded runtime.
+-  const candidate = path.join(env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+-  if (!common.validBinary(candidate)) throw new common.ProviderError('invalid_binary');
++  const p = platform === 'win32' ? path.win32 : path.posix;
++  const candidate = p.join(env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
++  if (!common.validBinary(candidate, platform)) throw new common.ProviderError('invalid_binary');
+   return candidate;
+ }
+ function validateServers(value) {
+   if (!Array.isArray(value)) throw new common.ProviderError('local_service_unavailable');
+-  return value.slice(0, 4).filter(server => Number.isInteger(server?.pid) && server.pid > 0 && typeof server.csrfToken === 'string' && server.csrfToken.length > 0 && server.csrfToken.length <= 512 && !/[\x00-\x20\x7f]/.test(server.csrfToken) && Array.isArray(server.ports)).map(server => ({ pid: server.pid, csrfToken: server.csrfToken, ports: [...new Set(server.ports.filter(p => Number.isInteger(p) && p > 0 && p <= 65535))].slice(0, 4) })).filter(server => server.ports.length);
++  return value.slice(0, 4).filter(server => Number.isInteger(server?.pid) && server.pid > 0 && typeof server.csrfToken === 'string' && server.csrfToken.length > 0 && server.csrfToken.length <= 512 && !/[\x00-\x20\x7f]/.test(server.csrfToken) && Array.isArray(server.ports)).map(server => ({ pid: server.pid, csrfToken: server.csrfToken, ports: [...new Set(server.ports.filter(p => Number.isInteger(p) && p > 0 && p <= 65535))].slice(0, 4), sourceKind: server.sourceKind === 'ide' ? 'ide' : 'app' })).filter(server => server.ports.length);
+ }
+ // Process matching and PID-owned listening-port semantics are derived from:
+ // CodexBar AntigravityStatusProbe.swift processInfos/antigravityProcessKind and
+@@ -104,7 +111,8 @@ function parseMacProcessList(output, currentUid) {
+     if (!languageServer || !owner) continue;
+     const csrf = /(?:^|\s)--csrf_token(?:=|\s+)(?:"([^"\r\n]+)"|([^\s]+))/.exec(command);
+     const csrfToken = csrf?.[1] || csrf?.[2];
+-    if (csrfToken && !/[\x00-\x20\x7f]/.test(csrfToken)) servers.push({ pid: Number(match[1]), csrfToken });
++    const isIde = lower.includes('antigravity ide') || lower.includes('antigravity-ide') || lower.includes('--app_data_dir');
++    if (csrfToken && !/[\x00-\x20\x7f]/.test(csrfToken)) servers.push({ pid: Number(match[1]), csrfToken, sourceKind: isIde ? 'ide' : 'app' });
+     if (servers.length >= 4) break;
+   }
+   return servers;
+@@ -128,7 +136,7 @@ async function discoverAntigravityServers(options = {}) {
+   if (platform === 'win32') {
+     const script = path.resolve(__dirname, '../launchers/discover-antigravity.ps1').replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+     let output;
+-    try { output = JSON.parse((await run(await powerShellBinary(options.env), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeoutMs: 12000, maxBytes: 65536 })).replace(/^\uFEFF/, '')); }
++    try { output = JSON.parse((await run(await powerShellBinary(options.env, platform), ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script], { timeoutMs: 12000, maxBytes: 65536 })).replace(/^\uFEFF/, '')); }
+     catch (error) { if (error instanceof common.ProviderError) throw error; throw new common.ProviderError('local_service_unavailable'); }
+     if (output?.outcome === 'app_closed') throw new common.ProviderError('app_closed');
+     if (output?.outcome !== 'success') throw new common.ProviderError('local_service_unavailable');
+@@ -186,24 +194,185 @@ function requestLocalJson(server, port, method, options = {}) {
+     } catch { finish(new common.ProviderError('transport_error')); }
+   });
+ }
++function antigravityAccountId(email) {
++  const normalized = (email || '').toLowerCase().trim();
++  const hash = crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
++  return `antigravity:${hash}`;
++}
++
++async function fetchServerWindows(server, read, deadline, needsEmail = false) {
++  let lastError = null;
++  for (const port of server.ports) {
++    if (Date.now() >= deadline) throw new common.ProviderError('request_timeout');
++    let email = null;
++    let statusRaw = null;
++
++    if (needsEmail) {
++      // Step 1: Query GetUserStatus to establish identity (pid -> email)
++      try {
++        statusRaw = await read(server, port, 'GetUserStatus', { timeoutMs: Math.min(3000, Math.max(100, deadline - Date.now())) });
++        email = (statusRaw?.userStatus?.email || statusRaw?.email || statusRaw?.user?.email || null)?.toLowerCase()?.trim() || null;
++      } catch (err) {
++        if (err.code === 'rate_limited') throw err;
++        lastError = err instanceof common.ProviderError ? err : new common.ProviderError('local_service_unavailable');
++      }
++      // F2 fix: If needsEmail is true, but email could not be resolved on this port,
++      // DO NOT early-return with email: null! Continue to next port!
++      if (!email) {
++        continue;
++      }
++    }
++
++    // Step 2: Query RetrieveUserQuotaSummary for quota windows (with fallback to statusRaw)
++    try {
++      const summaryRaw = await read(server, port, 'RetrieveUserQuotaSummary', { timeoutMs: Math.min(3000, Math.max(100, deadline - Date.now())) });
++      const parsed = parseAntigravitySummary(summaryRaw);
++      return { ...parsed, sourceKind: server.sourceKind || 'app', email: email || parsed.email || null, pid: server.pid };
++    } catch (err) {
++      if (err.code === 'rate_limited') throw err;
++      if (statusRaw) {
++        try {
++          const parsed = parseAntigravityUserStatus(statusRaw);
++          return { ...parsed, sourceKind: server.sourceKind || 'app', email: email || parsed.email || null, pid: server.pid };
++        } catch {}
++      }
++      if (!needsEmail) {
++        try {
++          const raw = await read(server, port, 'GetUserStatus', { timeoutMs: Math.min(3000, Math.max(100, deadline - Date.now())) });
++          const parsed = parseAntigravityUserStatus(raw);
++          return { ...parsed, sourceKind: server.sourceKind || 'app', email: parsed.email || null, pid: server.pid };
++        } catch {}
++      }
++      lastError = err instanceof common.ProviderError ? err : new common.ProviderError('local_service_unavailable');
++    }
++  }
++  throw lastError || new common.ProviderError('local_service_unavailable');
++}
+ function createAntigravityProvider(options = {}) {
+-  return { id: 'antigravity', name: 'Antigravity', discover: async () => [{ id: 'antigravity:current', providerId: 'antigravity', label: 'Mevcut uygulama', primary: true, enabled: true }], async fetch(account) {
+-    if (account.configDir) throw new common.ProviderError('unsupported_profile');
+-    const servers = await discoverAntigravityServers(options), deadline = Date.now() + 12000;
+-    const read = options.requestLocalJson || requestLocalJson;
+-    let lastError = new common.ProviderError('local_service_unavailable');
+-    for (const server of servers) {
+-      for (const port of server.ports) {
+-        for (const method of ['RetrieveUserQuotaSummary', 'GetUserStatus']) {
+-          if (Date.now() >= deadline) throw new common.ProviderError('request_timeout');
++  return {
++    id: 'antigravity',
++    name: 'Antigravity',
++    discover: async () => {
++      const servers = await (options.discoverAntigravityServers || discoverAntigravityServers)(options);
++      if (!servers.length) {
++        throw new common.ProviderError('app_closed');
++      }
++      const read = options.requestLocalJson || requestLocalJson;
++      const deadline = Date.now() + 6000;
++      // Query servers with lightweight GetUserStatus (no forceRefresh) to read user identity
++      const queries = await Promise.allSettled(servers.map(async s => {
++        let lastErr = null;
++        for (const port of s.ports) {
+           try {
+-            const raw = await read(server, port, method, { timeoutMs: Math.min(3000, deadline - Date.now()) });
+-            return method === 'RetrieveUserQuotaSummary' ? parseAntigravitySummary(raw) : parseAntigravityUserStatus(raw);
+-          } catch (error) { if (error.code === 'rate_limited') throw error; lastError = error instanceof common.ProviderError ? error : new common.ProviderError('local_service_unavailable'); }
++            const raw = await read(s, port, 'GetUserStatus', { timeoutMs: Math.min(2500, Math.max(100, deadline - Date.now())) });
++            const email = (raw?.userStatus?.email || raw?.email || raw?.user?.email || null)?.toLowerCase()?.trim() || null;
++            return { ...s, email };
++          } catch (err) {
++            lastErr = err;
++          }
++        }
++        if (lastErr) throw lastErr;
++        return { ...s, email: null };
++      }));
++      // F1: If any query rejected or any running server has unresolved email, fail closed with local_service_unavailable
++      const unresolved = queries.some(q => q.status === 'rejected') || queries.filter(q => q.status === 'fulfilled').some(q => !q.value.email);
++      if (unresolved) {
++        throw new common.ProviderError('local_service_unavailable');
++      }
++      const successful = queries.filter(q => q.status === 'fulfilled').map(q => q.value);
++      const emails = [...new Set(successful.map(s => s.email).filter(Boolean))];
++      if (emails.length > 0) {
++        return emails.map((email, idx) => ({
++          id: antigravityAccountId(email),
++          providerId: 'antigravity',
++          label: `Antigravity (${email})`.slice(0, 80),
++          email,
++          primary: idx === 0,
++          enabled: true
++        }));
++      }
++      return [{ id: 'antigravity:current', providerId: 'antigravity', label: 'Mevcut uygulama', primary: true, enabled: true }];
++    },
++    async fetch(account) {
++      if (account.configDir) throw new common.ProviderError('unsupported_profile');
++      const servers = await (options.discoverAntigravityServers || discoverAntigravityServers)(options);
++      if (!servers.length) throw new common.ProviderError('app_closed');
++      const deadline = Date.now() + 12000;
++      const read = options.requestLocalJson || requestLocalJson;
++      const needsEmail = Boolean(account.email) || servers.length > 1;
++      const queries = await Promise.allSettled(servers.map(s => fetchServerWindows(s, read, deadline, needsEmail)));
++      let successful = queries.filter(q => q.status === 'fulfilled').map(q => q.value);
++      if (!successful.length) {
++        const rejected = queries.find(q => q.status === 'rejected');
++        throw (rejected?.reason instanceof common.ProviderError ? rejected.reason : new common.ProviderError('local_service_unavailable'));
++      }
++
++      // F2: When multiple servers run, if any server query rejected or returned email == null, do NOT merge! Throw local_service_unavailable.
++      if (servers.length > 1 && (queries.some(q => q.status === 'rejected') || successful.some(s => !s.email))) {
++        throw new common.ProviderError('local_service_unavailable');
++      }
++
++      // If account specifies an email, filter results matching that email
++      const accountEmail = account.email ? account.email.toLowerCase().trim() : null;
++      if (accountEmail) {
++        const matching = successful.filter(s => s.email === accountEmail);
++        if (matching.length) successful = matching;
++        else throw new common.ProviderError('auth_missing');
++      } else {
++        // Ambiguity check: if account has no email, but servers belong to multiple different accounts
++        const distinctEmails = [...new Set(successful.map(s => s.email).filter(Boolean))];
++        if (distinctEmails.length > 1) {
++          throw new common.ProviderError('unsupported_profile');
++        }
++      }
++
++      const windowMap = new Map();
++      for (const result of successful) {
++        for (const w of (result.windows || [])) {
++          const existing = windowMap.get(w.id);
++          const sourceLabel = result.sourceKind === 'ide' ? 'IDE' : 'App';
++          if (!existing) {
++            windowMap.set(w.id, { ...w, source: sourceLabel });
++          } else {
++            // Atomic window merge:
++            // 1. Check resetTime: if incoming is newer (> 60s in the future), prioritize incoming
++            //    If existing is newer (> 60s in future), retain existing
++            const tExisting = existing.resetsAt ? Date.parse(existing.resetsAt) : NaN;
++            const tIncoming = w.resetsAt ? Date.parse(w.resetsAt) : NaN;
++            let pickIncoming = false;
++
++            if (Number.isFinite(tIncoming) && Number.isFinite(tExisting)) {
++              if (tIncoming - tExisting > 60000) pickIncoming = true;
++              else if (tExisting - tIncoming > 60000) pickIncoming = false;
++              else {
++                // Same reset period: conservative remaining percent
++                if (typeof w.remainingPercent === 'number' && typeof existing.remainingPercent === 'number') {
++                  pickIncoming = w.remainingPercent < existing.remainingPercent;
++                } else if (typeof w.remainingPercent === 'number') {
++                  pickIncoming = true;
++                }
++              }
++            } else if (Number.isFinite(tIncoming)) {
++              pickIncoming = true;
++            } else if (!Number.isFinite(tExisting)) {
++              if (typeof w.remainingPercent === 'number' && typeof existing.remainingPercent === 'number') {
++                pickIncoming = w.remainingPercent < existing.remainingPercent;
++              } else if (typeof w.remainingPercent === 'number') {
++                pickIncoming = true;
++              }
++            }
++
++            if (pickIncoming) {
++              // Replace ENTIRE window object atomically
++              windowMap.set(w.id, { ...w, source: sourceLabel });
++            }
++          }
+         }
+       }
++      const windows = Array.from(windowMap.values());
++      if (!windows.length) throw new common.ProviderError('invalid_response');
++      return { windows };
+     }
+-    throw lastError;
+-  } };
++  };
+ }
+-module.exports = { parseAntigravityDiagnostic, parseAntigravitySummary, parseAntigravityUserStatus, createAntigravityProvider, powerShellBinary, discoverAntigravityServers, parseMacProcessList, parseListeningPorts, requestLocalJson };
++module.exports = { antigravityAccountId, parseAntigravityDiagnostic, parseAntigravitySummary, parseAntigravityUserStatus, createAntigravityProvider, powerShellBinary, discoverAntigravityServers, parseMacProcessList, parseListeningPorts, requestLocalJson };
+diff --git a/src/providers/claude.cjs b/src/providers/claude.cjs
+index 4eb8f3a..05c755c 100644
+--- a/src/providers/claude.cjs
++++ b/src/providers/claude.cjs
+@@ -32,11 +32,11 @@ function parseClaudeUsage(usage) {
+   }
+   return { windows };
+ }
+-function profileAccount(configDir, defaultDir) {
++function profileAccount(configDir, defaultDir, configDirExplicit) {
+   const isDefault = path.resolve(configDir) === path.resolve(defaultDir);
+   const secondary = path.basename(configDir) === '.claude-secondary';
+-  const suffix = isDefault ? 'default' : secondary ? 'secondary' : crypto.createHash('sha256').update(path.resolve(configDir)).digest('hex').slice(0, 12);
+-  return { id: `claude:${suffix}`, providerId: 'claude', label: isDefault ? 'Hesap A' : secondary ? 'Hesap B' : path.basename(configDir).replace(/^\.claude-?/, '') || 'Claude hesabı', configDir, primary: isDefault, enabled: true };
++  const suffix = isDefault && !configDirExplicit ? 'default' : secondary ? 'secondary' : crypto.createHash('sha256').update(path.resolve(configDir)).digest('hex').slice(0, 12);
++  return { id: `claude:${suffix}`, providerId: 'claude', label: isDefault && !configDirExplicit ? 'Hesap A' : secondary ? 'Hesap B' : path.basename(configDir).replace(/^\.claude-?/, '') || 'Claude hesabı', configDir, ...(configDirExplicit !== undefined ? { configDirExplicit } : {}), primary: isDefault && !configDirExplicit, enabled: true };
+ }
+ async function discoverClaudeAccounts({ home = os.homedir(), platform = process.platform } = {}) {
+   const defaultDir = path.join(home, '.claude');
+@@ -46,30 +46,33 @@ async function discoverClaudeAccounts({ home = os.homedir(), platform = process.
+   for (const root of roots) {
+     try {
+       const file = path.join(root, '.credentials.json');
++      const isDefault = path.resolve(root) === path.resolve(defaultDir);
+       if (platform === 'darwin') {
+         const configured = await fs.stat(path.join(root,'settings.json')).then(s=>s.isFile()).catch(()=>false);
+-        if (configured) { accounts.push(profileAccount(root,defaultDir)); continue; }
++        if (configured) { accounts.push(profileAccount(root, defaultDir, isDefault ? false : true)); continue; }
+       }
+       if (!(await fs.lstat(file)).isFile()) continue;
+       const auth = await common.readJson(file);
+-      if (typeof auth.claudeAiOauth?.accessToken === 'string' && auth.claudeAiOauth.accessToken.trim()) accounts.push(profileAccount(root, defaultDir));
++      if (typeof auth.claudeAiOauth?.accessToken === 'string' && auth.claudeAiOauth.accessToken.trim()) accounts.push(profileAccount(root, defaultDir, isDefault ? false : true));
+     } catch { /* No history, backups, or raw credential values are exposed. */ }
+   }
+   // Only the default service name has been verified in primary source. A custom
+   // Mac profile is never silently assigned the default profile's Keychain entry.
+-  if (platform === 'darwin' && !accounts.some(a => a.id === 'claude:default')) accounts.unshift(profileAccount(defaultDir, defaultDir));
++  if (platform === 'darwin' && !accounts.some(a => a.id === 'claude:default')) accounts.unshift(profileAccount(defaultDir, defaultDir, false));
+   accounts.sort((a, b) => (a.id === 'claude:default' ? -1 : b.id === 'claude:default' ? 1 : a.id === 'claude:secondary' ? -1 : b.id === 'claude:secondary' ? 1 : a.label.localeCompare(b.label)));
+-  if (!accounts.length) accounts.push(profileAccount(defaultDir, defaultDir));
++  if (!accounts.length) accounts.push(profileAccount(defaultDir, defaultDir, false));
+   if (!accounts.some(a => a.primary)) accounts[0].primary = true;
+   return accounts;
+ }
+ async function readClaudeCredentials(account, options = {}) {
++  if (options.readCredentials) return options.readCredentials(account);
+   const platform = options.platform || process.platform, home = options.home || os.homedir();
+   const configDir = account.configDir || path.join(home, '.claude');
+   // Source: CodexBar ClaudeOAuth/ClaudeOAuthCredentials.swift, service constant
+   // `Claude Code-credentials`. Read only; neither refresh nor Keychain write.
+   if (platform === 'darwin') {
+-    try { return await require('./claude-keychain.cjs').readClaudeKeychain({configDir,configDirExplicit:account.id!=='claude:default',platform,runProcess:options.runProcess}); } catch { /* Documented file fallback below. */ }
++    const isExplicit = account.configDirExplicit !== undefined ? Boolean(account.configDirExplicit) : (account.id !== 'claude:default');
++    try { return await require('./claude-keychain.cjs').readClaudeKeychain({configDir, configDirExplicit: isExplicit, platform, runProcess: options.runProcess}); } catch { /* Documented file fallback below. */ }
+   }
+   try { return await common.readJson(path.join(configDir, '.credentials.json')); }
+   catch (error) { if (platform === 'darwin' && error.code === 'auth_missing') throw new common.ProviderError(path.resolve(configDir) === path.resolve(home, '.claude') ? 'keychain_unavailable' : 'unsupported_profile'); throw error; }
+diff --git a/src/providers/codex.cjs b/src/providers/codex.cjs
+index f6a3871..fa22a2b 100644
+--- a/src/providers/codex.cjs
++++ b/src/providers/codex.cjs
+@@ -3,12 +3,16 @@ const path=require('node:path');const os=require('node:os');const {spawn}=requir
+ const {normalizeWindow,isoDate,safeText}=require('../core/model.cjs');const common=require('./common.cjs');
+ function duration(minutes){if(minutes===10080)return 'Haftalık';if(minutes===300)return '5 saat';if(Number.isFinite(minutes)&&minutes>0)return minutes%60===0?`${minutes/60} saat`:`${minutes} dakika`;return 'Dönem bildirilmedi';}
+ function parseCodexRateLimits(response){
+- const buckets=response?.rateLimitsByLimitId||(response?.rateLimits?{codex:response.rateLimits}:{});const windows=[];
++ if(!response||typeof response!=='object'||Array.isArray(response))throw new common.ProviderError('invalid_response');
++ if(!response.rateLimitsByLimitId&&!response.rateLimits)throw new common.ProviderError('invalid_response');
++ const buckets=response.rateLimitsByLimitId||(response.rateLimits?{codex:response.rateLimits}:{});const windows=[];
+  for(const [bucketId,bucket] of Object.entries(buckets))for(const key of ['primary','secondary']){
+   const raw=bucket?.[key];if(!raw)continue;
+   windows.push(normalizeWindow({id:`${bucketId}:${key}`,label:duration(raw.windowDurationMins),usedPercent:raw.usedPercent,resetsAt:isoDate(raw.resetsAt,true),...(bucketId!=='codex'?{scope:safeText(bucketId)}:{})}));
+  }
+- return {windows};
++ const result={windows};
++ if(!windows.length)result.status='no_limits_reported';
++ return result;
+ }
+ async function probeAccount(binary,configDir){
+  const child=spawn(binary,['app-server','--listen','stdio://'],{shell:false,windowsHide:true,env:common.cleanEnvironment({CODEX_HOME:configDir}),stdio:['pipe','pipe','pipe']});
+diff --git a/src/providers/common.cjs b/src/providers/common.cjs
+index 5c71f5b..6c37c33 100644
+--- a/src/providers/common.cjs
++++ b/src/providers/common.cjs
+@@ -47,10 +47,14 @@ function getJson(endpoint, { headers = {}, timeoutMs = 15000, requestImpl = http
+     } catch (error) { finish(new ProviderError(error.message === 'trust_store_unavailable' ? 'trust_store_unavailable' : 'transport_error')); }
+   });
+ }
+-function validBinary(file) { return typeof file === 'string' && path.isAbsolute(file) && !/[\x00-\x1f]/.test(file) && !/\.(cmd|bat|ps1)$/i.test(file); }
++function validBinary(file, platform = process.platform) {
++  if (typeof file !== 'string' || !file || /[\x00-\x1f]/.test(file) || /\.(cmd|bat|ps1)$/i.test(file)) return false;
++  const p = platform === 'win32' ? path.win32 : path.posix;
++  return p.isAbsolute(file);
++}
+ async function findBinary(name, { env = process.env, home = os.homedir(), platform = process.platform } = {}) {
+   const override = env[`VIBE_${name.toUpperCase()}_BINARY`];
+-  if (override) { if (!validBinary(override)) throw new ProviderError('invalid_binary'); try { if ((await fs.stat(override)).isFile()) return override; } catch {} throw new ProviderError('binary_missing'); }
++  if (override) { if (!validBinary(override, platform)) throw new ProviderError('invalid_binary'); try { if ((await fs.stat(override)).isFile()) return override; } catch {} throw new ProviderError('binary_missing'); }
+   // Verified Windows desktop installation; PATH lookup also supports npm/Homebrew
+   // installs on macOS. Finder doesn't inherit shell startup files, so consult
+   // macOS path_helper's /etc/paths and paths.d, rather than executing a shell.
+@@ -64,18 +68,49 @@ async function findBinary(name, { env = process.env, home = os.homedir(), platfo
+   let candidates = directories.map(directory => path.join(directory, filename));
+   if (name === 'codex' && platform === 'win32') candidates.unshift(path.join(env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Programs/OpenAI/Codex/bin/codex.exe'));
+   if (name === 'claude') candidates.unshift(path.join(home, '.local/bin', filename));
+-  for (const candidate of candidates) { if (!validBinary(candidate)) continue; try { if ((await fs.stat(candidate)).isFile()) return candidate; } catch {} }
++  for (const candidate of candidates) { if (!validBinary(candidate, platform)) continue; try { if ((await fs.stat(candidate)).isFile()) return candidate; } catch {} }
+   throw new ProviderError('binary_missing');
+ }
+-function cleanEnvironment(config = {}) {
++const BLOCKED_ENV_KEYS = [
++  'OPENAI_API_KEY',
++  'OPENAI_BASE_URL',
++  'CODEX_HOME',
++  'CODEX_API_KEY',
++  'CODEX_ACCESS_TOKEN',
++  'ACCESS_TOKEN',
++  'ANTHROPIC_API_KEY',
++  'ANTHROPIC_AUTH_TOKEN',
++  'ANTHROPIC_BASE_URL',
++  'ANTHROPIC_PROFILE',
++  'ANTHROPIC_VERTEX_PROJECT_ID',
++  'CLAUDE_CODE_OAUTH_TOKEN',
++  'CLAUDE_SECURESTORAGE_CONFIG_DIR',
++  'CLAUDE_CODE_USE_BEDROCK',
++  'CLAUDE_CODE_USE_VERTEX',
++  'CLAUDE_CODE_USE_FOUNDRY',
++  'ANTHROPIC_BEDROCK_BASE_URL',
++  'AWS_ACCESS_KEY_ID',
++  'AWS_SECRET_ACCESS_KEY',
++  'AWS_SESSION_TOKEN',
++  'CURSOR_API_KEY'
++];
++
++function cleanEnvironment(config = {}, platform = process.platform) {
+   const environment = { ...process.env, ...config };
+-  for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'ACCESS_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CURSOR_API_KEY']) delete environment[key];
++  if (platform === 'win32') {
++    const blocked = new Set(BLOCKED_ENV_KEYS.map(k => k.toLowerCase()));
++    for (const key of Object.keys(environment)) {
++      if (blocked.has(key.toLowerCase())) delete environment[key];
++    }
++  } else {
++    for (const key of BLOCKED_ENV_KEYS) delete environment[key];
++  }
+   return environment;
+ }
+-function runProcess(binary, args, { env, timeoutMs = 20000, maxBytes = 1024 * 1024 } = {}) {
++function runProcess(binary, args, { env, platform = process.platform, timeoutMs = 20000, maxBytes = 1024 * 1024 } = {}) {
+   return new Promise((resolve, reject) => {
+-    if (!validBinary(binary) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0'))) return reject(new ProviderError('invalid_binary'));
+-    const child = spawn(binary, args, { env: env || cleanEnvironment(), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
++    if (!validBinary(binary, platform) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0'))) return reject(new ProviderError('invalid_binary'));
++    const child = spawn(binary, args, { env: env || cleanEnvironment({}, platform), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+     let output = '', bytes = 0, failure = null;
+     const timer = setTimeout(() => { failure = new ProviderError('process_timeout'); child.kill('SIGKILL'); }, timeoutMs);
+     child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > maxBytes) { output = ''; failure = new ProviderError('response_too_large'); child.kill('SIGKILL'); } else output += chunk.toString(); });
+diff --git a/src/providers/cursor.cjs b/src/providers/cursor.cjs
+index e3f4b6f..a14772a 100644
+--- a/src/providers/cursor.cjs
++++ b/src/providers/cursor.cjs
+@@ -6,6 +6,8 @@ const common = require('./common.cjs');
+ 
+ function parseCursorUsage(summary) {
+   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new common.ProviderError('invalid_response');
++  const hasKnownFields = summary.individualUsage !== undefined || summary.teamUsage !== undefined || summary.membershipType !== undefined || summary.billingCycleEnd !== undefined;
++  if (!hasKnownFields || Object.keys(summary).length === 0) throw new common.ProviderError('invalid_response');
+   const plan = summary.individualUsage?.plan, windows = [];
+   const resetsAt = summary.billingCycleEnd;
+   if (plan) {
+@@ -23,7 +25,9 @@ function parseCursorUsage(summary) {
+       windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
+     }
+   }
+-  return { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };
++  const result = { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };
++  if (!windows.length) result.status = 'no_limits_reported';
++  return result;
+ }
+ function createCursorProvider(options = {}) {
+   const home = options.home || os.homedir(), platform = options.platform || process.platform, env = options.env || process.env;
+diff --git a/src/ui/app.js b/src/ui/app.js
+index 38e8a15..923ae31 100644
+--- a/src/ui/app.js
++++ b/src/ui/app.js
+@@ -33,7 +33,7 @@ function renderSettings(){
+  const interval=$('#interval');interval.value=String(state.settings.intervalSeconds);
+  if(!interval.value){const option=element('option','',`${state.settings.intervalSeconds} saniye`);option.value=String(state.settings.intervalSeconds);interval.append(option);interval.value=option.value;}
+  const accounts=state.settings.accounts.filter(a=>a.providerId==='claude');const list=$('#account-settings');list.replaceChildren();
+- for(const account of accounts){const row=element('div','account-setting');const input=element('input');input.type='text';input.value=account.label;input.maxLength=64;input.setAttribute('aria-label','Hesap etiketi');input.addEventListener('change',()=>action(async()=>{await window.vibe.saveSettings({accounts:state.settings.accounts.map(a=>a.id===account.id?{...a,label:input.value}:a)});}));row.append(input);const label=element('label');const radio=element('input');radio.type='radio';radio.name='primary';radio.checked=!!account.primary;radio.addEventListener('change',()=>action(async()=>{await window.vibe.saveSettings({accounts:state.settings.accounts.map(a=>a.providerId==='claude'?{...a,primary:a.id===account.id}:a)});renderSettings();}));label.append(radio,element('span','','Ana hesap'));row.append(label);list.append(row);}
++ for(const account of accounts){const row=element('div','account-setting');const input=element('input');input.type='text';input.value=account.label;input.maxLength=64;input.setAttribute('aria-label','Hesap etiketi');input.addEventListener('change',()=>action(async()=>{await window.vibe.saveSettings({accounts:state.settings.accounts.map(a=>a.id===account.id?{...a,label:input.value}:a)});}));row.append(input);const actions=element('div','account-setting-actions');const label=element('label');const radio=element('input');radio.type='radio';radio.name='primary';radio.checked=!!account.primary;radio.addEventListener('change',()=>action(async()=>{await window.vibe.saveSettings({accounts:state.settings.accounts.map(a=>a.providerId==='claude'?{...a,primary:a.id===account.id}:a)});renderSettings();}));label.append(radio,element('span','','Ana hesap'));actions.append(label);const remove=element('button','remove-account','✕');remove.setAttribute('aria-label',`${account.label} hesabını kaldır`);remove.title='Hesabı kaldır';remove.addEventListener('click',()=>action(async()=>{await window.vibe.dismissAccount(account.id);renderSettings();}));actions.append(remove);row.append(actions);list.append(row);}
+ }
+ $('#refresh').addEventListener('click',()=>action(()=>window.vibe.refresh()));
+ $('#pin').addEventListener('click',()=>action(()=>window.vibe.pin()));
+diff --git a/src/ui/style.css b/src/ui/style.css
+index 23220bc..52bd272 100644
+--- a/src/ui/style.css
++++ b/src/ui/style.css
+@@ -1,3 +1,3 @@
+ :root{color-scheme:light dark;--bg:light-dark(#fafbfc,#171a1e);--surface:light-dark(#edf0f3,#242931);--text:light-dark(#202730,#e9edf3);--muted:light-dark(#5b6470,#a7b1bf);--line:light-dark(#dce1e7,#323b47);--green:light-dark(#3b7760,#8abca7);--track:light-dark(#e1e9e5,#2c3b36);--warn:light-dark(#805015,#e4bf83);--action:light-dark(#254665,#bad9f3);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,sans-serif;font-size:13px}
+ *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,input,select{font:inherit}button,select,summary{cursor:pointer}button{color:var(--text)}button:disabled{cursor:wait;opacity:.55}button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid var(--action);outline-offset:3px}button{border:1px solid var(--line);border-radius:7px;background:var(--surface);padding:7px 10px}button:hover{filter:brightness(1.12)}.titlebar{display:flex;justify-content:space-between;gap:12px;padding:20px 20px 15px;-webkit-app-region:drag;user-select:none}.brand{font-size:27px;letter-spacing:-1.5px;font-weight:600}.brand span{display:block;font-size:12px;color:var(--muted);letter-spacing:0;font-weight:400}.window-actions{display:flex;gap:4px;align-items:flex-start;-webkit-app-region:no-drag}.window-actions button{font-size:16px;padding:3px 7px;border:0;background:transparent;min-width:28px}.window-actions button[aria-pressed=true]{background:var(--surface);color:var(--green)}main{padding:0 20px}.summary{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted);font-size:12px;padding:9px 0;border-top:1px solid var(--line)}.text-button{background:transparent;border:0;color:var(--action);padding:6px 0;white-space:nowrap}.column-label{display:flex;justify-content:space-between;padding:13px 0 3px;color:var(--muted);font-size:11px}.provider{border-bottom:1px solid var(--line);padding:15px 0}.provider-heading{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:9px}.provider-heading h2{font-size:16px;font-weight:600;margin:0}.account-picker{max-width:65%;font-size:11px;border:1px solid var(--line);border-radius:6px;color:var(--text);background:var(--surface);padding:5px;min-width:0}.account-label{color:var(--muted);font-size:11px}.quota{margin:10px 0 0}.quota-line{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px}.quota-value{font-weight:600;font-variant-numeric:tabular-nums}.quota-description{font-size:11px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}.track{height:4px;border-radius:4px;background:var(--track);overflow:hidden;margin-top:6px}.fill{height:100%;border-radius:4px;background:var(--green);width:calc(var(--quota,0) * 1%)}.quota.low .fill{background:var(--warn)}.provider-status{font-size:11px;color:var(--muted);margin-top:11px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}.provider-status.stale,.error{color:var(--warn)}.empty{color:var(--muted);font-size:12px;line-height:1.6;padding:8px 0}.launch-button{font-size:11px;background:transparent;padding:5px 8px;margin-top:10px;color:var(--action)}.local-note{font-size:11px;color:var(--muted);padding:5px 0 0}footer{padding:10px 20px 16px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--muted)}dialog{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:14px;width:min(390px,calc(100vw - 28px));max-height:calc(100vh - 40px);padding:20px}dialog::backdrop{background:#0006}dialog header{display:flex;justify-content:space-between;gap:12px;align-items:center}h2{font-size:18px;margin:0 0 10px}h3{font-size:14px;margin:22px 0 8px}.field{display:grid;gap:6px;color:var(--muted);font-size:12px;margin:12px 0}.field select,.account-setting input{background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:8px;max-width:100%}.account-setting{padding:12px 0;border-bottom:1px solid var(--line)}.account-setting label{display:flex;align-items:center;gap:7px;margin-top:8px}.account-setting input[type=text]{width:100%;font-size:12px}.secondary-button{font-size:12px;margin-top:15px}.help{font-size:12px;color:var(--muted);line-height:1.6}#settings-message{font-size:12px;color:var(--warn)}#toast{position:fixed;bottom:15px;left:15px;right:15px;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:12px;font-size:12px;box-shadow:0 5px 30px #0002;z-index:5}[hidden]{display:none!important}@media(max-width:350px){.titlebar{padding-left:14px;padding-right:14px}main{padding:0 14px}.quota-line{gap:6px}.account-picker{max-width:70%}}@media(prefers-reduced-motion:no-preference){.fill{transition:width .2s}}
+-:root .spending{margin-top:14px;font-size:12px;color:var(--muted)}.spending summary{padding:4px 0}.spending .quota{color:var(--text)}
++:root .spending{margin-top:14px;font-size:12px;color:var(--muted)}.spending summary{padding:4px 0}.spending .quota{color:var(--text)}.account-setting-actions{display:flex;justify-content:space-between;align-items:center;margin-top:8px}.account-setting-actions label{margin-top:0}.remove-account{font-size:11px;padding:2px 8px;color:var(--warn);border-color:var(--line);background:transparent}.remove-account:hover{border-color:var(--warn)}
+```
+
+---
+
+## Tüm Regresyon Test Paketi (test/regression-audit-fixes.test.cjs)
+```javascript
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+
+// Kusur 1: Windows Environment Variables Case-Insensitivity & Project Settings Env Warning
+test('Kusur 1: cleanEnvironment and launchEnvironment strip case-insensitive blocked keys on win32', () => {
+  const { cleanEnvironment } = require('../src/providers/common.cjs');
+  const { launchEnvironment } = require('../src/core/launcher.cjs');
+
+  const dirtySource = {
+    anthropic_api_key: 'secret-lower',
+    Anthropic_Base_Url: 'https://leak.example',
+    CLAUDE_CONFIG_DIR: 'C:\\Users\\old\\.claude',
+    claude_config_dir: 'C:\\Users\\old\\.claude-lower',
+    cursor_api_key: 'cursor-lower',
+    SAFE_VAR: 'keep-me'
+  };
+
+  // Test win32 platform stripping
+  const cleanedEnv = cleanEnvironment(dirtySource, 'win32');
+  assert.equal(cleanedEnv.anthropic_api_key, undefined);
+  assert.equal(cleanedEnv.Anthropic_Base_Url, undefined);
+  assert.equal(cleanedEnv.cursor_api_key, undefined);
+  assert.equal(cleanedEnv.SAFE_VAR, 'keep-me');
+
+  const launchedDefault = launchEnvironment({ id: 'claude:default', configDir: 'C:\\Users\\test\\.claude' }, dirtySource, 'win32');
+  assert.equal(launchedDefault.anthropic_api_key, undefined);
+  assert.equal(launchedDefault.Anthropic_Base_Url, undefined);
+  assert.equal(launchedDefault.CLAUDE_CONFIG_DIR, undefined);
+  assert.equal(launchedDefault.claude_config_dir, undefined);
+  assert.equal(launchedDefault.SAFE_VAR, 'keep-me');
+
+  const launchedSecondary = launchEnvironment({ id: 'claude:secondary', configDir: 'C:\\Users\\test\\.claude-secondary' }, dirtySource, 'win32');
+  assert.equal(launchedSecondary.CLAUDE_CONFIG_DIR, 'C:\\Users\\test\\.claude-secondary');
+  assert.equal(launchedSecondary.claude_config_dir, undefined);
+});
+
+test('Kusur 1: launchWarnings warns if project-level settings.json has env overrides', () => {
+  const { launchWarnings } = require('../src/core/launcher.cjs');
+  const snapshot = {
+    providers: [{ id: 'claude', accounts: [{ id: 'claude:default', status: 'ok', fetchedAt: new Date().toISOString(), windows: [{ id: 'five_hour', remainingPercent: 50 }, { id: 'seven_day', remainingPercent: 50 }] }] }],
+    settings: { accounts: [{ id: 'claude:default', providerId: 'claude', primary: true, enabled: true }] }
+  };
+
+  const cleanWarnings = launchWarnings(snapshot, { id: 'claude:default' }, { projectSettings: {} });
+  assert.equal(cleanWarnings.some(w => w.includes('.claude/settings.json')), false);
+
+  const dirtyWarnings = launchWarnings(snapshot, { id: 'claude:default' }, { projectSettings: { env: { ANTHROPIC_API_KEY: 'override' } } });
+  assert.equal(dirtyWarnings.some(w => w.includes('.claude/settings.json')), true);
+});
+
+// Kusur 2: Antigravity Multi-Server Discovery (App vs IDE) and Gemini Window Preservation
+test('Kusur 2: Antigravity fetch combines App and IDE servers, preserving Gemini windows without double-counting', async () => {
+  const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
+
+  const appServer = { pid: 101, csrfToken: 'app-token', ports: [3101], sourceKind: 'app' };
+  const ideServer = { pid: 202, csrfToken: 'ide-token', ports: [3202], sourceKind: 'ide' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    runProcess: async (binary) => {
+      if (binary === '/bin/ps') {
+        return [
+          '101 501 /Applications/Antigravity.app/Contents/Resources/bin/language_server --csrf_token=app-token',
+          '202 501 /Applications/Antigravity IDE.app/Contents/Resources/extensions/antigravity/bin/language_server_macos --app_data_dir antigravity-ide --csrf_token=ide-token'
+        ].join('\n');
+      }
+      if (binary === '/usr/sbin/lsof') {
+        return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nlanguage 101 owner 8u IPv4 0t0 TCP 127.0.0.1:3101 (LISTEN)\nlanguage 202 owner 8u IPv4 0t0 TCP 127.0.0.1:3202 (LISTEN)';
+      }
+      throw new Error('unexpected_process');
+    },
+    requestLocalJson: async (server, port, method) => {
+      if (method === 'GetUserStatus') {
+        return { userStatus: { email: 'dev@company.com' } };
+      }
+      if (server.pid === 101) {
+        // App only reports Claude and GPT models
+        return {
+          groups: [
+            { id: 'claude-gpt', displayName: 'Claude and GPT models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 1.0 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 1.0 }] }
+          ]
+        };
+      }
+      if (server.pid === 202) {
+        // IDE reports both Claude and GPT models AND Gemini Models
+        return {
+          groups: [
+            { id: 'claude-gpt', displayName: 'Claude and GPT models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.9 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.95 }] },
+            { id: 'gemini', displayName: 'Gemini Models', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.86 }, { bucketId: 'weekly', window: 'weekly', remainingFraction: 0.93 }] }
+          ]
+        };
+      }
+      throw new Error('unknown_server');
+    }
+  });
+
+  const result = await provider.fetch({ id: 'antigravity:current' });
+
+  // Both Gemini windows must be captured!
+  assert.equal(result.windows.some(w => w.scope.includes('Gemini') && w.label === '5 hours'), true);
+  assert.equal(result.windows.some(w => w.scope.includes('Gemini') && w.label === 'Weekly'), true);
+
+  // Claude and GPT models must NOT be duplicated (only 1 session, 1 weekly for claude-gpt)
+  const claudeSessionWindows = result.windows.filter(w => w.scope.includes('Claude and GPT') && w.label === '5 hours');
+  assert.equal(claudeSessionWindows.length, 1);
+  // Conservative remaining percentage chosen (0.90 vs 1.0 -> 90%)
+  assert.equal(claudeSessionWindows[0].remainingPercent, 90);
+
+  // Total distinct windows: 2 for claude-gpt + 2 for gemini = 4
+  assert.equal(result.windows.length, 4);
+});
+
+// Kusur 3: Refresh Scope Race Condition
+test('Kusur 3: Concurrent refresh(claude) and refresh() never skips remaining providers', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-race-scope-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let codexFetched = false;
+  let claudeFetched = false;
+
+  const claudeProvider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => [{ id: 'claude:default', providerId: 'claude', label: 'Claude A', primary: true, enabled: true }],
+    fetch: async () => {
+      await new Promise(r => setTimeout(r, 20));
+      claudeFetched = true;
+      return { windows: [{ id: 'five_hour', remainingPercent: 80 }] };
+    }
+  };
+
+  const codexProvider = {
+    id: 'codex',
+    name: 'Codex',
+    discover: async () => [{ id: 'codex:default', providerId: 'codex', label: 'Codex A', primary: true, enabled: true }],
+    fetch: async () => {
+      codexFetched = true;
+      return { windows: [{ id: 'primary', remainingPercent: 70 }] };
+    }
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [claudeProvider, codexProvider]
+  });
+
+  // Start narrow refresh('claude')
+  const p1 = svc.refresh('claude');
+  // Immediately call full refresh() concurrently
+  const p2 = svc.refresh();
+
+  await Promise.all([p1, p2]);
+
+  // Codex MUST NOT have been skipped!
+  assert.equal(claudeFetched, true);
+  assert.equal(codexFetched, true);
+  const snap = svc.snapshot();
+  assert.equal(snap.providers.find(p => p.id === 'codex').accounts[0].status, 'ok');
+  assert.equal(snap.providers.find(p => p.id === 'claude').accounts[0].status, 'ok');
+});
+
+// Kusur 4: Discovery Lifecycle and Reconciliation
+test('Kusur 4: reconcileDiscovery adds newly discovered profiles and removes after 3 consecutive misses', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-lifecycle-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let discovered = [
+    { id: 'claude:default', providerId: 'claude', label: 'A', primary: true, enabled: true },
+    { id: 'claude:secondary', providerId: 'claude', label: 'B', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => discovered,
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [provider]
+  });
+
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // Simulate secondary profile deletion from disk
+  discovered = [{ id: 'claude:default', providerId: 'claude', label: 'A', primary: true, enabled: true }];
+
+  // Miss 1
+  await svc.reconcileDiscovery();
+  assert.equal(svc.snapshot().settings.accounts.length, 2); // Tombstone: still retained
+
+  // Miss 2
+  await svc.reconcileDiscovery();
+  assert.equal(svc.snapshot().settings.accounts.length, 2); // Tombstone: still retained
+
+  // Miss 3: Now removed
+  await svc.reconcileDiscovery();
+  assert.equal(svc.snapshot().settings.accounts.length, 1);
+  assert.equal(svc.snapshot().settings.accounts[0].id, 'claude:default');
+});
+
+// Kusur 5: Empty/Invalid Response vs no_limits_reported
+test('Kusur 5: empty raw responses throw invalid_response while valid limit-free schemas produce no_limits_reported', () => {
+  const { parseCursorUsage } = require('../src/providers/cursor.cjs');
+  const { parseCodexRateLimits } = require('../src/providers/codex.cjs');
+
+  // Empty object without schema fields fails closed with invalid_response
+  assert.throws(() => parseCursorUsage({}), /invalid_response/);
+  assert.throws(() => parseCodexRateLimits(null), /invalid_response/);
+  assert.throws(() => parseCodexRateLimits({}), /invalid_response/);
+
+  // Valid schema with empty limits returns no_limits_reported
+  const cursorNoLimits = parseCursorUsage({ membershipType: 'enterprise', individualUsage: {} });
+  assert.equal(cursorNoLimits.status, 'no_limits_reported');
+  assert.equal(cursorNoLimits.windows.length, 0);
+
+  const codexNoLimits = parseCodexRateLimits({ rateLimitsByLimitId: {} });
+  assert.equal(codexNoLimits.status, 'no_limits_reported');
+  assert.equal(codexNoLimits.windows.length, 0);
+});
+
+// Kusur 6: macOS Claude Keychain Selector
+test('Kusur 6: configDirExplicit is preserved and resolves distinct keychain services', async () => {
+  const { readClaudeKeychain } = require('../src/providers/claude-keychain.cjs');
+  const calls = [];
+
+  const runProcess = async (bin, args) => {
+    calls.push(args[2]); // service argument
+    return JSON.stringify({ claudeAiOauth: { accessToken: 'fixture' } });
+  };
+
+  // Unset default config resolves to un-suffixed service
+  await readClaudeKeychain({
+    platform: 'darwin',
+    configDir: '/Users/example/.claude',
+    configDirExplicit: false,
+    runProcess
+  });
+  assert.equal(calls.at(-1), 'Claude Code-credentials');
+
+  // Explicit default config resolves to suffixed service
+  await readClaudeKeychain({
+    platform: 'darwin',
+    configDir: '/Users/example/.claude',
+    configDirExplicit: true,
+    runProcess
+  });
+  assert.equal(calls.at(-1), 'Claude Code-credentials-402b469b');
+});
+
+// Helper for deterministic async racing tests without setTimeout
+function createDeferred() {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+// Claude Round 2 Blocking Finding B1: Provider-scoped generation
+test('Claude B1: Provider-scoped generation prevents concurrent refreshes from discarding results', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-b1-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const defClaude = createDeferred();
+  const defCodex = createDeferred();
+
+  const claudeProvider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => [{ id: 'claude:default', providerId: 'claude', label: 'Claude', primary: true, enabled: true }],
+    fetch: () => defClaude.promise
+  };
+
+  const codexProvider = {
+    id: 'codex',
+    name: 'Codex',
+    discover: async () => [{ id: 'codex:default', providerId: 'codex', label: 'Codex', primary: true, enabled: true }],
+    fetch: () => defCodex.promise
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [claudeProvider, codexProvider]
+  });
+
+  // Start Claude refresh first (in-flight)
+  const pClaude = svc.refresh('claude');
+
+  // Start Codex refresh while Claude is in-flight (bumps global or codex gen)
+  const pCodex = svc.refresh('codex');
+
+  // Resolve Claude first
+  defClaude.resolve({ windows: [{ id: 'five_hour', remainingPercent: 88 }] });
+  await pClaude;
+
+  // Claude result MUST NOT have been discarded by Codex starting!
+  const snap1 = svc.snapshot();
+  const claudeAcc = snap1.providers.find(p => p.id === 'claude').accounts[0];
+  assert.equal(claudeAcc.status, 'ok');
+  assert.equal(claudeAcc.windows[0].remainingPercent, 88);
+
+  // Resolve Codex
+  defCodex.resolve({ windows: [{ id: 'primary', remainingPercent: 72 }] });
+  await pCodex;
+
+  const snap2 = svc.snapshot();
+  const codexAcc = snap2.providers.find(p => p.id === 'codex').accounts[0];
+  assert.equal(codexAcc.status, 'ok');
+  assert.equal(codexAcc.windows[0].remainingPercent, 72);
+});
+
+// Claude Round 2 Blocking Finding B4: Zombie account resurrection prevention
+test('Claude B4: Settings changes during in-flight fetch prevent zombie account resurrection', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-b4-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const defA = createDeferred();
+  const defB = createDeferred();
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => [
+      { id: 'claude:a', providerId: 'claude', label: 'Account A', configDir: '/dir/a', primary: true, enabled: true },
+      { id: 'claude:b', providerId: 'claude', label: 'Account B', configDir: '/dir/b', primary: false, enabled: true }
+    ],
+    fetch: async (acc) => {
+      if (acc.id === 'claude:a') return defA.promise;
+      if (acc.id === 'claude:b') return defB.promise;
+      throw new Error('unknown_account');
+    }
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [provider]
+  });
+
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // Start refresh for claude (both A and B are in-flight)
+  const pRefresh = svc.refresh('claude');
+
+  // User deletes Account B during in-flight fetch
+  await svc.updateSettings({
+    accounts: [{ id: 'claude:a', providerId: 'claude', label: 'Account A', configDir: '/dir/a', primary: true, enabled: true }]
+  });
+
+  // Verify settings has only A
+  assert.equal(svc.snapshot().settings.accounts.length, 1);
+
+  // Now resolve both fetches
+  defA.resolve({ windows: [{ id: 'five_hour', remainingPercent: 95 }] });
+  defB.resolve({ windows: [{ id: 'five_hour', remainingPercent: 10 }] });
+  await pRefresh;
+
+  // Account B MUST NOT be resurrected in settings or provider accounts!
+  const finalSnap = svc.snapshot();
+  assert.equal(finalSnap.settings.accounts.length, 1);
+  assert.equal(finalSnap.settings.accounts[0].id, 'claude:a');
+  const providerAccounts = finalSnap.providers.find(p => p.id === 'claude').accounts;
+  assert.equal(providerAccounts.length, 1);
+  assert.equal(providerAccounts[0].id, 'claude:a');
+  assert.equal(providerAccounts[0].status, 'ok');
+});
+
+// Claude Round 2 Blocking Finding B5: Discovery reconciliation error safety and user customization
+test('Claude B5: reconcileDiscovery does not increment misses on error and preserves user customizations', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-b5-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let failDiscovery = false;
+  let discovered = [
+    { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
+    { id: 'claude:b', providerId: 'claude', label: 'Discovered B', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => {
+      if (failDiscovery) throw new Error('EACCES: keychain locked');
+      return discovered;
+    },
+    fetch: async () => ({ windows: [{ id: 'five_hour', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [provider]
+  });
+
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // User customizes label of Account B -> origin becomes 'user'
+  await svc.updateSettings({
+    accounts: [
+      { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
+      { id: 'claude:b', providerId: 'claude', label: 'Custom User Label B', primary: false, enabled: true }
+    ]
+  });
+
+  const customizedAcc = svc.snapshot().settings.accounts.find(a => a.id === 'claude:b');
+  assert.equal(customizedAcc.origin, 'user');
+
+  // Simulate 5 transient discovery failures (e.g. keychain locked for 5 minutes)
+  failDiscovery = true;
+  for (let i = 0; i < 5; i++) {
+    await svc.reconcileDiscovery();
+  }
+  // No accounts should have been deleted because discovery errored!
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // Now discovery succeeds, but neither account is reported by discover()
+  failDiscovery = false;
+  discovered = [];
+
+  // Run 3 clean discovery cycles
+  await svc.reconcileDiscovery(); // miss 1
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+  await svc.reconcileDiscovery(); // miss 2
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+  await svc.reconcileDiscovery(); // miss 3
+
+  // Account A (origin: 'discovered') is removed after 3 misses
+  // Account B (origin: 'user') is PROTECTED and retained!
+  const finalAccounts = svc.snapshot().settings.accounts;
+  assert.equal(finalAccounts.length, 1);
+  assert.equal(finalAccounts[0].id, 'claude:b');
+  assert.equal(finalAccounts[0].label, 'Custom User Label B');
+});
+
+// Claude Round 2 Blocking Finding B6: Antigravity multi-server email grouping and atomic window merging
+test('Claude B6: Antigravity multi-server separates accounts by email and merges windows atomically with reset precedence', async () => {
+  const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
+
+  const serverWork = { pid: 1001, csrfToken: 'tok1', ports: [4001], sourceKind: 'app' };
+  const serverPersonal = { pid: 1002, csrfToken: 'tok2', ports: [4002], sourceKind: 'app' };
+
+  // 1. Multi-account discovery test with distinct emails
+  const multiProvider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [serverWork, serverPersonal],
+    requestLocalJson: async (server) => {
+      if (server.pid === 1001) {
+        return {
+          userStatus: { email: 'work@corp.com' },
+          groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.85 }] }]
+        };
+      }
+      return {
+        userStatus: { email: 'personal@gmail.com' },
+        groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.15 }] }]
+      };
+    }
+  });
+
+  const discovered = await multiProvider.discover();
+  assert.equal(discovered.length, 2);
+  assert.equal(discovered[0].email, 'work@corp.com');
+  assert.equal(discovered[1].email, 'personal@gmail.com');
+
+  // Fetch for work account only gets work server quota
+  const workQuota = await multiProvider.fetch({ id: 'antigravity:work@corp.com', email: 'work@corp.com' });
+  assert.equal(workQuota.windows[0].remainingPercent, 85);
+
+  // 2. Atomic window merging test: server A has fresher resetTime (future period), server B has stale 5% cache
+  const serverFresh = { pid: 2001, csrfToken: 'fresh', ports: [5001], sourceKind: 'ide' };
+  const serverStale = { pid: 2002, csrfToken: 'stale', ports: [5002], sourceKind: 'app' };
+
+  const mergeProvider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [serverFresh, serverStale],
+    requestLocalJson: async (server) => {
+      if (server.pid === 2001) {
+        // Fresh reset window: next week, 95% remaining
+        return {
+          userStatus: { email: 'same@user.com' },
+          groups: [{
+            id: 'cg',
+            displayName: 'Claude and GPT',
+            buckets: [{
+              bucketId: 'session',
+              window: '5h',
+              remainingFraction: 0.95,
+              resetTime: '2026-10-23T18:00:00Z'
+            }]
+          }]
+        };
+      }
+      // Stale cache prior to reset: last week, 5% remaining
+      return {
+        userStatus: { email: 'same@user.com' },
+        groups: [{
+          id: 'cg',
+          displayName: 'Claude and GPT',
+          buckets: [{
+            bucketId: 'session',
+            window: '5h',
+            remainingFraction: 0.05,
+            resetTime: '2026-10-16T18:00:00Z'
+          }]
+        }]
+      };
+    }
+  });
+
+  const merged = await mergeProvider.fetch({ id: 'antigravity:current' });
+  assert.equal(merged.windows.length, 1);
+  // Must choose the fresher resetTime (2026-10-23) atomically with its 95% quota, NOT the stale 5%!
+  assert.equal(merged.windows[0].remainingPercent, 95);
+  assert.equal(merged.windows[0].resetsAt, new Date('2026-10-23T18:00:00Z').toISOString());
+});
+
+// Claude Round 2 Blocking Finding B7: Cloud credentials blocked, configDirExplicit unsetting, settings warnings
+test('Claude B7: cleanEnvironment blocks cloud/codex variables and launchWarnings checks setting files and helpers', () => {
+  const { cleanEnvironment } = require('../src/providers/common.cjs');
+  const { launchEnvironment, launchWarnings } = require('../src/core/launcher.cjs');
+
+  const dirty = {
+    AWS_ACCESS_KEY_ID: 'AKIAEXAMPLE',
+    aws_secret_access_key: 'secret',
+    CLAUDE_CODE_USE_BEDROCK: '1',
+    claude_code_use_vertex: '1',
+    ANTHROPIC_VERTEX_PROJECT_ID: 'my-project',
+    CODEX_HOME: '/opt/codex',
+    openai_base_url: 'https://proxy.example',
+    CLAUDE_CONFIG_DIR: '/custom/claude',
+    claude_config_dir: '/custom/claude-lower',
+    KEEP_VAR: 'safe'
+  };
+
+  // win32 cleanEnvironment deletes all case-insensitively
+  const cleanedWin = cleanEnvironment(dirty, 'win32');
+  assert.equal(cleanedWin.AWS_ACCESS_KEY_ID, undefined);
+  assert.equal(cleanedWin.aws_secret_access_key, undefined);
+  assert.equal(cleanedWin.CLAUDE_CODE_USE_BEDROCK, undefined);
+  assert.equal(cleanedWin.claude_code_use_vertex, undefined);
+  assert.equal(cleanedWin.ANTHROPIC_VERTEX_PROJECT_ID, undefined);
+  assert.equal(cleanedWin.CODEX_HOME, undefined);
+  assert.equal(cleanedWin.openai_base_url, undefined);
+  assert.equal(cleanedWin.KEEP_VAR, 'safe');
+
+  // launchEnvironment unsets CLAUDE_CONFIG_DIR when configDirExplicit is false or default
+  const launchedExplicitFalse = launchEnvironment({ id: 'claude:custom', configDir: '/some/dir', configDirExplicit: false }, dirty, 'darwin');
+  assert.equal(launchedExplicitFalse.CLAUDE_CONFIG_DIR, undefined);
+
+  // launchWarnings warns on localSettings and apiKeyHelper
+  const snapshot = {
+    providers: [{ id: 'claude', accounts: [{ id: 'claude:default', status: 'ok', fetchedAt: new Date().toISOString(), windows: [{ id: 'five_hour', remainingPercent: 50 }, { id: 'seven_day', remainingPercent: 50 }] }] }],
+    settings: { accounts: [{ id: 'claude:default', providerId: 'claude', primary: true, enabled: true }] }
+  };
+
+  const warnLocal = launchWarnings(snapshot, { id: 'claude:default' }, {
+    localSettings: { env: { AWS_ACCESS_KEY_ID: 'key' } }
+  });
+  assert.equal(warnLocal.some(w => w.includes('.claude/settings.local.json')), true);
+
+  const warnHelper = launchWarnings(snapshot, { id: 'claude:default' }, {
+    projectSettings: { apiKeyHelper: '/bin/get-key.sh' }
+  });
+  assert.equal(warnHelper.some(w => w.includes('apiKeyHelper')), true);
+});
+
+// Claude Round 2 Finding: Read-Only Verification (Zero FS Writes During Quota Check)
+test('Claude Round 2 Guarantee: Quota monitoring performs zero filesystem writes or token modifications', async t => {
+  const { createClaudeProvider } = require('../src/providers/claude.cjs');
+  let writeCount = 0;
+
+  // Intercept write calls
+  const originalWriteFile = fs.writeFile;
+  const originalAppendFile = fs.appendFile;
+  fs.writeFile = async (...args) => { writeCount++; return originalWriteFile.apply(fs, args); };
+  fs.appendFile = async (...args) => { writeCount++; return originalAppendFile.apply(fs, args); };
+  t.after(() => {
+    fs.writeFile = originalWriteFile;
+    fs.appendFile = originalAppendFile;
+  });
+
+  const provider = createClaudeProvider({
+    platform: 'darwin',
+    readCredentials: async () => ({ claudeAiOauth: { accessToken: 'mock-token', expiresAt: Date.now() + 3600000 } }),
+    getJson: async () => ({ five_hour: { remaining_fraction: 0.9 } })
+  });
+
+  const result = await provider.fetch({ id: 'claude:default', configDir: '/tmp/.claude' });
+  assert.equal(result.windows.length, 2);
+  assert.equal(writeCount, 0, 'Quota fetch must NEVER write to filesystem or credentials store!');
+});
+
+// Claude Round 3 Blocking Finding R1: Closed app discovery failure never deletes accounts
+test('Claude R1: Antigravity app closed error re-thrown during discover, preventing account deletion across 3+ cycles', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const { ProviderError } = require('../src/providers/common.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-r1-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let appRunning = true;
+  const antigravityProvider = {
+    id: 'antigravity',
+    name: 'Antigravity',
+    discover: async () => {
+      if (!appRunning) throw new ProviderError('app_closed');
+      return [{ id: 'antigravity:work@corp.com', providerId: 'antigravity', label: 'Antigravity (work@corp.com)', email: 'work@corp.com', primary: true, enabled: true }];
+    },
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [antigravityProvider]
+  });
+
+  assert.equal(svc.snapshot().settings.accounts.length, 1);
+  assert.equal(svc.snapshot().settings.accounts[0].id, 'antigravity:work@corp.com');
+
+  // App is now closed for 5 consecutive discovery cycles
+  appRunning = false;
+  for (let i = 0; i < 5; i++) {
+    await svc.reconcileDiscovery();
+  }
+
+  // Account MUST NOT have been deleted after 5 cycles with app closed!
+  const finalAccounts = svc.snapshot().settings.accounts;
+  assert.equal(finalAccounts.length, 1);
+  assert.equal(finalAccounts[0].id, 'antigravity:work@corp.com');
+});
+
+// Claude Round 3 Blocking Finding R2: Account count transition 1 -> 2 prevents quota mixing
+test('Claude R2: Transition from 1 to 2 accounts prevents cross-account quota pollution', async () => {
+  const { createAntigravityProvider, antigravityAccountId } = require('../src/providers/antigravity.cjs');
+
+  const serverWork = { pid: 101, csrfToken: 'tok1', ports: [6101], sourceKind: 'ide' };
+  const serverPersonal = { pid: 102, csrfToken: 'tok2', ports: [6102], sourceKind: 'app' };
+
+  // 1. Initial state: only 1 server (work@corp.com) running
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [serverWork, serverPersonal],
+    requestLocalJson: async (server) => {
+      if (server.pid === 101) {
+        return {
+          userStatus: { email: 'work@corp.com' },
+          groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.90 }] }]
+        };
+      }
+      return {
+        userStatus: { email: 'personal@gmail.com' },
+        groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.10 }] }]
+      };
+    }
+  });
+
+  // Discovery returns stable IDs with email
+  const accounts = await provider.discover();
+  assert.equal(accounts.length, 2);
+  assert.equal(accounts[0].id, antigravityAccountId('work@corp.com'));
+  assert.equal(accounts[1].id, antigravityAccountId('personal@gmail.com'));
+
+  // Fetch for work account returns strictly work quota (90%), never polluted by personal (10%)
+  const workQuota = await provider.fetch({ id: antigravityAccountId('work@corp.com'), email: 'work@corp.com' });
+  assert.equal(workQuota.windows[0].remainingPercent, 90);
+
+  // Ambiguity protection: fetching a legacy account without email refuses to merge multiple accounts
+  await assert.rejects(
+    () => provider.fetch({ id: 'antigravity:current' }),
+    /unsupported_profile/
+  );
+});
+
+// Claude Round 3 Blocking Finding R3: Serialized reconcileDiscovery and dismissedAccountIds
+test('Claude R3: Discovery and updateSettings are serialized via pendingSave and dismissed accounts are not resurrected', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-r3-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let discovered = [
+    { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
+    { id: 'claude:b', providerId: 'claude', label: 'Discovered B', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => discovered,
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({
+    settingsPath: path.join(dir, 'settings.json'),
+    providers: [provider]
+  });
+
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // User deletes Account B via dismissAccount concurrently with reconcileDiscovery
+  const p1 = svc.dismissAccount('claude:b');
+  const p2 = svc.reconcileDiscovery();
+
+  await Promise.all([p1, p2]);
+
+  // Account B must be in dismissedAccountIds and NOT resurrected in settings.accounts!
+  const snap = svc.snapshot();
+  assert.equal(snap.settings.accounts.length, 1);
+  assert.equal(snap.settings.accounts[0].id, 'claude:a');
+  assert.equal(snap.settings.dismissedAccountIds.includes('claude:b'), true);
+
+  // Run another discovery cycle where discover() still sees Account B on disk
+  await svc.reconcileDiscovery();
+  const snapAfter = svc.snapshot();
+  assert.equal(snapAfter.settings.accounts.length, 1);
+  assert.equal(snapAfter.settings.accounts[0].id, 'claude:a');
+});
+
+// Claude Round 3 Blocking Finding R4: User preferences (origin, enabled, order) persist across cold restarts
+test('Claude R4: origin: user and enabled: false persist across restart and are never auto-deleted', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-r4-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let discovered = [
+    { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
+    { id: 'claude:b', providerId: 'claude', label: 'Discovered B', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => discovered,
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc1 = await createService({ settingsPath, providers: [provider] });
+
+  // User customizes: disables account B and changes label
+  await svc1.updateSettings({
+    accounts: [
+      { id: 'claude:a', providerId: 'claude', label: 'Discovered A', primary: true, enabled: true },
+      { id: 'claude:b', providerId: 'claude', label: 'My Disabled Account B', primary: false, enabled: false }
+    ]
+  });
+
+  const snap1 = svc1.snapshot();
+  const accB1 = snap1.settings.accounts.find(a => a.id === 'claude:b');
+  assert.equal(accB1.origin, 'user');
+  assert.equal(accB1.enabled, false);
+
+  // Cold restart: create brand new service loading from the same settingsPath
+  discovered = []; // No accounts discovered on disk
+  const svc2 = await createService({ settingsPath, providers: [provider] });
+
+  const snap2 = svc2.snapshot();
+  const accB2 = snap2.settings.accounts.find(a => a.id === 'claude:b');
+  assert.equal(accB2.origin, 'user');
+  assert.equal(accB2.enabled, false);
+  assert.equal(accB2.label, 'My Disabled Account B');
+
+  // Run 3 clean misses of discovery where discover() returns empty
+  await svc2.reconcileDiscovery(); // miss 1
+  await svc2.reconcileDiscovery(); // miss 2
+  await svc2.reconcileDiscovery(); // miss 3
+
+  // Account A (discovered) was deleted after 3 misses
+  // Account B (user + disabled) is 100% retained!
+  const finalAccounts = svc2.snapshot().settings.accounts;
+  assert.equal(finalAccounts.length, 1);
+  assert.equal(finalAccounts[0].id, 'claude:b');
+  assert.equal(finalAccounts[0].enabled, false);
+});
+
+// Claude Round 4 Verification: R2 legacy migration from antigravity:current to antigravity:${hash}
+test('Claude R2: legacy antigravity:current seamlessly migrates to antigravity:${hash} while preserving user customizations', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const { antigravityAccountId } = require('../src/providers/antigravity.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-r2-migration-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  // Existing settings file with legacy antigravity:current customized by user
+  const initialSettings = {
+    pinned: false,
+    intervalSeconds: 60,
+    accounts: [
+      {
+        id: 'antigravity:current',
+        providerId: 'antigravity',
+        label: 'My Work Antigravity',
+        origin: 'user',
+        primary: true,
+        enabled: true
+      }
+    ],
+    dismissedAccountIds: []
+  };
+  await fs.writeFile(settingsPath, JSON.stringify(initialSettings, null, 2), 'utf-8');
+
+  const targetId = antigravityAccountId('dev@company.com');
+  const provider = {
+    id: 'antigravity',
+    name: 'Antigravity',
+    discover: async () => [
+      {
+        id: targetId,
+        providerId: 'antigravity',
+        email: 'dev@company.com',
+        label: 'dev@company.com',
+        primary: false,
+        enabled: true
+      }
+    ],
+    fetch: async () => ({ windows: [{ id: 'gemini-session', remainingPercent: 85 }] })
+  };
+
+  const svc = await createService({ settingsPath, providers: [provider] });
+
+  const snap1 = svc.snapshot();
+  assert.equal(snap1.settings.accounts.length, 1);
+  const migrated = snap1.settings.accounts[0];
+  assert.equal(migrated.id, targetId);
+  assert.equal(migrated.email, 'dev@company.com');
+  assert.equal(migrated.label, 'My Work Antigravity'); // User custom label preserved!
+  assert.equal(migrated.origin, 'user'); // User origin preserved!
+  assert.equal(migrated.primary, true); // User primary preserved!
+  assert.equal(migrated.enabled, true);
+
+  // Subsequent reconciliation keeps migrated account stable
+  await svc.reconcileDiscovery();
+  const snap2 = svc.snapshot();
+  assert.equal(snap2.settings.accounts.length, 1);
+  assert.equal(snap2.settings.accounts[0].id, targetId);
+  assert.equal(snap2.settings.accounts[0].label, 'My Work Antigravity');
+});
+
+// Claude Round 4 Blocking Finding E1: Dismissed accounts persist across cold restarts
+test('Claude E1: Dismissed accounts persist across cold restarts and are never auto-re-added by discovery', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-e1-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let discovered = [
+    { id: 'claude:acc1', providerId: 'claude', label: 'Claude Account 1', primary: true, enabled: true },
+    { id: 'claude:acc2', providerId: 'claude', label: 'Claude Account 2', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => discovered,
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  // 1. Initial service start discovers 2 accounts
+  const svc1 = await createService({ settingsPath, providers: [provider] });
+  assert.equal(svc1.snapshot().settings.accounts.length, 2);
+
+  // User dismisses Account 2
+  await svc1.dismissAccount('claude:acc2');
+  assert.equal(svc1.snapshot().settings.accounts.length, 1);
+  assert.equal(svc1.snapshot().settings.accounts[0].id, 'claude:acc1');
+
+  // 2. Cold restart: instantiate brand-new service loading from the exact same settingsPath
+  // Even though discover() still returns Account 2 on disk:
+  const svc2 = await createService({ settingsPath, providers: [provider] });
+  const snapAfterRestart = svc2.snapshot();
+  assert.equal(snapAfterRestart.settings.accounts.length, 1);
+  assert.equal(snapAfterRestart.settings.accounts[0].id, 'claude:acc1');
+  assert.equal(snapAfterRestart.settings.dismissedAccountIds.includes('claude:acc2'), true);
+
+  // Run 3 consecutive reconciliation cycles
+  await svc2.reconcileDiscovery();
+  await svc2.reconcileDiscovery();
+  await svc2.reconcileDiscovery();
+
+  const finalSnap = svc2.snapshot();
+  assert.equal(finalSnap.settings.accounts.length, 1);
+  assert.equal(finalSnap.settings.accounts[0].id, 'claude:acc1');
+});
+
+// Claude Round 4 Blocking Finding E2: Email with '+' character and long email bounds validation
+test('Claude E2: Email with + character (user+tag@gmail.com) and long email validate cleanly without crash', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const { createAntigravityProvider, antigravityAccountId } = require('../src/providers/antigravity.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-e2-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const plusEmail = 'user+tag@domain.com';
+  const longEmail = 'extremely.long.corporate.work.user.email.address.that.exceeds.sixty.seven.characters@very.long.subdomain.enterprise.company.com';
+
+  const server1 = { pid: 701, csrfToken: 'tok1', ports: [7101], sourceKind: 'ide' };
+  const server2 = { pid: 702, csrfToken: 'tok2', ports: [7102], sourceKind: 'app' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [server1, server2],
+    requestLocalJson: async (server, port, method) => {
+      if (server.pid === 701) {
+        return { userStatus: { email: plusEmail }, groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.90 }] }] };
+      }
+      return { userStatus: { email: longEmail }, groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.80 }] }] };
+    }
+  });
+
+  // Verify discover() returns sanitized 28-char IDs matching regex and labels clamped to <= 80 chars
+  const discovered = await provider.discover();
+  assert.equal(discovered.length, 2);
+  for (const acc of discovered) {
+    assert.match(acc.id, /^antigravity:[0-9a-f]{16}$/);
+    assert.ok(acc.label.length <= 80);
+  }
+  assert.equal(discovered[0].id, antigravityAccountId(plusEmail));
+  assert.equal(discovered[1].id, antigravityAccountId(longEmail));
+
+  // Service initializes cleanly with these accounts and validates settings without crash
+  const svc = await createService({ settingsPath, providers: [provider] });
+  const accounts = svc.snapshot().settings.accounts;
+  assert.equal(accounts.length, 2);
+  assert.equal(accounts[0].id, antigravityAccountId(plusEmail));
+  assert.equal(accounts[0].email, plusEmail.toLowerCase());
+  assert.equal(accounts[1].id, antigravityAccountId(longEmail));
+  assert.equal(accounts[1].email, longEmail.toLowerCase());
+});
+
+// Claude Round 4 Blocking Finding E3: Identity-free RetrieveUserQuotaSummary relies on GetUserStatus pid->email mapping
+test('Claude E3: Quota summary without identity relies on pid->email mapping via GetUserStatus', async () => {
+  const { createAntigravityProvider, antigravityAccountId } = require('../src/providers/antigravity.cjs');
+
+  const serverWork = { pid: 801, csrfToken: 'tok1', ports: [8101], sourceKind: 'ide' };
+  const serverPersonal = { pid: 802, csrfToken: 'tok2', ports: [8102], sourceKind: 'app' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [serverWork, serverPersonal],
+    requestLocalJson: async (server, port, method) => {
+      // GetUserStatus reports identity
+      if (method === 'GetUserStatus') {
+        if (server.pid === 801) return { code: 'ok', userStatus: { email: 'work@corp.com' } };
+        if (server.pid === 802) return { code: 'ok', userStatus: { email: 'personal@gmail.com' } };
+      }
+      // RetrieveUserQuotaSummary has NO email field whatsoever ("summary without identity")
+      if (method === 'RetrieveUserQuotaSummary') {
+        if (server.pid === 801) {
+          return { code: 'ok', groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.92 }] }] };
+        }
+        if (server.pid === 802) {
+          return { code: 'ok', groups: [{ id: 'cg', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.22 }] }] };
+        }
+      }
+      throw new Error('unexpected_method');
+    }
+  });
+
+  const targetWorkId = antigravityAccountId('work@corp.com');
+  const workQuota = await provider.fetch({ id: targetWorkId, email: 'work@corp.com' });
+  assert.equal(workQuota.windows[0].remainingPercent, 92);
+
+  const targetPersonalId = antigravityAccountId('personal@gmail.com');
+  const personalQuota = await provider.fetch({ id: targetPersonalId, email: 'personal@gmail.com' });
+  assert.equal(personalQuota.windows[0].remainingPercent, 22);
+
+  // An account with nonexistent email correctly throws auth_missing
+  await assert.rejects(
+    () => provider.fetch({ id: antigravityAccountId('other@unknown.com'), email: 'other@unknown.com' }),
+    /auth_missing/
+  );
+});
+
+// Claude Round 4 Blocking Finding E4: Running servers with unreadable identity do not delete existing accounts
+test('Claude E4: Running servers with unreadable identity do not delete existing accounts across 5 cycles', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const { antigravityAccountId } = require('../src/providers/antigravity.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-e4-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const targetId = antigravityAccountId('dev@company.com');
+  // Initial settings with dev@company.com configured
+  const initialSettings = {
+    pinned: false,
+    intervalSeconds: 60,
+    accounts: [
+      {
+        id: targetId,
+        providerId: 'antigravity',
+        label: 'Antigravity (dev@company.com)',
+        email: 'dev@company.com',
+        origin: 'discovered',
+        primary: true,
+        enabled: true
+      }
+    ],
+    dismissedAccountIds: []
+  };
+  await fs.writeFile(settingsPath, JSON.stringify(initialSettings, null, 2), 'utf-8');
+
+  // Server is running (pid 901) but GetUserStatus fails (rate limited or server startup)
+  let statusFails = true;
+  const provider = {
+    id: 'antigravity',
+    name: 'Antigravity',
+    discover: async () => {
+      if (statusFails) {
+        // E4: discoverAntigravityServers found servers, but identity read failed -> throws local_service_unavailable
+        const { ProviderError } = require('../src/providers/common.cjs');
+        throw new ProviderError('local_service_unavailable');
+      }
+      return [{ id: targetId, providerId: 'antigravity', email: 'dev@company.com', label: 'Antigravity (dev@company.com)', primary: true, enabled: true }];
+    },
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({ settingsPath, providers: [provider] });
+
+  // Run 5 consecutive discovery reconciliation cycles while identity reading is failing
+  for (let i = 0; i < 5; i++) {
+    await svc.reconcileDiscovery();
+  }
+
+  // dev@company.com account MUST NOT have been deleted, and no zombie antigravity:current was added!
+  const snap = svc.snapshot();
+  assert.equal(snap.settings.accounts.length, 1);
+  assert.equal(snap.settings.accounts[0].id, targetId);
+  assert.equal(snap.settings.accounts[0].email, 'dev@company.com');
+});
+
+// Claude Round 4 Finding Y1: updateSettings does not infer deletion; dismissAccount is explicit
+test('Claude Y1: updateSettings does not infer deletion and dismissAccount is explicit', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-y1-'));
+  const settingsPath = path.join(dir, 'settings.json');
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  let discovered = [
+    { id: 'claude:a', providerId: 'claude', label: 'Claude A', primary: true, enabled: true },
+    { id: 'claude:b', providerId: 'claude', label: 'Claude B', primary: false, enabled: true }
+  ];
+
+  const provider = {
+    id: 'claude',
+    name: 'Claude',
+    discover: async () => discovered,
+    fetch: async () => ({ windows: [{ id: '5h', remainingPercent: 90 }] })
+  };
+
+  const svc = await createService({ settingsPath, providers: [provider] });
+  assert.equal(svc.snapshot().settings.accounts.length, 2);
+
+  // UI saves settings from an older snapshot that only has Account A (e.g. user editing label)
+  await svc.updateSettings({
+    accounts: [{ id: 'claude:a', providerId: 'claude', label: 'Claude A Custom Label', primary: true, enabled: true }]
+  });
+
+  // Account B was NOT put into dismissedAccountIds!
+  assert.equal(svc.snapshot().settings.dismissedAccountIds.includes('claude:b'), false);
+
+  // Background discovery reconciles and safely re-attaches Account B
+  await svc.reconcileDiscovery();
+  const snap = svc.snapshot();
+  assert.equal(snap.settings.accounts.length, 2);
+  assert.equal(snap.settings.accounts.some(a => a.id === 'claude:b'), true);
+
+  // Only explicit dismissAccount permanently dismisses Account B
+  await svc.dismissAccount('claude:b');
+  assert.equal(svc.snapshot().settings.dismissedAccountIds.includes('claude:b'), true);
+  await svc.reconcileDiscovery();
+  assert.equal(svc.snapshot().settings.accounts.length, 1);
+  assert.equal(svc.snapshot().settings.accounts[0].id, 'claude:a');
+});
+
+// Claude Round 4 Finding Y2: loadClaudeSettingsFiles reads real disk files and triggers launchWarnings
+test('Claude Y2: loadClaudeSettingsFiles reads real disk files and triggers launchWarnings', async t => {
+  const { loadClaudeSettingsFiles, launchWarnings } = require('../src/core/launcher.cjs');
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-y2-proj-'));
+  const configDir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-y2-cfg-'));
+  t.after(async () => {
+    await fs.rm(projectDir, { recursive: true, force: true });
+    await fs.rm(configDir, { recursive: true, force: true });
+  });
+
+  // Create real .claude/settings.json in projectDir with AWS override
+  await fs.mkdir(path.join(projectDir, '.claude'), { recursive: true });
+  await fs.writeFile(
+    path.join(projectDir, '.claude', 'settings.json'),
+    JSON.stringify({ env: { AWS_ACCESS_KEY_ID: 'real-override' } }),
+    'utf-8'
+  );
+
+  // Create real settings.json in configDir with apiKeyHelper
+  await fs.writeFile(
+    path.join(configDir, 'settings.json'),
+    JSON.stringify({ apiKeyHelper: '/usr/local/bin/token-helper' }),
+    'utf-8'
+  );
+
+  const files = await loadClaudeSettingsFiles(projectDir, configDir);
+  assert.equal(files.projectSettings.env.AWS_ACCESS_KEY_ID, 'real-override');
+  assert.equal(files.userSettings.apiKeyHelper, '/usr/local/bin/token-helper');
+
+  const snapshot = {
+    providers: [{ id: 'claude', accounts: [{ id: 'claude:default', status: 'ok', fetchedAt: new Date().toISOString(), windows: [{ id: 'five_hour', remainingPercent: 50 }, { id: 'seven_day', remainingPercent: 50 }] }] }],
+    settings: { accounts: [{ id: 'claude:default', providerId: 'claude', primary: true, enabled: true }] }
+  };
+
+  const warnings = launchWarnings(snapshot, { id: 'claude:default' }, files);
+  assert.ok(warnings.some(w => w.includes('.claude/settings.json')));
+  assert.ok(warnings.some(w => w.includes('apiKeyHelper')));
+});
+
+// Claude Round 4 Finding Y3: macOS launcher script contains unset ANTHROPIC_BEDROCK_BASE_URL
+test('Claude Y3: macOS launcher script contains unset ANTHROPIC_BEDROCK_BASE_URL', async t => {
+  const launcherSrc = await fs.readFile(path.join(__dirname, '../src/core/launcher.cjs'), 'utf-8');
+  assert.ok(launcherSrc.includes('unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_PROFILE CLAUDE_SECURESTORAGE_CONFIG_DIR CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX CLAUDE_CODE_USE_FOUNDRY ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_BEDROCK_BASE_URL AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN'));
+});
+
+// Claude Round 5 Finding F1: Antigravity discover() fails closed on partial query failure
+test('Claude F1: discover() fails closed when any running server fails GetUserStatus or returns no email', async () => {
+  const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
+  const server1 = { pid: 101, csrfToken: 'tok1', ports: [3101], sourceKind: 'app' };
+  const server2 = { pid: 202, csrfToken: 'tok2', ports: [3202], sourceKind: 'ide' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [server1, server2],
+    requestLocalJson: async (server, port, method) => {
+      if (server.pid === 101) return { userStatus: { email: 'user1@company.com' } };
+      // Server 2 fails transport or returns no email
+      throw new Error('connection_refused');
+    }
+  });
+
+  await assert.rejects(
+    async () => await provider.discover(),
+    { code: 'local_service_unavailable' }
+  );
+});
+
+// Claude Round 5 Finding F1: Antigravity accounts are exempt from miss-based deletion in reconcileDiscovery
+test('Claude F1: reconcileDiscovery preserves Antigravity accounts when process is closed', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-f1-antigravity-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const settingsPath = path.join(dir, 'settings.json');
+  // Seed settings with an Antigravity account and a Claude account (both discovered)
+  const initialSettings = {
+    pinned: false,
+    intervalSeconds: 120,
+    accounts: [
+      { id: 'antigravity:1234567890abcdef', providerId: 'antigravity', label: 'Antigravity IDE', primary: true, enabled: true, origin: 'discovered' },
+      { id: 'claude:profile1', providerId: 'claude', configDir: path.join(dir, 'nonexistent'), label: 'Claude Old', primary: false, enabled: true, origin: 'discovered' }
+    ]
+  };
+  await fs.writeFile(settingsPath, JSON.stringify(initialSettings), 'utf-8');
+
+  // Claude discovers empty list (clean miss), Antigravity discovers empty list
+  const service = await createService({
+    settingsPath,
+    providers: [
+      { id: 'antigravity', name: 'Antigravity', discover: async () => [], fetch: async () => ({ windows: [] }) },
+      { id: 'claude', name: 'Claude', discover: async () => [], fetch: async () => ({ windows: [] }) }
+    ]
+  });
+
+  // Run 3 reconcileDiscovery cycles so Claude accumulates 3 consecutive clean misses
+  await service.reconcileDiscovery();
+  await service.reconcileDiscovery();
+  await service.reconcileDiscovery();
+  const accountsAfter = service.snapshot().settings.accounts;
+
+  // Claude account should have been removed after 3rd clean miss
+  assert.equal(accountsAfter.some(a => a.id === 'claude:profile1'), false);
+  // Antigravity account must be PRESERVED because processes being closed is normal lifetime
+  assert.equal(accountsAfter.some(a => a.id === 'antigravity:1234567890abcdef'), true);
+});
+
+// Claude Round 5 Finding F2: Multi-server fetch refuses to merge if any server has unresolvable email
+test('Claude F2: fetch refuses to merge when multiple servers run and any server lacks verified identity', async () => {
+  const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
+  const server1 = { pid: 101, csrfToken: 'tok1', ports: [3101], sourceKind: 'app' };
+  const server2 = { pid: 202, csrfToken: 'tok2', ports: [3202], sourceKind: 'ide' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [server1, server2],
+    requestLocalJson: async (server, port, method) => {
+      if (server.pid === 101) {
+        if (method === 'GetUserStatus') return { userStatus: { email: 'dev@company.com' } };
+        return { groups: [{ id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 1.0 }] }] };
+      }
+      if (server.pid === 202) {
+        // IDE responds with quota but GetUserStatus has no email
+        if (method === 'GetUserStatus') return { userStatus: { email: null } };
+        return { groups: [{ id: 'gemini', displayName: 'Gemini', buckets: [{ bucketId: 'weekly', window: 'weekly', remainingFraction: 0.9 }] }] };
+      }
+    }
+  });
+
+  // Multiple servers running, but one cannot resolve identity -> fail closed
+  await assert.rejects(
+    async () => await provider.fetch({ id: 'antigravity:current' }),
+    { code: 'local_service_unavailable' }
+  );
+});
+
+// Claude Round 5 Finding F2: fetchServerWindows continues port loop if first port lacks email
+test('Claude F2: fetchServerWindows checks subsequent ports if first port has no email', async () => {
+  const { createAntigravityProvider } = require('../src/providers/antigravity.cjs');
+  // Server with two ports: port 3101 has no email, port 3102 has email
+  const server = { pid: 101, csrfToken: 'tok1', ports: [3101, 3102], sourceKind: 'app' };
+
+  const provider = createAntigravityProvider({
+    platform: 'darwin',
+    discoverAntigravityServers: async () => [server],
+    requestLocalJson: async (s, port, method) => {
+      if (port === 3101) {
+        if (method === 'GetUserStatus') return { userStatus: { email: null } };
+        return { groups: [] };
+      }
+      if (port === 3102) {
+        if (method === 'GetUserStatus') return { userStatus: { email: 'dev@test.com' } };
+        return { groups: [{ id: 'claude-gpt', displayName: 'Claude and GPT', buckets: [{ bucketId: 'session', window: '5h', remainingFraction: 0.8 }] }] };
+      }
+    }
+  });
+
+  const result = await provider.fetch({ id: 'antigravity:current', email: 'dev@test.com' });
+  assert.equal(result.windows.length, 1);
+  assert.equal(result.windows[0].remainingPercent, 80);
+});
+
+// Claude Round 5 Finding F3: dismissAccount validation and UI dismissal lifecycle
+test('Claude F3: dismissAccount validates id format, bounds dismissedAccountIds, and supports un-dismissing', async t => {
+  const { createService } = require('../src/core/service.cjs');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-f3-dismiss-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const settingsPath = path.join(dir, 'settings.json');
+  const service = await createService({
+    settingsPath,
+    providers: [
+      { id: 'claude', name: 'Claude', discover: async () => [{ id: 'claude:valid1', providerId: 'claude', label: 'Valid 1', primary: true, enabled: true }], fetch: async () => ({ windows: [] }) }
+    ]
+  });
+  await service.reconcileDiscovery();
+
+  // Test invalid account ID rejection in service
+  await assert.rejects(
+    async () => await service.dismissAccount('invalid account with spaces!'),
+    /invalid_account/
+  );
+
+  // Verify account was discovered with origin: 'discovered'
+  const beforeDismiss = service.snapshot().settings.accounts;
+  assert.equal(beforeDismiss.find(a => a.id === 'claude:valid1')?.origin, 'discovered');
+
+  // Dismiss valid account
+  await service.dismissAccount('claude:valid1');
+  let snapshot = service.snapshot();
+  assert.ok(snapshot.settings.dismissedAccountIds.includes('claude:valid1'));
+  assert.equal(snapshot.settings.accounts.some(a => a.id === 'claude:valid1'), false);
+
+  // Dismissed accounts bounded to 100 entries
+  const hundredIds = Array.from({ length: 110 }, (_, i) => `claude:id_${i}`);
+  await service.updateSettings({ dismissedAccountIds: hundredIds });
+  snapshot = service.snapshot();
+  assert.equal(snapshot.settings.dismissedAccountIds.length, 100);
+
+  // Test updateSettings preserves account origin when untouched
+  // Re-add an account via discovery
+  const discService = await createService({
+    settingsPath: path.join(dir, 'settings2.json'),
+    providers: [
+      { id: 'claude', name: 'Claude', discover: async () => [{ id: 'claude:disc1', providerId: 'claude', label: 'D1', primary: true, enabled: true }], fetch: async () => ({ windows: [] }) }
+    ]
+  });
+  await discService.reconcileDiscovery();
+  assert.equal(discService.snapshot().settings.accounts[0].origin, 'discovered');
+
+  // Update settings without modifying label, primary, or position
+  await discService.updateSettings({
+    accounts: [{ id: 'claude:disc1', providerId: 'claude', label: 'D1', primary: true, enabled: true }]
+  });
+  assert.equal(discService.snapshot().settings.accounts[0].origin, 'discovered');
+});
+```
+
+---
+
+## Claude'dan Talep Edilen Nihai Değerlendirme
+
+Lütfen aşağıdaki hususları inceleyerek Tur 6 Son Kabul raporunu hazırla:
+1. Tur 5'te belirtilen F1, F2 ve F3 maddeleri tatmin edici şekilde çözülmüş müdür?
+2. 6 ana kusur (Windows env case-insensitivity, Antigravity kaynak ayrımı, refresh scope race, keşif yaşam döngüsü, boş/geçersiz yanıt yönetimi, macOS Claude Keychain seçicisi) tam olarak kapatılmış mıdır?
+3. TLS sertifika güveni (`rejectUnauthorized: true`), kimlik bilgisi sızdırmazlığı, sahte kota üretmeme ve varsayımsızlık ilkeleri korunmuş mudur?
+4. Nihai üretim kabulü kararın nedir? (Kabul / Ek koşul)

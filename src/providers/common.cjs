@@ -47,10 +47,14 @@ function getJson(endpoint, { headers = {}, timeoutMs = 15000, requestImpl = http
     } catch (error) { finish(new ProviderError(error.message === 'trust_store_unavailable' ? 'trust_store_unavailable' : 'transport_error')); }
   });
 }
-function validBinary(file) { return typeof file === 'string' && path.isAbsolute(file) && !/[\x00-\x1f]/.test(file) && !/\.(cmd|bat|ps1)$/i.test(file); }
+function validBinary(file, platform = process.platform) {
+  if (typeof file !== 'string' || !file || /[\x00-\x1f]/.test(file) || /\.(cmd|bat|ps1)$/i.test(file)) return false;
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  return p.isAbsolute(file);
+}
 async function findBinary(name, { env = process.env, home = os.homedir(), platform = process.platform } = {}) {
   const override = env[`VIBE_${name.toUpperCase()}_BINARY`];
-  if (override) { if (!validBinary(override)) throw new ProviderError('invalid_binary'); try { if ((await fs.stat(override)).isFile()) return override; } catch {} throw new ProviderError('binary_missing'); }
+  if (override) { if (!validBinary(override, platform)) throw new ProviderError('invalid_binary'); try { if ((await fs.stat(override)).isFile()) return override; } catch {} throw new ProviderError('binary_missing'); }
   // Verified Windows desktop installation; PATH lookup also supports npm/Homebrew
   // installs on macOS. Finder doesn't inherit shell startup files, so consult
   // macOS path_helper's /etc/paths and paths.d, rather than executing a shell.
@@ -64,18 +68,49 @@ async function findBinary(name, { env = process.env, home = os.homedir(), platfo
   let candidates = directories.map(directory => path.join(directory, filename));
   if (name === 'codex' && platform === 'win32') candidates.unshift(path.join(env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'Programs/OpenAI/Codex/bin/codex.exe'));
   if (name === 'claude') candidates.unshift(path.join(home, '.local/bin', filename));
-  for (const candidate of candidates) { if (!validBinary(candidate)) continue; try { if ((await fs.stat(candidate)).isFile()) return candidate; } catch {} }
+  for (const candidate of candidates) { if (!validBinary(candidate, platform)) continue; try { if ((await fs.stat(candidate)).isFile()) return candidate; } catch {} }
   throw new ProviderError('binary_missing');
 }
-function cleanEnvironment(config = {}) {
-  const environment = { ...process.env, ...config };
-  for (const key of ['OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN', 'ACCESS_TOKEN', 'ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CURSOR_API_KEY']) delete environment[key];
-  return environment;
+const BLOCKED_ENV_KEYS = [
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'CODEX_HOME',
+  'CODEX_API_KEY',
+  'CODEX_ACCESS_TOKEN',
+  'ACCESS_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_PROFILE',
+  'ANTHROPIC_VERTEX_PROJECT_ID',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'CURSOR_API_KEY'
+];
+
+function cleanEnvironment(config = {}, platform = process.platform, source = process.env) {
+  const environment = { ...source };
+  if (platform === 'win32') {
+    const blocked = new Set(BLOCKED_ENV_KEYS.map(k => k.toLowerCase()));
+    for (const key of Object.keys(environment)) {
+      if (blocked.has(key.toLowerCase())) delete environment[key];
+    }
+  } else {
+    for (const key of BLOCKED_ENV_KEYS) delete environment[key];
+  }
+  return { ...environment, ...config };
 }
-function runProcess(binary, args, { env, timeoutMs = 20000, maxBytes = 1024 * 1024 } = {}) {
+function runProcess(binary, args, { env, platform = process.platform, timeoutMs = 20000, maxBytes = 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
-    if (!validBinary(binary) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0'))) return reject(new ProviderError('invalid_binary'));
-    const child = spawn(binary, args, { env: env || cleanEnvironment(), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    if (!validBinary(binary, platform) || !Array.isArray(args) || args.some(a => typeof a !== 'string' || a.includes('\0'))) return reject(new ProviderError('invalid_binary'));
+    const child = spawn(binary, args, { env: env || cleanEnvironment({}, platform), shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '', bytes = 0, failure = null;
     const timer = setTimeout(() => { failure = new ProviderError('process_timeout'); child.kill('SIGKILL'); }, timeoutMs);
     child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > maxBytes) { output = ''; failure = new ProviderError('response_too_large'); child.kill('SIGKILL'); } else output += chunk.toString(); });

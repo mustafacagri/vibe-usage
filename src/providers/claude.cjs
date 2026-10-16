@@ -32,11 +32,11 @@ function parseClaudeUsage(usage) {
   }
   return { windows };
 }
-function profileAccount(configDir, defaultDir) {
+function profileAccount(configDir, defaultDir, configDirExplicit) {
   const isDefault = path.resolve(configDir) === path.resolve(defaultDir);
   const secondary = path.basename(configDir) === '.claude-secondary';
-  const suffix = isDefault ? 'default' : secondary ? 'secondary' : crypto.createHash('sha256').update(path.resolve(configDir)).digest('hex').slice(0, 12);
-  return { id: `claude:${suffix}`, providerId: 'claude', label: isDefault ? 'Hesap A' : secondary ? 'Hesap B' : path.basename(configDir).replace(/^\.claude-?/, '') || 'Claude hesabı', configDir, primary: isDefault, enabled: true };
+  const suffix = isDefault && !configDirExplicit ? 'default' : secondary ? 'secondary' : crypto.createHash('sha256').update(path.resolve(configDir)).digest('hex').slice(0, 12);
+  return { id: `claude:${suffix}`, providerId: 'claude', label: isDefault && !configDirExplicit ? 'Hesap A' : secondary ? 'Hesap B' : path.basename(configDir).replace(/^\.claude-?/, '') || 'Claude hesabı', configDir, ...(configDirExplicit !== undefined ? { configDirExplicit } : {}), primary: isDefault && !configDirExplicit, enabled: true };
 }
 async function discoverClaudeAccounts({ home = os.homedir(), platform = process.platform } = {}) {
   const defaultDir = path.join(home, '.claude');
@@ -46,30 +46,33 @@ async function discoverClaudeAccounts({ home = os.homedir(), platform = process.
   for (const root of roots) {
     try {
       const file = path.join(root, '.credentials.json');
+      const isDefault = path.resolve(root) === path.resolve(defaultDir);
       if (platform === 'darwin') {
         const configured = await fs.stat(path.join(root,'settings.json')).then(s=>s.isFile()).catch(()=>false);
-        if (configured) { accounts.push(profileAccount(root,defaultDir)); continue; }
+        if (configured) { accounts.push(profileAccount(root, defaultDir, isDefault ? false : true)); continue; }
       }
       if (!(await fs.lstat(file)).isFile()) continue;
       const auth = await common.readJson(file);
-      if (typeof auth.claudeAiOauth?.accessToken === 'string' && auth.claudeAiOauth.accessToken.trim()) accounts.push(profileAccount(root, defaultDir));
+      if (typeof auth.claudeAiOauth?.accessToken === 'string' && auth.claudeAiOauth.accessToken.trim()) accounts.push(profileAccount(root, defaultDir, isDefault ? false : true));
     } catch { /* No history, backups, or raw credential values are exposed. */ }
   }
   // Only the default service name has been verified in primary source. A custom
   // Mac profile is never silently assigned the default profile's Keychain entry.
-  if (platform === 'darwin' && !accounts.some(a => a.id === 'claude:default')) accounts.unshift(profileAccount(defaultDir, defaultDir));
+  if (platform === 'darwin' && !accounts.some(a => a.id === 'claude:default')) accounts.unshift(profileAccount(defaultDir, defaultDir, false));
   accounts.sort((a, b) => (a.id === 'claude:default' ? -1 : b.id === 'claude:default' ? 1 : a.id === 'claude:secondary' ? -1 : b.id === 'claude:secondary' ? 1 : a.label.localeCompare(b.label)));
-  if (!accounts.length) accounts.push(profileAccount(defaultDir, defaultDir));
+  if (!accounts.length) accounts.push(profileAccount(defaultDir, defaultDir, false));
   if (!accounts.some(a => a.primary)) accounts[0].primary = true;
   return accounts;
 }
 async function readClaudeCredentials(account, options = {}) {
+  if (options.readCredentials) return options.readCredentials(account);
   const platform = options.platform || process.platform, home = options.home || os.homedir();
   const configDir = account.configDir || path.join(home, '.claude');
   // Source: CodexBar ClaudeOAuth/ClaudeOAuthCredentials.swift, service constant
   // `Claude Code-credentials`. Read only; neither refresh nor Keychain write.
   if (platform === 'darwin') {
-    try { return await require('./claude-keychain.cjs').readClaudeKeychain({configDir,configDirExplicit:account.id!=='claude:default',platform,runProcess:options.runProcess}); } catch { /* Documented file fallback below. */ }
+    const isExplicit = account.configDirExplicit !== undefined ? Boolean(account.configDirExplicit) : (account.id !== 'claude:default');
+    try { return await require('./claude-keychain.cjs').readClaudeKeychain({configDir, configDirExplicit: isExplicit, platform, runProcess: options.runProcess}); } catch { /* Documented file fallback below. */ }
   }
   try { return await common.readJson(path.join(configDir, '.credentials.json')); }
   catch (error) { if (platform === 'darwin' && error.code === 'auth_missing') throw new common.ProviderError(path.resolve(configDir) === path.resolve(home, '.claude') ? 'keychain_unavailable' : 'unsupported_profile'); throw error; }

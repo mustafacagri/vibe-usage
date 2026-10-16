@@ -3,12 +3,16 @@ const path=require('node:path');const os=require('node:os');const {spawn}=requir
 const {normalizeWindow,isoDate,safeText}=require('../core/model.cjs');const common=require('./common.cjs');
 function duration(minutes){if(minutes===10080)return 'Haftalık';if(minutes===300)return '5 saat';if(Number.isFinite(minutes)&&minutes>0)return minutes%60===0?`${minutes/60} saat`:`${minutes} dakika`;return 'Dönem bildirilmedi';}
 function parseCodexRateLimits(response){
- const buckets=response?.rateLimitsByLimitId||(response?.rateLimits?{codex:response.rateLimits}:{});const windows=[];
+ if(!response||typeof response!=='object'||Array.isArray(response))throw new common.ProviderError('invalid_response');
+ if(!response.rateLimitsByLimitId&&!response.rateLimits)throw new common.ProviderError('invalid_response');
+ const buckets=response.rateLimitsByLimitId||(response.rateLimits?{codex:response.rateLimits}:{});const windows=[];
  for(const [bucketId,bucket] of Object.entries(buckets))for(const key of ['primary','secondary']){
   const raw=bucket?.[key];if(!raw)continue;
   windows.push(normalizeWindow({id:`${bucketId}:${key}`,label:duration(raw.windowDurationMins),usedPercent:raw.usedPercent,resetsAt:isoDate(raw.resetsAt,true),...(bucketId!=='codex'?{scope:safeText(bucketId)}:{})}));
  }
- return {windows};
+ const result={windows};
+ if(!windows.length)result.status='no_limits_reported';
+ return result;
 }
 async function probeAccount(binary,configDir){
  const child=spawn(binary,['app-server','--listen','stdio://'],{shell:false,windowsHide:true,env:common.cleanEnvironment({CODEX_HOME:configDir}),stdio:['pipe','pipe','pipe']});

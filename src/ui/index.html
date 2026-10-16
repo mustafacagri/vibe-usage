@@ -1,21 +1,202 @@
 <!doctype html>
-<html lang="tr">
+<html lang="en">
 <head>
  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
  <title>Vibe Usage</title><link rel="stylesheet" href="style.css">
 </head>
 <body>
- <header class="titlebar"><div class="brand">vibe<span>Kullanım hakları</span></div><div class="window-actions"><button id="pin" aria-label="Pencereyi sabitle" aria-pressed="false">♧</button><button id="settings-button" aria-label="Ayarlar">⚙</button><button id="hide" aria-label="Sistem tepsisine gizle">−</button></div></header>
+ <header class="titlebar">
+  <div class="brand">Vibe Usage<span data-i18n="liveTracker">Live Tracker</span></div>
+  <div class="window-actions">
+   <button id="pin" aria-label="Pin window" aria-pressed="false" title="Pin window" data-i18n-title="pinWindow">📌</button>
+   <button id="settings-button" aria-label="Settings" title="Settings" data-i18n-title="settings">⚙️</button>
+   <button id="hide" aria-label="Hide to tray" title="Hide to tray" data-i18n-title="hideToTray">−</button>
+  </div>
+ </header>
  <main>
-  <div class="summary"><span id="overall-status">Hesaplar hazırlanıyor…</span><button id="refresh" class="text-button">Yenile ↻</button></div>
-  <div class="column-label"><span>Hesap / kullanım kapsamı</span><span>Kalan</span></div>
+  <div class="summary">
+   <span id="overall-status" data-i18n="preparingAccounts">Preparing accounts…</span>
+   <div class="summary-actions">
+    <button id="smart-launch-btn" class="summary-btn smart-btn" title="Smart Launch" data-i18n="smartLaunch">⚡️ Smart Launch</button>
+    <button id="handover-btn" class="summary-btn handover-btn" title="Handover" data-i18n="handover">🔄 Handover</button>
+    <button id="refresh" class="text-button" title="Refresh quotas" data-i18n-title="refreshQuotas">↻</button>
+   </div>
+  </div>
   <div id="providers" aria-live="polite"></div>
-  <p class="local-note">Veriler bu cihazdaki oturumlardan okunur.</p>
+  <p class="local-note" data-i18n="safeLocalNote">Data is read securely from local sessions on this device.</p>
  </main>
- <footer><span id="platform-label"></span><span id="refresh-label">Otomatik yenileme · 2 dk</span></footer>
- <dialog id="settings-dialog"><form method="dialog"><header><h2>Ayarlar</h2><button class="text-button" aria-label="Ayarları kapat">Kapat</button></header></form><label class="field">Yenileme sıklığı<select id="interval"><option value="60">1 dakika</option><option value="120">2 dakika</option><option value="300">5 dakika</option><option value="600">10 dakika</option></select></label><h3>Claude hesapları</h3><div id="account-settings"></div><button id="add-profile" class="secondary-button">Kayıtlı profil klasörü ekle</button><p class="help">Her hesabın ilk girişi ayrı profilde yapılır. Ana hesap tercihi yeni CLI işleri içindir.</p><p class="help">Devam eden işte otomatik hesap devri bu sürümde yok.</p><div id="settings-message" role="status"></div></dialog>
+ <footer><span id="platform-label"></span><span id="refresh-label">Auto refresh · 2m</span></footer>
+ 
+ <dialog id="settings-dialog">
+  <form method="dialog"><header><h2 data-i18n="settingsTitle">Settings</h2><button class="text-button" aria-label="Close" data-i18n-aria="closeSettings">✕</button></header></form>
+  
+  <div class="settings-content">
+   <div class="settings-card language-card">
+    <div class="card-header">
+     <span class="card-icon">🌐</span>
+     <strong class="card-title" data-i18n="languageLabel">Language</strong>
+    </div>
+    <div class="field" style="margin: 6px 0 0;">
+     <select id="language-select">
+      <option value="en">English (US)</option>
+      <option value="tr">Türkçe</option>
+      <option value="de">Deutsch</option>
+      <option value="es">Español</option>
+      <option value="fr">Français</option>
+      <option value="it">Italiano</option>
+      <option value="pt">Português</option>
+      <option value="nl">Nederlands</option>
+      <option value="pl">Polski</option>
+      <option value="ja">日本語</option>
+      <option value="ko">한국어</option>
+      <option value="zh">简体中文</option>
+      <option value="ru">Русский</option>
+     </select>
+    </div>
+   </div>
+
+   <div class="settings-card fallback-priority-card">
+    <div class="card-header">
+     <span class="card-icon">🔄</span>
+     <strong class="card-title" data-i18n="fallbackPriorityTitle">Fallback Priority</strong>
+    </div>
+    <p class="card-subtitle" data-i18n="fallbackPrioritySubtitle">Providers that take over sequentially when primary quota is exhausted (all 4 AI tools included):</p>
+    <div class="fallback-priority-grid">
+     <div class="fallback-slot">
+      <label for="fallback-slot-0"><span class="fallback-slot-badge">1</span> <span class="slot-text" data-slot="0">1. Account / Tool</span></label>
+      <select id="fallback-slot-0" class="fallback-select" data-slot="0">
+       <option value="claude">◈ Claude Code</option>
+       <option value="codex">✺ Codex</option>
+       <option value="cursor">✦ Cursor</option>
+       <option value="antigravity">▲ Antigravity</option>
+      </select>
+     </div>
+     <div class="fallback-slot">
+      <label for="fallback-slot-1"><span class="fallback-slot-badge">2</span> <span class="slot-text" data-slot="1">2. Account / Tool</span></label>
+      <select id="fallback-slot-1" class="fallback-select" data-slot="1">
+       <option value="codex">✺ Codex</option>
+       <option value="claude">◈ Claude Code</option>
+       <option value="cursor">✦ Cursor</option>
+       <option value="antigravity">▲ Antigravity</option>
+      </select>
+     </div>
+     <div class="fallback-slot">
+      <label for="fallback-slot-2"><span class="fallback-slot-badge">3</span> <span class="slot-text" data-slot="2">3. Account / Tool</span></label>
+      <select id="fallback-slot-2" class="fallback-select" data-slot="2">
+       <option value="cursor">✦ Cursor</option>
+       <option value="claude">◈ Claude Code</option>
+       <option value="codex">✺ Codex</option>
+       <option value="antigravity">▲ Antigravity</option>
+      </select>
+     </div>
+     <div class="fallback-slot">
+      <label for="fallback-slot-3"><span class="fallback-slot-badge">4</span> <span class="slot-text" data-slot="3">4. Account / Tool</span></label>
+      <select id="fallback-slot-3" class="fallback-select" data-slot="3">
+       <option value="antigravity">▲ Antigravity</option>
+       <option value="claude">◈ Claude Code</option>
+       <option value="codex">✺ Codex</option>
+       <option value="cursor">✦ Cursor</option>
+      </select>
+     </div>
+    </div>
+   </div>
+
+   <div class="settings-card preferred-models-card">
+    <div class="card-header">
+     <span class="card-icon">🎯</span>
+     <strong class="card-title" data-i18n="preferredModelsTitle">Preferred Default Models (Dynamic)</strong>
+    </div>
+    <p class="card-subtitle" data-i18n="preferredModelsSubtitle">Models selected during handover or smart launch:</p>
+    <div class="model-dropdown-row"><label for="preferred-codex"><span class="badge-icon-mini codex-color">✺</span> Codex:</label><select id="preferred-codex" class="model-select"></select></div>
+    <div class="model-dropdown-row"><label for="preferred-claude"><span class="badge-icon-mini claude-color">◈</span> Claude:</label><select id="preferred-claude" class="model-select"></select></div>
+    <div class="model-dropdown-row"><label for="preferred-cursor"><span class="badge-icon-mini cursor-color">✦</span> Cursor:</label><select id="preferred-cursor" class="model-select"></select></div>
+    <div class="model-dropdown-row"><label for="preferred-antigravity"><span class="badge-icon-mini antigravity-color">▲</span> Antigravity:</label><select id="preferred-antigravity" class="model-select"></select></div>
+   </div>
+
+   <div class="settings-card general-settings-card">
+    <div class="card-header">
+     <span class="card-icon">⏱️</span>
+     <strong class="card-title" data-i18n="refreshIntervalTitle">Refresh Interval</strong>
+    </div>
+    <div class="field" style="margin: 6px 0 0;">
+     <select id="interval">
+      <option value="60" data-i18n="interval1m">1 minute</option>
+      <option value="120" data-i18n="interval2m">2 minutes</option>
+      <option value="300" data-i18n="interval5m">5 minutes</option>
+      <option value="600" data-i18n="interval10m">10 minutes</option>
+     </select>
+    </div>
+   </div>
+
+   <div class="connected-accounts-section">
+    <div class="section-title-bar">
+     <div class="section-title-left">
+      <span class="section-title-icon">👥</span>
+      <h3 data-i18n="connectedAccountsTitle">Connected Accounts</h3>
+     </div>
+    </div>
+    <div id="account-settings"></div>
+    <button id="add-profile" class="secondary-button" style="margin-top: 10px;" data-i18n="addProfileBtn">+ Add saved profile directory</button>
+    <p class="help" data-i18n="settingsHelp">Initial login for each account is done in a separate profile. 1st priority tool manages home layout and smart launch.</p>
+    <div id="settings-message" role="status"></div>
+   </div>
+  </div>
+ </dialog>
+
+ <dialog id="handover-dialog">
+  <form method="dialog"><header><h2 data-i18n="handoverTitle">🔄 Handover Task</h2><button class="text-button" aria-label="Close">✕</button></header></form>
+  <div class="dialog-body">
+   <p class="dialog-desc" data-i18n="handoverDesc">Compiles current session terminal/project logs, git status, and modified files to hand over to the selected AI tool.</p>
+   <label class="field"><span data-i18n="sourceProvider">Source Provider</span>
+    <select id="handover-from">
+     <option value="auto" data-i18n="autoDetectSession">Auto Detect (Most Recent Active Session)</option>
+     <option value="claude">Claude Code</option>
+     <option value="codex">Codex</option>
+     <option value="cursor">Cursor</option>
+     <option value="antigravity">Antigravity</option>
+    </select>
+   </label>
+   <label class="field"><span data-i18n="targetProvider">Target Provider</span>
+    <select id="handover-to">
+     <option value="codex">Codex</option>
+     <option value="claude">Claude Code</option>
+     <option value="cursor">Cursor</option>
+     <option value="antigravity">Antigravity</option>
+    </select>
+   </label>
+   <label class="field"><span data-i18n="targetModel">Target Model</span>
+    <select id="handover-model" class="model-select" style="max-width: 100%; width: 100%;"></select>
+   </label>
+   <div class="handover-note" data-i18n="handoverNote">
+    Target tool will be launched after writing VIBE_HANDOVER.md briefing to selected project directory.
+   </div>
+   <div class="dialog-actions">
+    <button id="handover-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
+    <button id="handover-execute-btn" class="primary-button" type="button" data-i18n="selectProjectAndHandover">Select Project & Handover ↗</button>
+   </div>
+  </div>
+ </dialog>
+
+ <dialog id="smart-launch-dialog">
+  <form method="dialog"><header><h2 data-i18n="smartLaunchTitle">⚡️ Smart Launch Briefing</h2><button class="text-button" aria-label="Close">✕</button></header></form>
+  <div class="dialog-body">
+   <div class="smart-preview-card">
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slRecommendedTool">Recommended Tool:</span><strong id="sl-provider" class="smart-value">-</strong></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slQuotaStatus">Quota Status:</span><span id="sl-quota" class="smart-value">-</span></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSelectedModel">Selected Model:</span><strong id="sl-model" class="smart-value">-</strong></div>
+    <div class="smart-preview-row"><span class="smart-label" data-i18n="slSmartDecision">Smart Decision:</span><span id="sl-reason" class="smart-value" style="font-size: 11px;">-</span></div>
+   </div>
+   <div class="dialog-actions" style="margin-top: 16px;">
+    <button id="sl-cancel-btn" class="secondary-button" type="button" data-i18n="cancel">Cancel</button>
+    <button id="sl-confirm-btn" class="primary-button" type="button" data-i18n="selectProjectAndLaunch">Select Project & Launch ↗</button>
+   </div>
+  </div>
+ </dialog>
+
  <div id="toast" role="status" hidden></div>
- <script src="../shared.cjs"></script><script src="app.js"></script>
+ <script src="../shared.cjs"></script>
+ <script src="i18n.js"></script>
+ <script src="app.js"></script>
 </body>
 </html>

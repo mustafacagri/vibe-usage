@@ -6,6 +6,8 @@ const common = require('./common.cjs');
 
 function parseCursorUsage(summary) {
   if (!summary || typeof summary !== 'object' || Array.isArray(summary)) throw new common.ProviderError('invalid_response');
+  const hasKnownFields = summary.individualUsage !== undefined || summary.teamUsage !== undefined || summary.membershipType !== undefined || summary.billingCycleEnd !== undefined;
+  if (!hasKnownFields || Object.keys(summary).length === 0) throw new common.ProviderError('invalid_response');
   const plan = summary.individualUsage?.plan, windows = [];
   const resetsAt = summary.billingCycleEnd;
   if (plan) {
@@ -23,7 +25,9 @@ function parseCursorUsage(summary) {
       windows.push(normalizeWindow({ id: `${group}:${key}`, label: `${group === 'team' ? 'Takım · ' : ''}${key === 'onDemand' ? 'Ek ücretli kullanım' : key}`, resetsAt, valueText:pool.enabled===false?'Kapalı':typeof pool.remaining==='number'?`${pool.remaining} cent kalan`:'Tutar bildirilmedi', detail: detail || 'Tutar bildirilmedi.' }));
     }
   }
-  return { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };
+  const result = { ...(typeof summary.membershipType === 'string' && /^[a-zA-Z][a-zA-Z0-9_ -]{0,40}$/.test(summary.membershipType) ? { plan: safeText(summary.membershipType) } : {}), windows };
+  if (!windows.length) result.status = 'no_limits_reported';
+  return result;
 }
 function createCursorProvider(options = {}) {
   const home = options.home || os.homedir(), platform = options.platform || process.platform, env = options.env || process.env;
@@ -35,7 +39,7 @@ function createCursorProvider(options = {}) {
       // Source: CodexBar CursorAppAuth.swift, resolveDefaultDBPath/loadSession.
       // sqlite3 -readonly never mutates Cursor's database or copies its auth.
       const db = path.join(home, 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
-      try { token = (await (options.runProcess || common.runProcess)('/usr/bin/sqlite3', ['-readonly', db, "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;"], { timeoutMs: 5000 })).trim(); }
+      try { token = (await (options.runProcess || common.runProcess)('/usr/bin/sqlite3', ['-readonly', 'file:' + db + '?immutable=1', "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;"], { timeoutMs: 5000 })).trim(); }
       catch { throw new common.ProviderError('auth_missing'); }
     } else throw new common.ProviderError('unsupported_platform');
     if (typeof token !== 'string' || !token.trim()) throw new common.ProviderError('auth_missing');

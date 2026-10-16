@@ -1,7 +1,7 @@
-const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,dialog,screen,session}=require('electron');
-const path=require('node:path');const fs=require('node:fs');const crypto=require('node:crypto');const {pathToFileURL}=require('node:url');
+const {app,BrowserWindow,Tray,Menu,nativeImage,ipcMain,dialog,screen,session,shell}=require('electron');
+const path=require('node:path');const fs=require('node:fs');const os=require('node:os');const crypto=require('node:crypto');const {pathToFileURL}=require('node:url');const {spawn}=require('node:child_process');
 const {createService}=require('./core/service.cjs');const {assertSender,validateRefresh}=require('./ipc-policy.cjs');
-const {launchExternal}=require('./core/launcher.cjs');
+const {launchExternal,loadClaudeSettingsFiles,launchWarnings,resolveClaudeProfile,smartLaunch,previewSmartLaunch,handoverToCodex,executeHandover,discoverModels}=require('./core/launcher.cjs');const {findBinary}=require('./providers/common.cjs');
 app.setName('Vibe Usage');
 if(process.env.VIBE_DATA_DIR)app.setPath('userData',path.resolve(process.env.VIBE_DATA_DIR));
 let win,tray,service,poll,quitting=false,boundsTimer;
@@ -30,17 +30,101 @@ if(!app.requestSingleInstanceLock())app.quit();else{
   handler('settings',async patch=>{await service.updateSettings(patch);win.setAlwaysOnTop(!!service.snapshot().settings.pinned);schedule();return publish();});
   handler('pin',async()=>{await service.updateSettings({pinned:!service.snapshot().settings.pinned});win.setAlwaysOnTop(!!service.snapshot().settings.pinned);return publish();});
   handler('hide',()=>win.hide());
+  handler('dismiss-account',async id=>{
+   if(typeof id!=='string'||!/^[a-zA-Z0-9:@._+-]{1,120}$/.test(id))throw Error('Geçersiz hesap');
+   const accounts=service.snapshot().settings.accounts;
+   if(!accounts.some(a=>a.id===id))throw Error('Hesap bulunamadı');
+   await service.dismissAccount(id);
+   return publish();
+  });
+  handler('restore-dismissed-accounts',async()=>{
+   await service.restoreDismissedAccounts();
+   await refresh();
+   return publish();
+  });
+  handler('login-provider',async providerId=>{
+   if(!providerId||!['codex','claude','cursor','antigravity'].includes(providerId))throw Error('Geçersiz sağlayıcı');
+   if(providerId==='cursor'){
+    if(process.platform==='darwin'){
+     spawn('/usr/bin/open',['-a','Cursor'],{detached:true,stdio:'ignore'}).unref();
+    }else if(process.platform==='win32'){
+     shell.openExternal('cursor://').catch(()=>{});
+    }else{
+     shell.openExternal('https://cursor.com/login').catch(()=>{});
+    }
+   }else if(providerId==='claude'){
+    if(process.platform==='darwin'){
+     const launchDir=path.join(app.getPath('userData'),'launchers');
+     await fs.promises.mkdir(launchDir,{recursive:true});
+     const script=path.join(launchDir,'claude-login.command');
+     let binary='claude';
+     try{binary=await findBinary('claude');}catch{}
+     await fs.promises.writeFile(script,`#!/bin/zsh\n${binary} login\n`,{mode:0o700});
+     spawn('/usr/bin/open',['-a','Terminal',script],{detached:true,stdio:'ignore'}).unref();
+    }else{
+     shell.openExternal('https://claude.ai').catch(()=>{});
+    }
+   }else if(providerId==='codex'){
+    if(process.platform==='darwin'){
+     let binary='codex';
+     try{binary=await findBinary('codex');}catch{}
+     spawn('/usr/bin/open',['-a','Terminal',binary],{detached:true,stdio:'ignore'}).unref();
+    }else{
+     shell.openExternal('https://chatgpt.com').catch(()=>{});
+    }
+   }else if(providerId==='antigravity'){
+    if(process.platform==='darwin'){
+     spawn('/usr/bin/open',['-a','Antigravity'],{detached:true,stdio:'ignore'}).unref();
+    }
+   }
+   setTimeout(()=>{refresh(providerId).catch(()=>{});},3000);
+   return {success:true};
+  });
   handler('add-profile',async()=>{
-   const choice=await dialog.showOpenDialog(win,{title:'Giriş yapılmış Claude profil klasörünü seç',properties:['openDirectory','showHiddenFiles']});if(choice.canceled)return {message:'İptal edildi.'};
+   const choice=await dialog.showOpenDialog(win,{title:'Giriş yapılmış Claude profil klasörünü seç',properties:['openDirectory','showHiddenFiles']});if(choice.canceled)return {canceled:true};
    const configDir=choice.filePaths[0];if(!fs.existsSync(path.join(configDir,'.credentials.json'))&&process.platform!=='darwin')return {message:'Bu klasörde kayıtlı Claude girişi bulunamadı.'};
-   const accounts=service.snapshot().settings.accounts;if(accounts.some(a=>a.providerId==='claude'&&a.configDir===configDir))return {message:'Bu profil zaten bağlı.'};
-   await service.updateSettings({accounts:[...accounts,{id:'claude:'+crypto.createHash('sha256').update(configDir).digest('hex').slice(0,12),providerId:'claude',configDir,label:path.basename(configDir),primary:!accounts.some(a=>a.providerId==='claude'),enabled:true}]});await refresh('claude');return {message:'Profil eklendi.'};
+   const profile=resolveClaudeProfile(configDir);
+   const accounts=service.snapshot().settings.accounts;if(accounts.some(a=>a.providerId==='claude'&&(a.configDir===profile.configDir||a.id===profile.id)))return {message:'Bu profil zaten bağlı.'};
+   const currentDismissed=service.snapshot().settings.dismissedAccountIds||[];
+   const nextDismissed=currentDismissed.filter(id=>id!==profile.id);
+   await service.updateSettings({dismissedAccountIds:nextDismissed,accounts:[...accounts,{id:profile.id,providerId:'claude',configDir:profile.configDir,configDirExplicit:profile.configDirExplicit,label:profile.label,primary:!accounts.some(a=>a.providerId==='claude'),enabled:true}]});await refresh('claude');return {message:'Profil eklendi.'};
   });
   handler('launch',async options=>{
    if(!options||typeof options.accountId!=='string')throw Error('Hesap gerekli');
    const account=service.snapshot().settings.accounts.find(a=>a.id===options.accountId&&a.providerId==='claude'&&a.enabled!==false);if(!account)throw Error('Geçersiz hesap');
    const choice=await dialog.showOpenDialog(win,{title:'Claude Code için proje klasörü',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
-   await launchExternal({account,projectDir:choice.filePaths[0],dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.'};
+   const projectDir=choice.filePaths[0];
+   const settingsFiles=await loadClaudeSettingsFiles(projectDir,account.configDir);
+   const warnings=launchWarnings(service.snapshot(),account,{...settingsFiles});
+   const riskWarnings=warnings.slice(2);
+   if(riskWarnings.length>0&&dialog.showMessageBox){
+    const choiceBtn=await dialog.showMessageBox(win,{type:'warning',buttons:['Başlat','İptal'],defaultId:0,cancelId:1,title:'Claude Code Başlatma Uyarısı',message:'Seçilen profil ve proje için dikkat edilmesi gereken riskler:\n\n'+riskWarnings.join('\n\n')});
+    if(choiceBtn.response===1)return {message:'Başlatma iptal edildi.'};
+   }
+   await launchExternal({account,projectDir,dataDir:app.getPath('userData')});return {message:'Yeni Claude Code terminali açıldı. Devam eden görüşmeler değiştirilmedi.',warnings};
+  });
+  handler('get-discovered-models',async()=>discoverModels());
+  handler('preview-smart-launch',async()=>previewSmartLaunch({snapshot:service.snapshot()}));
+  handler('smart-launch',async(options={})=>{
+   let projectDir=options?.projectDir;
+   if(!projectDir){
+    const choice=await dialog.showOpenDialog(win,{title:'Çalışma alanı / Proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+    projectDir=choice.filePaths[0];
+   }
+   return await smartLaunch({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),targetModel:options?.targetModel});
+  });
+  handler('execute-handover',async(options={})=>{
+   let projectDir=options?.projectDir;
+   if(!projectDir){
+    const choice=await dialog.showOpenDialog(win,{title:'Devredilecek proje klasörünü seç',defaultPath:process.cwd(),properties:['openDirectory']});if(choice.canceled)return {canceled:true};
+    projectDir=choice.filePaths[0];
+   }
+   return await executeHandover({projectDir,dataDir:app.getPath('userData'),snapshot:service.snapshot(),fromProvider:options?.fromProvider||'auto',toProvider:options?.toProvider||'auto',targetModel:options?.targetModel});
+  });
+  handler('handover-to-codex',async()=>{
+   const choice=await dialog.showOpenDialog(win,{title:'Claude oturumu bulunan proje klasörünü seç',properties:['openDirectory']});if(choice.canceled)return {message:'İptal edildi.'};
+   const projectDir=choice.filePaths[0];
+   return await handoverToCodex({projectDir,dataDir:app.getPath('userData')});
   });
   await win.loadFile(html);win.once('ready-to-show',()=>{if(process.env.VIBE_START_HIDDEN!=='1')show();});
   if(process.env.VIBE_START_HIDDEN!=='1')show();schedule();await refresh();

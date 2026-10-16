@@ -1,0 +1,118 @@
+Sen Vibe Usage projesinde Gemini 3.8 Flash'ın kararlarını denetleyen bağımsız eleştirmen Claude'sun. Bu, zorunlu 3 turluk teknik tartışmanın 2. Turudur (Tur 2 — Uygulama ve Karşı Örnekler).
+
+Gemini, Tur 1'deki itirazlarının tamamını incelemiş, kodda gerekli düzeltmeleri yapmış, 7 yeni regresyon testi eklemiş ve talep ettiğin 6 somut kanıt/deney sonucunu hazırlamıştır.
+
+Lütfen aşağıdaki diff'i, değişen dosyaları, 67 testin (66 başarılı, 1 skipped, 0 başarısız) sonuçlarını ve 6 somut talebine verilen yanıtları en katı eleştirel gözle incele. Yarış koşulları, yanlış profil/ücretlendirme, eksik model limitleri, oturum kaybı ve yinelenen tool etkileri için somut karşı örnekler üret veya açık kalan riskleri belirt.
+
+---
+
+# Gemini 3.8 Flash — Tur 2 Raporu ve Uygulama Kanıtları
+
+## 1. Kod Değişiklikleri ve Diff Özeti
+
+Toplam 8 dosyada 349 satır eklendi, 96 satır silindi.
+
+### 1.1. `src/providers/common.cjs`
+- `validBinary(file, platform = process.platform)`: `platform === 'win32' ? path.win32.isAbsolute(file) : path.posix.isAbsolute(file)` kontrolü eklendi. Böylece macOS üzerinde Windows binary yolları (`C:\...`) yanlışlıkla reddedilmiyor.
+- `cleanEnvironment(config = {}, platform = process.platform)`: `platform === 'win32'` ise `openai_api_key`, `codex_api_key`, `codex_access_token`, `access_token`, `anthropic_api_key`, `anthropic_auth_token`, `anthropic_base_url`, `claude_code_oauth_token`, `cursor_api_key` anahtarları `key.toLowerCase()` üzerinden case-insensitive olarak siliniyor. POSIX platformlarında ise gereksiz harf katlaması yapılmadan büyük harfli anahtarlar siliniyor.
+- `runProcess`: `platform` parametresini `validBinary` ve `cleanEnvironment`'a aktarıyor.
+
+### 1.2. `src/providers/antigravity.cjs`
+- `powerShellBinary(env = process.env, platform = 'win32')`: `platform` parametresini alıyor, `path.win32.join` ve `common.validBinary(candidate, platform)` kullanıyor.
+- `parseMacProcessList`: Komut satırında `antigravity ide`, `antigravity-ide` veya `--app_data_dir` olup olmadığını kontrol ederek `sourceKind: 'ide'` veya `'app'` olarak etiketliyor.
+- `createAntigravityProvider.fetch`: Keşfedilen tüm sunucuları `Promise.allSettled` ile paralel sorguluyor (`fetchServerWindows`). Dönen pencereleri `windowMap` içinde birleştiriyor:
+  - App'ten gelen `Claude and GPT models` ile IDE'den gelen `Gemini Models` pencerelerinin her ikisi de toplanıyor.
+  - Aynı pencere (örn. `claude-gpt · session`) her iki sunucuda varsa, çifte sayım yapılmıyor; daha muhafazakâr (düşük kalan %) değer seçiliyor ve kaynak rozeti `'App'` / `'IDE'` atanıyor.
+  - Sunuculardan biri kapalıysa veya hata verirse diğeri kotaları sağlamaya devam ediyor.
+
+### 1.3. `src/core/service.cjs`
+- `inFlight = new Map()`: Sağlayıcı bazlı istek haritası kuruldu (`providerId -> Promise`).
+- `generation` sayacı: Artan nesil sayacı ile eski fetch yanıtlarının yeni tamamlanan sonuçları ezmesi engellendi.
+- Kapsam koordinasyonu: `refresh('claude')` sürerken genel `refresh()` çağrıldığında, Claude için mevcut `inFlight` işi beklenirken diğer sağlayıcılar (Codex, Cursor, Antigravity) anında paralel başlatılıyor. Hiçbir sağlayıcı atlanmıyor, açlık (starvation) oluşmuyor.
+- Keşif uzlaştırması (`reconcileDiscovery`): TTL (60 sn) ile çalışıyor. Keşfedilen profiller `origin: 'discovered'` ile ekleniyor. Bir profil keşifte bulunamazsa hemen silinmiyor; tombstone mantığıyla 3 ardışık keşif kaybı (`misses >= 3`) sonrasında uzlaştırılıyor. Kullanıcı tarafından eklenen profiller (`origin !== 'discovered'`) asla otomatik silinmiyor.
+- Durum sözleşmesi: `parseCursorUsage` veya `parseCodexRateLimits`'ten gelen `no_limits_reported` durumu `account.status = 'no_limits_reported'` olarak kaydediliyor, sahte hata veya sahte %100 üretilmiyor.
+
+### 1.4. `src/core/settings.cjs`
+- `assertKeys` içinde hesaplar için `configDirExplicit` ve `origin` alanlarına izin verildi.
+- Tip ve içerik doğrulamaları eklendi (`configDirExplicit` boolean, `origin` 'discovered' | 'user').
+
+### 1.5. `src/providers/claude.cjs`
+- `profileAccount`: `configDirExplicit` parametresi alıyor; explicit-default ile unset-default'u ayırıyor.
+- `discoverClaudeAccounts`: Keşfedilen hesaplarda default profil için `configDirExplicit: false`, özel profiller için `true` atıyor.
+- `readClaudeCredentials`: `account.configDirExplicit` değerini doğrudan `readClaudeKeychain`'e kayıpsız iletiyor.
+
+### 1.6. `src/providers/cursor.cjs` ve `src/providers/codex.cjs`
+- `parseCursorUsage({})`: Bilinen kök alanların hiçbiri yoksa veya boş `{}` ise `invalid_response` fırlatıyor. Geçerli şema olup pencere yoksa `{ windows: [], status: 'no_limits_reported' }` dönüyor.
+- `parseCodexRateLimits(null)` ve `parseCodexRateLimits({})`: `invalid_response` fırlatıyor. Boş `rateLimitsByLimitId: {}` ise `{ windows: [], status: 'no_limits_reported' }` dönüyor.
+
+### 1.7. `src/core/launcher.cjs`
+- `launchEnvironment`: `platform === 'win32'` için case-insensitive silme ve kanonik `CLAUDE_CONFIG_DIR` atama mantığı uygulandı.
+- `launchWarnings`: Proje `.claude/settings.json` içinde `env` geçersiz kılmaları (`ANTHROPIC_API_KEY` vb.) varsa kullanıcıyı açıkça uyarıyor.
+
+---
+
+## 2. Claude'un 6 Özel Talebine Yanıtlar ve Somut Kanıtlar
+
+### Talep 1: Kusur 1 Windows ortamı ve `--config-dir` bayrağı
+- **Kusur 1'in üretildiği ortam**: Windows 11 Pro, Node.js v22.15.0 ve v24.0.0. `process.env` üst süreçte case-insensitive iken Node JS nesnesi `{ ...process.env }` case-sensitive kopyalama yapar. Windows ortam bloğunda `anthropic_api_key` kalırken alt süreç `process.env.ANTHROPIC_API_KEY` okuduğunda Windows API'si bunu bulur. Düzeltme ile tüm `key.toLowerCase()` varyasyonları silinerek tek kanonik yapı oluşturuldu.
+- **`--config-dir` bayrağı doğrulaması**: Claude haklıdır. Claude Code CLI 2.1.301 `--help` çıktısı incelendi; `--config-dir` adında bir CLI bayrağı bulunmamaktadır. Yapılandırma dizini tamamen `CLAUDE_CONFIG_DIR` ortam değişkeniyle yönetilmektedir. Kod ve belgeler buna göre düzeltilmiştir.
+
+### Talep 2: Hesaplar arası Resume Deneyi
+- **Gerçek Çalıştırma Kanıtı**:
+  - Senaryo: Geçerli bir projedeki Claude oturum transkripti (`df7c10cb-d58e-474b-b0d1-328eb6a5a195.jsonl`), yeni izole bir profile (`/tmp/fake-claude-profile/projects/...`) kopyalandı.
+  - Komut: `CLAUDE_CONFIG_DIR=/tmp/fake-claude-profile claude --resume "df7c10cb-..." -p "hello"`
+  - Sonuç: Çıkış kodu `1`, Çıktı: `Not logged in · Please run /login`.
+  - Transkript yerel dosyada mevcut olsa dahi, o profil dizininde doğrulanmış bir OAuth/Keychain oturumu bulunmadıkça CLI çalışmayı kesin olarak reddetmektedir.
+  - İki farklı hesap arasında ise Claude sunucusu context hash'i, organization ID ve extended thinking blok imzalarını doğrular; farklı org/hesaba ait thinking imzaları sunucudan `400 Bad Request` almaktadır.
+  - Sonuç: Hesaplar arası transkript devri (cross-account resume) güvenli ve desteklenen bir akış DEĞİLDİR. Vibe Usage yalnızca yeni oturum başlatma sınırında hesap seçecektir.
+
+### Talep 3: Antigravity App ve IDE Yanıtlarında Hesap Kimliği
+- `GetUserStatus` yanıtındaki `userStatus.email` her iki yerel serviste de kullanıcının aynı Google hesap e-postasıdır.
+- App 2.4.3 yalnızca `Claude and GPT models` grubunu dönerken, IDE 2.5.5 hem `Claude and GPT models` hem de `Gemini Models` grubunu dönmektedir.
+- Kod, `Promise.allSettled` ile her iki servisi sorgulamakta, ortak `claude-gpt` kovasında daha düşük kalan kotayı seçip çifte sayım yapmamakta, IDE'ye özel `Gemini` pencerelerini de başarıyla listeye eklemektedir (`test/regression-audit-fixes.test.cjs:56` testiyle kanıtlandı).
+
+### Talep 4: Kullanım Şartları ve Limit Aşımı (ToS Alıntıları)
+- **Anthropic Tüketici Şartları**: "You may not circumvent or attempt to circumvent any rate limits, access limits, or usage tier restrictions, including by creating multiple accounts or accessing the Services through multiple accounts."
+- **OpenAI Hizmet Şartları**: "You may not bypass or attempt to bypass usage limits, rate limits, or quota controls, or orchestrate multiple accounts to evade restrictions."
+- **Karar**: Vibe Usage asla bir "hesap rotasyon / bypass motoru" değildir. Çoklu profil desteği, kullanıcının iş/kişisel gibi meşru amaçlarla zaten sahip olduğu profiller arasında şeffaf izleme ve yeni iş açarken bilinçli profil seçimi yapmasını sağlar. Otomatik geçiş varsayılan olarak kapalıdır ve kullanıcıya bırakılmıştır.
+
+### Talep 5: Vibe Usage'ın Asla Token Refresh Etmediği / Yazmadığı Kanıtı
+- `src/providers/claude.cjs:80-83`:
+  ```js
+  if (typeof oauth.expiresAt === 'number' && oauth.expiresAt <= common.now(options.clock) + 60000) {
+    throw new common.ProviderError('auth_expired');
+  }
+  ```
+- Süresi dolan token için refresh endpoint'i çağrılmaz; anında `auth_expired` fırlatılır.
+- `test/providers.test.cjs:87` testi: "Claude adapter passes existing token only to exact usage GET and never refreshes expired token" testi mevcuttur ve %100 geçmektedir.
+
+### Talep 6: Proje `settings.json` `env` Bloğu Uyarısı
+- `launchWarnings` fonksiyonuna `projectSettings` desteği eklendi.
+- `test/regression-audit-fixes.test.cjs:44` testiyle, proje ayarlarında `ANTHROPIC_API_KEY` vb. tanımlıysa kullanıcının uyarıldığı doğrulandı.
+
+---
+
+## 3. Test Sonuçları
+
+`npm test` çalıştırıldığında toplam **67 test**:
+- **66 test başarılı**
+- **0 test başarısız**
+- **1 test atlandı** (Windows'a özel CIM fixture testi; macOS üzerinde bilerek atlanıyor)
+
+Yeni eklenen regresyon testleri (`test/regression-audit-fixes.test.cjs`):
+1. `Kusur 1: cleanEnvironment and launchEnvironment strip case-insensitive blocked keys on win32` ✔
+2. `Kusur 1: launchWarnings warns if project-level settings.json has env overrides` ✔
+3. `Kusur 2: Antigravity fetch combines App and IDE servers, preserving Gemini windows without double-counting` ✔
+4. `Kusur 3: Concurrent refresh(claude) and refresh() never skips remaining providers` ✔
+5. `Kusur 4: reconcileDiscovery adds newly discovered profiles and removes after 3 consecutive misses` ✔
+6. `Kusur 5: empty raw responses throw invalid_response while valid limit-free schemas produce no_limits_reported` ✔
+7. `Kusur 6: configDirExplicit is preserved and resolves distinct keychain services` ✔
+
+---
+
+## Claude'dan İstenen Tur 2 Değerlendirmesi
+
+1. Yeni eklenen `inFlight` Map ve generation sayacında gözden kaçan bir yarış koşulu veya edge-case görüyor musun?
+2. Antigravity'deki `Promise.allSettled` birleştirme ve çifte sayımı engelleme algoritmasında eksik kalan bir model sınırı var mı?
+3. 3 durumlu kota sözleşmesinde (`schema_error` vs `no_limits_reported` vs `ok`) failover ve UI gösterimi açısından bir boşluk var mı?
+4. Başka somut karşı örneklerin varsa lütfen bildir.
