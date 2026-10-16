@@ -1,0 +1,1 @@
+These self-signed localhost credentials are public test fixtures only. They protect no real service or account and must never be installed into an OS trust store. Tests inject the certificate as a simulated OS root into a private HTTPS agent and verify rejection with an empty trust source or mismatched hostname.

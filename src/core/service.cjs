@@ -2,6 +2,8 @@
 const {loadSettings,saveSettings,defaultSettingsPath,DEFAULT_SETTINGS,validateSettings}=require('./settings.cjs');
 const {normalizeWindow}=require('./model.cjs');const {safeError,now}=require('../providers/common.cjs');
 const MESSAGES={auth_missing:'Bu cihazda giriş bulunamadı.',auth_expired:'Oturum süresi dolmuş; sağlayıcıda yeniden giriş gerekli.',auth_invalid:'Kayıtlı oturum okunamadı.',auth_rejected:'Sağlayıcı oturumu kabul etmedi.',rate_limited:'Okuma sıklığı sınırlandı; yeniden denemeden önce bekleniyor.',app_closed:'Kota için Antigravity uygulamasını açın.',unsupported_platform:'Bu işletim sisteminde bu veri kaynağı henüz desteklenmiyor.',unsupported_profile:'Bu profilin kimlik deposu henüz desteklenmiyor.',keychain_unavailable:'Keychain girişi okunamadı.',binary_missing:'Gerekli yerel uygulama veya CLI bulunamadı.',transport_error:'Sağlayıcıya bağlanılamadı.',local_service_unavailable:'Antigravity yerel servisine ulaşılamadı.'};
+MESSAGES.tls_certificate_error='TLS sertifikası doğrulanamadı. Ağın ve sistemin sertifika güvenini kontrol edin.';
+MESSAGES.trust_store_unavailable='İşletim sisteminin sertifika deposu okunamadı. Kurulumu ve desteklenen Node.js sürümünü kontrol edin.';
 const copy=value=>structuredClone(value);
 async function createService(options={}){
  const clock=options.clock||Date.now;const settingsPath=options.settingsPath||defaultSettingsPath();

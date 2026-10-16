@@ -1,6 +1,6 @@
 {
   "name": "vibe-usage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Windows ve macOS için yerel AI abonelik kullanım izleyicisi",
   "author": "Mustafa Cagri",
   "license": "UNLICENSED",
@@ -52,6 +52,6 @@
     }
   },
   "engines": {
-    "node": ">=22"
+    "node": "^22.15.0 || >=24.0.0"
   }
 }

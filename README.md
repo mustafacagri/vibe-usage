@@ -1,10 +1,12 @@
 # Vibe Usage
 
+> 0.1.1: Claude/Cursor bağlantısını bozan TLS güveni sorunu [düzeltildi ve terminal/EXE üzerinde doğrulandı](docs/verification/tls-fix-2026-10-16.md). [Eleştirel denetimdeki](docs/verification/principal-audit-2026-10-16.md) Antigravity kaynak ayrımı, Windows CLI hesap seçimi ve diğer açık bulgular nedeniyle sürüm hâlâ üretime hazır sayılmaz.
+
 Windows sistem tepsisi ve macOS menü çubuğu için yerel AI abonelik kullanım izleyicisi. Kota pencerelerini ve model kapsamlarını ayrı gösterir; eksik veriyi tam hak saymaz.
 
 ## Windows'ta açma
 
-`release/win-unpacked/Vibe Usage.exe` dosyasını açın. Klasördeki diğer dosyalar gereklidir; EXE'yi tek başına taşımayın. Başka bilgisayara taşımak için `release/Vibe Usage-0.1.0-win.zip` dosyasını çıkarıp içindeki EXE'yi açın. Bu ilk paket kod imzalı değildir.
+`release/win-unpacked/Vibe Usage.exe` dosyasını açın. Klasördeki diğer dosyalar gereklidir; EXE'yi tek başına taşımayın. Başka bilgisayara taşımak için `release/Vibe Usage-0.1.1-win.zip` dosyasını çıkarıp içindeki EXE'yi açın. Paket kod imzalı değildir.
 
 Üstteki elmas düğmesi pencereyi sabitler. Eksi düğmesi veya pencereyi kapatma uygulamayı sistem tepsisine gizler. Tepsi menüsündeki **Çıkış** uygulamayı kapatır. Ayarlardan yenileme aralığı, Claude hesap adları ve ana hesap seçilir. Varsayılan yenileme aralığı iki dakikadır.
 
@@ -25,7 +27,7 @@ Cursor API kapsamının dolması bütün hesabın dolduğu anlamına gelmez. Fab
 
 ## Terminal ve başlatıcı
 
-Node.js 22+ ile proje klasöründe:
+Node.js 22.15+ (22.x) veya 24+ ile proje klasöründe:
 
 ```text
 npm run watch
@@ -54,5 +56,7 @@ Mac üzerinde `npm run build:mac` çalıştırılır. GitHub Actions Windows ve 
 `npm run smoke`, mevcut gerçek oturumlarla Electron penceresinde salt okunur test yapar. Bu makineye özel iki Claude profili bekler; ayarları `artifacts/smoke-*` altında tutar, model çağrısı yapmaz. Test sırasında pencere kısa süre görünür; sonunda kapanır. `VIBE_SMOKE_EXECUTABLE` ile paketlenmiş EXE aynı testten geçirilir.
 
 `VIBE_DATA_DIR`, uygulamanın kendi ayar konumunu test için değiştirir. `VIBE_CODEX_BINARY` ve `VIBE_CLAUDE_BINARY` yalnız yerel kurulu ikililerin açık yolları için desteklenir. Sağlayıcı kullanım adresleri sabittir; yönlendirme takip edilmez. Antigravity için PowerShell 7 gerekmez; Windows'un yerleşik PowerShell'i keşif için, Node ise yerel HTTPS için kullanılır.
+
+Claude/Cursor HTTPS istekleri Node'un varsayılan CA'larıyla işletim sisteminin mevcut güvenilir CA'larını birlikte kullanır. Sertifika zinciri ve alan adı doğrulaması açıktır; uygulama sertifika yüklemez, sistem deposunu veya global TLS ayarlarını değiştirmez. Depo okunamazsa veya sertifika doğrulanamazsa açık hata gösterilir.
 
 Tasarım ve araştırma kanıtları [docs/verification](docs/verification/README.md) altında. Araştırma raporlarındaki yüzdeler tarihsel ölçümlerdir; uygulama içine gömülmemiştir.

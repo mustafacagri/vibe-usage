@@ -4,8 +4,12 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
+const { getQuotaAgent } = require('./tls-trust.cjs');
 
 const ERROR_CODES = new Set(['auth_missing', 'auth_expired', 'auth_invalid', 'auth_rejected', 'rate_limited', 'transport_error', 'request_timeout', 'response_too_large', 'invalid_response', 'http_rejected', 'endpoint_not_allowed', 'binary_missing', 'invalid_binary', 'process_failed', 'process_timeout', 'rpc_error', 'rpc_timeout', 'server_closed', 'app_closed', 'local_service_unavailable', 'unsupported_platform', 'unsupported_profile', 'keychain_unavailable', 'provider_failed']);
+ERROR_CODES.add('tls_certificate_error');
+ERROR_CODES.add('trust_store_unavailable');
+const CERTIFICATE_ERRORS = new Set(['SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_UNTRUSTED', 'CERT_REJECTED', 'CERT_SIGNATURE_FAILURE', 'ERR_TLS_CERT_ALTNAME_INVALID']);
 class ProviderError extends Error {
   constructor(code, options = {}) { super(ERROR_CODES.has(code) ? code : 'provider_failed'); this.code = this.message; if (options.retryAfterSeconds !== undefined) this.retryAfterSeconds = Math.max(60, Math.min(900, Number(options.retryAfterSeconds) || 60)); }
 }
@@ -23,7 +27,7 @@ function getJson(endpoint, { headers = {}, timeoutMs = 15000, requestImpl = http
     let request, received, settled=false;
     const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(deadline);if(error){received?.destroy();request?.destroy();reject(error);}else resolve(value);};
     const deadline=setTimeout(()=>finish(new ProviderError('request_timeout')),timeoutMs);
-    try { request = requestImpl(url, { headers, timeout: timeoutMs }, response => {
+    try { request = requestImpl(url, { headers, timeout: timeoutMs, agent: getQuotaAgent(), rejectUnauthorized: true }, response => {
       received=response;
       response.on('error', () => finish(new ProviderError('transport_error')));
       response.on('aborted', () => finish(new ProviderError('transport_error')));
@@ -39,8 +43,8 @@ function getJson(endpoint, { headers = {}, timeoutMs = 15000, requestImpl = http
       response.on('end', () => { try { finish(null,JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { finish(new ProviderError('invalid_response')); } });
     });
     request.on('timeout', () => finish(new ProviderError('request_timeout')));
-    request.on('error', () => finish(new ProviderError('transport_error')));
-    } catch { finish(new ProviderError('transport_error')); }
+    request.on('error', error => finish(new ProviderError(CERTIFICATE_ERRORS.has(error.code) ? 'tls_certificate_error' : 'transport_error')));
+    } catch (error) { finish(new ProviderError(error.message === 'trust_store_unavailable' ? 'trust_store_unavailable' : 'transport_error')); }
   });
 }
 function validBinary(file) { return typeof file === 'string' && path.isAbsolute(file) && !/[\x00-\x1f]/.test(file) && !/\.(cmd|bat|ps1)$/i.test(file); }
