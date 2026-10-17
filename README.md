@@ -93,3 +93,7 @@ Paketlenmiş uygulamada Electron fuse'ları açıktır: `runAsNode`, `NODE_OPTIO
 - macOS paketi Developer ID ile imzalı ve notarize edilmiş değildir (bkz. [macOS'ta kurulum](#macosta-kurulum)).
 - Antigravity oturum modeli belgelenmemiş yerel bir kayıttan okunur; okunamazsa model boş gösterilir.
 - Cursor IDE (Composer) sohbetleri devredilmez; yalnız Cursor Agent CLI oturumları okunur.
+
+## Lisans
+
+[MIT](LICENSE)

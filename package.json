@@ -2,8 +2,8 @@
   "name": "vibe-usage",
   "version": "0.1.1",
   "description": "Windows ve macOS için yerel AI abonelik kullanım izleyicisi",
-  "author": "Mustafa Cagri",
-  "license": "UNLICENSED",
+  "author": "Mustafa Çağrı Güven",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "main": "build/main/main.js",
@@ -49,6 +49,7 @@
       "build/ui/style.css",
       "build/launchers/*",
       "assets/*",
+      "LICENSE",
       "package.json"
     ],
     "asarUnpack": [
