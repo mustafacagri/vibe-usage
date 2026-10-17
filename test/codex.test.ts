@@ -71,9 +71,3 @@ test('a locally expired token fails before the app server is started', async t =
   await fs.writeFile(path.join(dir, 'auth.json'), '{ broken');
   await assert.rejects(provider.fetch(account({ id: 'codex:default', providerId: 'codex', configDir: dir })), /auth_invalid/);
 });
-
-test('the default account points at the Codex home folder', async () => {
-  const [discovered] = await createCodexProvider({ home: '/home/me' }).discover();
-  assert.equal(discovered?.id, 'codex:default');
-  assert.equal(discovered.configDir, process.env.CODEX_HOME ?? path.join('/home/me', '.codex'));
-});

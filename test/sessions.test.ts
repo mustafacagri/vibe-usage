@@ -146,5 +146,10 @@ test('Antigravity sessions require an exact workspace match and report the model
 test('a path that is not an existing folder lists no sessions', async t => {
   const home = await tempDir(t, 'vibe-none-home-');
   assert.deepEqual(await listSessions('auto', 'relative/path', home), []);
-  assert.deepEqual(await listSessions('auto', path.join(home, 'missing'), home), []);
+  // A deleted project whose transcripts remain: its old sessions are not offered.
+  const deleted = path.join(home, 'deleted-project');
+  const claudeDir = path.join(home, '.claude', 'projects', deleted.replace(/[/\\:]/g, '-'));
+  await fs.mkdir(claudeDir, { recursive: true });
+  await fs.writeFile(path.join(claudeDir, 'old.jsonl'), JSON.stringify({ type: 'user', message: { content: 'Task' } }));
+  assert.deepEqual(await listSessions('auto', deleted, home), []);
 });

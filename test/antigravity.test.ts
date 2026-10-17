@@ -113,7 +113,7 @@ test('going from one to two accounts never mixes their quota', async () => {
 });
 
 test('a quota summary without identity is tied to its account through the status call', async () => {
-  const emails: Record<number, string> = { 801: 'work@corp.com', 802: 'personal@gmail.com' };
+  const emails: Record<number, string> = { 801: 'work@corp.com', 802: ' Personal@Gmail.com ' };
   const remaining: Record<number, number> = { 801: 0.92, 802: 0.22 };
   const adapter = provider([server(801, 'tok1', [8101], 'ide'), server(802, 'tok2', [8102])], (target, _port, method) =>
     Promise.resolve(
@@ -123,7 +123,11 @@ test('a quota summary without identity is tied to its account through the status
     )
   );
   assert.equal(windowsOf(await adapter.fetch(emailAccount('work@corp.com')))[0]?.remainingPercent, 92);
-  assert.equal(windowsOf(await adapter.fetch(emailAccount('personal@gmail.com')))[0]?.remainingPercent, 22);
+  assert.equal(
+    windowsOf(await adapter.fetch(emailAccount('personal@gmail.com')))[0]?.remainingPercent,
+    22,
+    'the reported address is matched case-insensitively'
+  );
   await assert.rejects(adapter.fetch(emailAccount('other@unknown.com')), /auth_missing/);
 });
 

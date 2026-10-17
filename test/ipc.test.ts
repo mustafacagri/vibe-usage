@@ -8,9 +8,14 @@ test('only the local main frame may invoke privileged actions', () => {
   assert.doesNotThrow(() => {
     assertSender({ senderFrame: frame, sender: { mainFrame: frame } }, frame.url);
   });
-  assert.throws(() => {
-    assertSender({ senderFrame: { url: 'https://evil.example' }, sender: { mainFrame: frame } }, frame.url);
-  }, /sender_rejected/);
+  const navigatedAway = { url: 'https://evil.example' };
+  assert.throws(
+    () => {
+      assertSender({ senderFrame: navigatedAway, sender: { mainFrame: navigatedAway } }, frame.url);
+    },
+    /sender_rejected/,
+    'the main frame itself at a foreign URL'
+  );
   assert.throws(
     () => {
       assertSender({ senderFrame: { url: frame.url }, sender: { mainFrame: frame } }, frame.url);
