@@ -1,6 +1,9 @@
 // Single source of truth for identifiers shared by the main process, the CLI and the renderer.
 import type { MessageKey } from './i18n/index.ts';
 
+// The product name: window and tray titles, the data folder, launched terminals and briefs.
+export const APP_NAME = 'Vibe Usage';
+
 export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'antigravity'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 

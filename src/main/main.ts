@@ -5,13 +5,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createService, type Service } from '../core/service.ts';
 import { settingsPath } from '../core/settings.ts';
+import { APP_NAME } from '../shared/catalog.ts';
 import { DEFAULT_LANGUAGE, translator, type Translate } from '../shared/i18n/index.ts';
 import { IPC_PREFIX, SNAPSHOT_EVENT } from '../shared/ipc.ts';
 import type { Settings, WindowBounds } from '../shared/types.ts';
 import { createHandlers, type MainContext } from './handlers.ts';
 import { assertSender, envelope } from './ipc-policy.ts';
 
-const APP_NAME = 'Vibe Usage';
 const WINDOW = {
   defaultWidth: 430,
   minWidth: 340,

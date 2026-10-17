@@ -11,7 +11,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -b && node scripts/copy-static.ts",
+    "build": "node scripts/build.ts",
     "start": "npm run build && electron .",
     "test": "node --test 'test/**/*.test.ts'",
     "cli": "node src/cli.ts",

@@ -244,7 +244,7 @@ export interface SignIn {
   providerId: ProviderId;
   dataDir: string;
   cwd: string;
-  spawnProcess?: SpawnProcess;
+  spawnProcess?: SpawnProcess | undefined;
 }
 
 export async function openSignIn({ providerId, dataDir, cwd, spawnProcess }: SignIn): Promise<void> {

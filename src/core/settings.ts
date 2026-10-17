@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ACCOUNT_ID_PATTERN,
+  APP_NAME,
   isProviderId,
   MAX_DISMISSED_ACCOUNTS,
   MAX_LABEL_LENGTH,
@@ -19,7 +20,6 @@ import { AppError, InvalidSettingsError } from './errors.ts';
 import { asArray, isObject, type JsonObject } from './files.ts';
 import { hasControlChars } from './model.ts';
 
-const APP_DIR = 'Vibe Usage';
 const SETTINGS_FILE = 'settings.json';
 const INTERVAL_SECONDS = { min: 30, max: 900, default: 120 };
 const MAX_ACCOUNTS = 40;
@@ -232,7 +232,7 @@ export function appDataDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJ
       : platform === 'darwin'
         ? path.join(os.homedir(), 'Library/Application Support')
         : (env.XDG_CONFIG_HOME ?? path.join(os.homedir(), '.config'));
-  return path.join(root, APP_DIR);
+  return path.join(root, APP_NAME);
 }
 
 export const settingsPath = (dataDir: string): string => path.join(dataDir, SETTINGS_FILE);

@@ -62,7 +62,7 @@ Kod TypeScript'tir (katı mod, `exactOptionalPropertyTypes`, `noUncheckedIndexed
 npm ci
 npm run lint          # ESLint, tip bilgisiyle (typescript-eslint strictTypeChecked)
 npm run format        # Prettier (CI: npm run format:check)
-npm run build         # tip denetimi ve build/ çıktısı
+npm run build         # tip denetimi ve sıfırdan build/ çıktısı
 npm test              # birim ve entegrasyon testleri, kaynaktan
 npm run ui-check      # derlenen arayüzü gerçek preload ve sandbox ile 13 dilde çizer
 npm start

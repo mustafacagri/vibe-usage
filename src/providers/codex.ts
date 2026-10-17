@@ -6,7 +6,7 @@ import { ProviderError } from '../core/errors.ts';
 import { isObject } from '../core/files.ts';
 import { isoFromUnixSeconds, normalizeWindow, safePlan, safeText } from '../core/model.ts';
 import type { QuotaWindow } from '../shared/types.ts';
-import { durationLabel } from '../shared/catalog.ts';
+import { APP_NAME, durationLabel } from '../shared/catalog.ts';
 import {
   APP_VERSION,
   findBinary,
@@ -162,7 +162,7 @@ async function probeAccount(binary: string, configDir: string): Promise<FetchRes
   const server = startAppServer(binary, configDir);
   try {
     await server.request('initialize', {
-      clientInfo: { name: 'vibe_usage', title: 'Vibe Usage', version: APP_VERSION },
+      clientInfo: { name: 'vibe_usage', title: APP_NAME, version: APP_VERSION },
       capabilities: { experimentalApi: false }
     });
     server.notify('initialized');

@@ -9,7 +9,7 @@ import { discoverModels, refreshCursorModels } from '../core/models.ts';
 import { claudeLaunchWarnings, type LaunchWarning } from '../core/selection.ts';
 import type { Service } from '../core/service.ts';
 import { CREDENTIALS_FILE, DEFAULT_PROFILE_DIR, profileAccount } from '../providers/claude.ts';
-import { AUTO, isProviderId, type ProviderId } from '../shared/catalog.ts';
+import { APP_NAME, AUTO, isProviderId, type ProviderId } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
 import type { Channel, VibeMethods } from '../shared/ipc.ts';
 import type { Account, Settings, Snapshot } from '../shared/types.ts';
@@ -17,7 +17,6 @@ import { optionalProvider, optionalString, options, requiredString } from './ipc
 
 // Give a just-opened sign-in flow time to write credentials before re-reading quota.
 export const SIGN_IN_REFRESH_DELAY_MS = 3000;
-const APP_NAME = 'Vibe Usage';
 
 export interface MainContext {
   service: Service;
@@ -78,7 +77,7 @@ export function createHandlers(context: MainContext): Handlers {
     },
     async signIn(providerId) {
       if (!isProviderId(providerId)) throw new AppError('invalid_provider');
-      await openSignIn({ providerId, dataDir, cwd: homeDir, ...(spawnProcess ? { spawnProcess } : {}) });
+      await openSignIn({ providerId, dataDir, cwd: homeDir, spawnProcess });
       context.setTimeout(() => {
         context.refresh(providerId).catch(() => undefined);
       }, SIGN_IN_REFRESH_DELAY_MS);

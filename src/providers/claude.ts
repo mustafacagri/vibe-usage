@@ -110,7 +110,7 @@ interface OAuthCredentials {
 }
 
 // The OAuth section of a credentials document, when it holds an access token.
-export function oauthCredentials(credentials: unknown): OAuthCredentials | null {
+function oauthCredentials(credentials: unknown): OAuthCredentials | null {
   const oauth = isObject(credentials) ? credentials.claudeAiOauth : undefined;
   if (!isObject(oauth) || typeof oauth.accessToken !== 'string' || !oauth.accessToken.trim()) return null;
   return { accessToken: oauth.accessToken, expiresAt: oauth.expiresAt, subscriptionType: oauth.subscriptionType };
