@@ -1,0 +1,7 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "../build", "types": ["node"] },
+  "include": ["**/*.ts", "**/*.cts"],
+  "exclude": ["shared", "ui"],
+  "references": [{ "path": "shared" }]
+}

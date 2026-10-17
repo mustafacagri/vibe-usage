@@ -3,3 +3,4 @@ release/
 artifacts/
 package-lock.json
 *.md
+build/

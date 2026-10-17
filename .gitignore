@@ -1,13 +1,11 @@
-**/bin/
-**/obj/
+node_modules/
+build/
+release/
 artifacts/
+coverage/
 .worktrees/
-.vs/
-*.user
-*.suo
 *.log
 *.secrets.json
-node_modules/
-release/
-coverage/
+# Written into the project by a handover; not part of this repository.
 VIBE_HANDOVER.md
+*.tsbuildinfo

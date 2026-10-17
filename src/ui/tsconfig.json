@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": ".", "outDir": "../../build/ui", "lib": ["es2025", "dom", "dom.iterable"] },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../shared" }]
+}

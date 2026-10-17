@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  // Tests and scripts run from source with Node's type stripping; this only type-checks them.
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "rewriteRelativeImportExtensions": false,
+    "allowImportingTsExtensions": true,
+    "lib": ["es2025", "dom", "dom.iterable"],
+    "types": ["node"]
+  },
+  "include": ["test/**/*.ts", "scripts/**/*.ts", "eslint.config.ts"],
+  "references": [{ "path": "src/shared" }, { "path": "src/ui" }, { "path": "src" }]
+}
