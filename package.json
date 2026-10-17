@@ -27,12 +27,12 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "24.19.2",
+    "@types/node": "26.6.5",
     "electron": "44.8.0",
     "electron-builder": "26.15.3",
     "eslint": "10.13.0",
     "prettier": "3.9.10",
-    "typescript": "6.0.3",
+    "typescript": "7.0.2",
     "typescript-eslint": "8.71.2"
   },
   "build": {
