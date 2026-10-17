@@ -1,13 +1,28 @@
 name: Build desktop
 on: [push, pull_request, workflow_dispatch]
+
+# The workflow only reads the repository; artifacts are uploaded with the run's own token.
+permissions:
+  contents: read
+
+# A newer push to the same branch or pull request supersedes a running build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     strategy:
+      # Each platform reports its own result even when the other fails.
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7.1.0
         with:
           # Electron 44 embeds Node 24; test on the runtime the app ships with.
@@ -18,7 +33,8 @@ jobs:
       - run: npm run format:check
       # Type-checks every project and emits build/.
       - run: npm run build
-      - run: npm test
+      # Fails when line, branch or function coverage drops below the thresholds.
+      - run: npm run test:coverage
       - run: npm run ui-check
       - run: npm run build:win
         if: runner.os == 'Windows'
@@ -31,6 +47,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: Vibe-Usage-${{ runner.os }}
+          if-no-files-found: error
           path: |
             release/*.zip
             release/*.dmg

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { applyEnvironment, environmentChanges } from './core/environment.ts';
 import { AppError } from './core/errors.ts';
-import { executeHandover, parseProviderChoice } from './core/handover.ts';
+import { executeHandover, parseProviderChoice, type LaunchContext } from './core/handover.ts';
 import { launchPlan, loadClaudeSettingsFiles } from './core/launch.ts';
 import { claudeLaunchWarnings, selectAccount } from './core/selection.ts';
 import { createService, type Service } from './core/service.ts';
@@ -16,6 +16,7 @@ import { DEFAULT_LANGUAGE, translator, type Translate } from './shared/i18n/inde
 import type { Snapshot } from './shared/types.ts';
 
 const CLEAR_SCREEN = '\x1b[2J\x1b[H';
+const EXIT_FAILURE = 1;
 const EXIT_INTERRUPTED = 130;
 
 // Strict: an unknown flag or a missing value is an error, never ignored.
@@ -49,31 +50,49 @@ export function renderSnapshot(snapshot: Snapshot, context: FormatContext): stri
   return lines.join('\n');
 }
 
-async function watch(service: Service, t: Translate, locale: string): Promise<void> {
+// Everything a command needs from the outside, so that commands run in tests without a
+// terminal, real accounts or child processes.
+export interface CliContext {
+  service: Service;
+  dataDir: string;
+  cwd: string;
+  print: (text: string) => void;
+  printError: (text: string) => void;
+  // Runs a tool attached to this terminal and resolves with its exit code.
+  runAttached: (binary: string, args: readonly string[], options: { cwd: string; env: Record<string, string> }) => Promise<number>;
+  launch?: Pick<LaunchContext, 'platform' | 'spawnProcess' | 'homeDir'>;
+}
+
+function watch({ service, print }: CliContext, t: Translate, locale: string): Promise<number> {
   const draw = (snapshot: Snapshot): void => {
-    process.stdout.write(`${process.stdout.isTTY ? CLEAR_SCREEN : ''}${renderSnapshot(snapshot, { t, locale })}\n`);
+    print(`${process.stdout.isTTY ? CLEAR_SCREEN : ''}${renderSnapshot(snapshot, { t, locale })}`);
   };
   draw(service.snapshot());
-  draw(await service.refresh());
-  let busy = false;
-  const timer = setInterval(() => {
-    if (busy) return;
-    busy = true;
-    void service
-      .refresh()
-      .then(draw, () => undefined)
-      .finally(() => {
-        busy = false;
+  return service.refresh().then(snapshot => {
+    draw(snapshot);
+    let busy = false;
+    const timer = setInterval(() => {
+      if (busy) return;
+      busy = true;
+      void service
+        .refresh()
+        .then(draw, () => undefined)
+        .finally(() => {
+          busy = false;
+        });
+    }, service.snapshot().settings.intervalSeconds * 1000);
+    // Runs until interrupted.
+    return new Promise<number>(resolve => {
+      process.once('SIGINT', () => {
+        clearInterval(timer);
+        resolve(0);
       });
-  }, service.snapshot().settings.intervalSeconds * 1000);
-  process.once('SIGINT', () => {
-    clearInterval(timer);
-    process.exit(0);
+    });
   });
 }
 
 // Runs a provider CLI in this terminal for the chosen (or best eligible) account.
-async function run(service: Service, [providerId, ...args]: string[], t: Translate): Promise<void> {
+async function run(context: CliContext, [providerId, ...args]: string[], t: Translate): Promise<number> {
   if (!isProviderId(providerId)) throw new AppError('invalid_provider');
   const flags = parseFlags(args, {
     account: { type: 'string' },
@@ -81,11 +100,11 @@ async function run(service: Service, [providerId, ...args]: string[], t: Transla
     model: { type: 'string' },
     'dry-run': { type: 'boolean' }
   });
-  const snapshot = await service.refresh(providerId);
+  const snapshot = await context.service.refresh(providerId);
   // Without an explicit --account, only an account with verified quota is used.
   const chosen = selectAccount(snapshot, providerId, { accountId: flags.account, model: flags.model });
   if (!chosen) throw new AppError('no_verified_quota');
-  const cwd = path.resolve(flags.cwd ?? process.cwd());
+  const cwd = path.resolve(context.cwd, flags.cwd ?? '.');
   const plan = await launchPlan(providerId, { account: chosen, model: flags.model });
   if (!plan) throw new AppError('no_cli', { tool: providerById(providerId).name });
   const warnings =
@@ -95,21 +114,14 @@ async function run(service: Service, [providerId, ...args]: string[], t: Transla
   const messages = warnings.map(w => t(w.key, w.params));
   if (flags['dry-run']) {
     const command = [plan.binary, ...plan.args];
-    console.log(JSON.stringify({ provider: providerId, accountId: chosen.id, projectDir: cwd, command, warnings: messages }, null, 2));
-    return;
+    context.print(JSON.stringify({ provider: providerId, accountId: chosen.id, projectDir: cwd, command, warnings: messages }, null, 2));
+    return 0;
   }
-  for (const message of messages) console.log(message);
-  const child = spawn(plan.binary, plan.args, { cwd, env: applyEnvironment(environmentChanges(plan.env)), shell: false, stdio: 'inherit' });
-  child.on('error', () => {
-    console.error(describeCode('launch_failed', t));
-    process.exitCode = 1;
-  });
-  child.on('close', (code, signal) => {
-    process.exitCode = code ?? (signal === 'SIGINT' ? EXIT_INTERRUPTED : 1);
-  });
+  for (const message of messages) context.print(message);
+  return context.runAttached(plan.binary, plan.args, { cwd, env: applyEnvironment(environmentChanges(plan.env)) });
 }
 
-async function handover(service: Service, args: string[], t: Translate, dataDir: string): Promise<void> {
+async function handover(context: CliContext, args: string[], t: Translate): Promise<number> {
   const flags = parseFlags(args, {
     from: { type: 'string' },
     to: { type: 'string' },
@@ -118,58 +130,89 @@ async function handover(service: Service, args: string[], t: Translate, dataDir:
   });
   const result = await executeHandover(
     {
-      projectDir: path.resolve(flags.cwd ?? process.cwd()),
+      projectDir: path.resolve(context.cwd, flags.cwd ?? '.'),
       fromProvider: parseProviderChoice(flags.from?.toLowerCase() ?? AUTO),
       toProvider: parseProviderChoice(flags.to?.toLowerCase() ?? AUTO),
       sessionId: flags.session ?? AUTO
     },
-    await service.refresh(),
-    { dataDir }
+    await context.service.refresh(),
+    { dataDir: context.dataDir, ...context.launch }
   );
   const tool = providerById(result.to).name;
-  console.log(t(result.mode === 'app' ? 'handoverApp' : 'handoverTerminal', { tool: result.model ? `${tool} · ${result.model}` : tool }));
+  context.print(t(result.mode === 'app' ? 'handoverApp' : 'handoverTerminal', { tool: result.model ? `${tool} · ${result.model}` : tool }));
+  return 0;
 }
 
-async function main([command = 'status', ...args]: string[]): Promise<void> {
-  const dataDir = appDataDir();
-  const service = await createService({ settingsPath: settingsPath(dataDir) });
-  const { language } = service.snapshot().settings;
+// Runs one command and resolves with the process exit code. Failures are printed in the
+// user's language; nothing else reaches the terminal.
+export async function runCli([command = 'status', ...args]: string[], context: CliContext): Promise<number> {
+  const { language } = context.service.snapshot().settings;
   const t = translator(language);
   try {
     switch (command) {
       case 'help':
       case '--help':
-        console.log(t('cliHelp'));
-        return;
+        context.print(t('cliHelp'));
+        return 0;
       case 'status': {
         const { json } = parseFlags(args, { json: { type: 'boolean' } });
-        const snapshot = await service.refresh();
-        console.log(json ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, { t, locale: language }));
-        return;
+        const snapshot = await context.service.refresh();
+        context.print(json ? JSON.stringify(snapshot, null, 2) : renderSnapshot(snapshot, { t, locale: language }));
+        return 0;
       }
       case 'watch':
-        await watch(service, t, language);
-        return;
+        return await watch(context, t, language);
       case 'run':
-        await run(service, args, t);
-        return;
+        return await run(context, args, t);
       case 'handover':
-        await handover(service, args, t, dataDir);
-        return;
+        return await handover(context, args, t);
       default:
         throw new AppError('unknown_command');
     }
   } catch (error) {
     const { code, params } = error instanceof AppError ? error : new AppError('unexpected');
-    console.error(describeCode(code, t, params));
-    process.exitCode = 1;
+    context.printError(describeCode(code, t, params));
+    return 1;
   }
+}
+
+function runAttached(binary: string, args: readonly string[], options: { cwd: string; env: Record<string, string> }): Promise<number> {
+  return new Promise(resolve => {
+    const child = spawn(binary, args, { ...options, shell: false, stdio: 'inherit' });
+    child.once('error', () => {
+      resolve(EXIT_FAILURE);
+    });
+    child.once('close', (code, signal) => {
+      resolve(code ?? (signal === 'SIGINT' ? EXIT_INTERRUPTED : EXIT_FAILURE));
+    });
+  });
 }
 
 // Runs only as a program; importing the module (tests) has no side effects.
 if (import.meta.main) {
-  main(process.argv.slice(2)).catch((error: unknown) => {
-    console.error(describeCode(error instanceof AppError ? error.code : 'unexpected', translator(DEFAULT_LANGUAGE)));
-    process.exitCode = 1;
-  });
+  const dataDir = appDataDir();
+  createService({ settingsPath: settingsPath(dataDir) })
+    .then(service =>
+      runCli(process.argv.slice(2), {
+        service,
+        dataDir,
+        cwd: process.cwd(),
+        print: text => {
+          console.log(text);
+        },
+        printError: text => {
+          console.error(text);
+        },
+        runAttached
+      })
+    )
+    .then(
+      code => {
+        process.exitCode = code;
+      },
+      (error: unknown) => {
+        console.error(describeCode(error instanceof AppError ? error.code : 'unexpected', translator(DEFAULT_LANGUAGE)));
+        process.exitCode = EXIT_FAILURE;
+      }
+    );
 }

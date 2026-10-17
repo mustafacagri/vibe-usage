@@ -30,6 +30,7 @@ const EXPECTED_URL = pathToFileURL(HTML).href;
 app.setName(APP_NAME);
 // Every renderer is sandboxed, regardless of per-window options.
 app.enableSandbox();
+lockDownWebContents();
 if (process.env.VIBE_DATA_DIR) app.setPath('userData', path.resolve(process.env.VIBE_DATA_DIR));
 const startHidden = process.env.VIBE_START_HIDDEN === '1';
 
@@ -66,10 +67,6 @@ function createWindow(settings: Settings, service: Service): BrowserWindow {
     backgroundColor: WINDOW.background,
     icon: path.join(ASSETS, 'icon.png'),
     webPreferences: { preload: PRELOAD, nodeIntegration: false, contextIsolation: true, sandbox: true }
-  });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', event => {
-    event.preventDefault();
   });
   win.on('close', event => {
     if (quitting) return;
@@ -111,6 +108,20 @@ function trayMenu(t: Translate, win: BrowserWindow, refresh: () => void): Menu {
     { type: 'separator' },
     { label: t('trayQuit'), click: quit }
   ]);
+}
+
+// The app shows one local page: no web contents may navigate, open windows or embed a
+// webview. Applied to every web contents the app creates, not only to the known window.
+function lockDownWebContents(): void {
+  app.on('web-contents-created', (_event, contents) => {
+    contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    contents.on('will-navigate', event => {
+      event.preventDefault();
+    });
+    contents.on('will-attach-webview', event => {
+      event.preventDefault();
+    });
+  });
 }
 
 // The app needs no browser permission (camera, notifications, …): deny both the prompt and

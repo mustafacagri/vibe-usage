@@ -14,10 +14,11 @@
     "build": "node scripts/build.ts",
     "start": "npm run build && electron .",
     "test": "node --test 'test/**/*.test.ts'",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/**' --test-coverage-lines=95 --test-coverage-branches=85 --test-coverage-functions=90 'test/**/*.test.ts'",
     "cli": "node src/cli.ts",
     "watch": "node src/cli.ts watch",
-    "build:win": "npm run build && electron-builder --win dir zip",
-    "build:mac": "npm run build && electron-builder --mac dmg zip",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
     "ui-check": "npm run build && electron scripts/ui-check/main.ts",
     "icons": "node scripts/icons.ts",
     "lint": "eslint .",
@@ -37,6 +38,7 @@
   "build": {
     "appId": "dev.vibe.usage",
     "productName": "Vibe Usage",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -54,8 +56,13 @@
     ],
     "win": {
       "target": [
-        "dir",
-        "zip"
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "signAndEditExecutable": false
     },

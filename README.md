@@ -64,6 +64,7 @@ npm run lint          # ESLint, tip bilgisiyle (typescript-eslint strictTypeChec
 npm run format        # Prettier (CI: npm run format:check)
 npm run build         # tip denetimi ve sıfırdan build/ çıktısı
 npm test              # birim ve entegrasyon testleri, kaynaktan
+npm run test:coverage # aynı testler, kapsam eşikleriyle (CI bunu çalıştırır)
 npm run ui-check      # derlenen arayüzü gerçek preload ve sandbox ile 13 dilde çizer
 npm start
 npm run build:win
