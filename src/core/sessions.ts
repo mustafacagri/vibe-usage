@@ -255,11 +255,17 @@ function contentText(content: unknown, types: readonly string[]): string {
 function claudeProjectDirs(projectDir: string, { profiles }: SessionSources): { dir: string; profile: string; legacyProject: boolean }[] {
   const resolved = path.resolve(projectDir);
   const slugs = new Set([resolved.replace(/[/\\:]/g, '-'), resolved.replace(/[^a-zA-Z0-9]/g, '-')]);
-  // A worktree's transcript can remain in its original repository's storage directory.
-  // Slugs are a discovery hint only; recorded/relocated cwd determines ownership.
+  // A worktree's transcript can remain in its original repository's storage directory, and Claude
+  // Code creates worktrees inside the repository: only the project's own directory and those of
+  // folders that contain it can hold such a session. Reading every project's transcripts instead
+  // took about a minute on a cold disk with several GB of transcripts. Recorded/relocated cwd
+  // still determines ownership.
+  const encloses = (name: string): boolean => [...slugs].some(slug => slug.startsWith(`${name}-`));
   return profiles.claude.flatMap(profile => {
     const root = path.join(profile, CLAUDE_FILES.projects);
-    return subdirectories(root).map(entry => ({ dir: path.join(root, entry.name), profile, legacyProject: slugs.has(entry.name) }));
+    return subdirectories(root)
+      .filter(entry => slugs.has(entry.name) || encloses(entry.name))
+      .map(entry => ({ dir: path.join(root, entry.name), profile, legacyProject: slugs.has(entry.name) }));
   });
 }
 
