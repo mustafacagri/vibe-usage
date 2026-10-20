@@ -3,15 +3,17 @@
 // appears under the project it was started in. Formats were verified against real local
 // data (Claude Code JSONL, Codex rollout JSONL, Cursor CLI store.db, Antigravity
 // conversations/*.db + brain transcript); unknown fields are left empty instead of guessed.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { CLAUDE_FILES, SYNTHETIC_MODEL } from '../providers/claude.ts';
 import { CODEX_SESSIONS_DIR } from '../providers/codex.ts';
-import { accountProfileDirs } from '../providers/profiles.ts';
+import { accountProfileDirs, defaultProfileDir } from '../providers/profiles.ts';
 import {
   AUTO,
   CLAUDE_PERMISSION_MODES,
@@ -22,7 +24,7 @@ import {
   type ProfileProviderId,
   type ProviderId
 } from '../shared/catalog.ts';
-import type { SessionSummary } from '../shared/ipc.ts';
+import type { SessionSourceRef, SessionSummary } from '../shared/ipc.ts';
 import type { Account } from '../shared/types.ts';
 import {
   attempt,
@@ -32,24 +34,25 @@ import {
   JSON_LINES_EXTENSION,
   jsonLines,
   newestFiles,
-  readHeadSync,
   readJsonSync,
   readTailSync,
   samePath,
   type JsonObject
 } from './files.ts';
-import { redactSecrets } from './redact.ts';
+import { redactSecretsWithReview } from './redact.ts';
 
 // Where transcripts are kept: tools with profile folders keep them in each profile (the
 // default one and every folder an account uses); the others under the home folder.
 export interface SessionSources {
   homeDir: string;
   profiles: Readonly<Record<ProfileProviderId, readonly string[]>>;
+  accounts?: readonly Account[];
 }
 
 export function sessionSources(homeDir: string, accounts: readonly Account[] = []): SessionSources {
   return {
     homeDir,
+    accounts,
     profiles: { claude: accountProfileDirs('claude', homeDir, accounts), codex: accountProfileDirs('codex', homeDir, accounts) }
   };
 }
@@ -74,6 +77,39 @@ export interface Transcript {
   files: string[];
   // The end of the conversation, oldest first. Consecutive messages of one role form one turn.
   recent: Turn[];
+  secretReviewRequired?: boolean;
+}
+
+export interface ResolvedSession extends Transcript {
+  source: SessionSourceRef;
+  projectDir: string;
+}
+
+interface SessionCandidate {
+  summary: SessionSummary;
+  transcript: ResolvedSession;
+}
+
+const canonicalPath = (file: string): string => attemptSync(() => fs.realpathSync.native(file)) ?? path.resolve(file);
+const sameProject = (a: string, b: string): boolean => samePath(a, b) || samePath(canonicalPath(a), canonicalPath(b));
+const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const fileVersion = (file: string): string => {
+  const stat = attemptSync(() => fs.statSync(file, { bigint: true }));
+  return stat ? [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':') : 'missing';
+};
+const SESSION_CACHE_LIMIT = 512;
+function cacheEntry<T>(cache: Map<string, T>, file: string, value: T, limit = SESSION_CACHE_LIMIT): void {
+  cache.delete(file);
+  cache.set(file, value);
+  if (cache.size > limit) cache.delete(cache.keys().next().value ?? '');
+}
+
+function sourceAccount(providerId: ProviderId, profile: string | undefined, sources: SessionSources): string | undefined {
+  return sources.accounts?.find(account => {
+    if (!account.enabled || account.providerId !== providerId) return false;
+    if (!profile || (providerId !== 'claude' && providerId !== 'codex')) return true;
+    return sameProject(account.configDir ?? defaultProfileDir(providerId, sources.homeDir), profile);
+  })?.id;
 }
 
 // The recent conversation is bounded by turns, by turn length and in total.
@@ -83,8 +119,10 @@ const ELISION = '\n[…]\n';
 const SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/gi;
 
 // Secrets are removed from the whole message, before any clipping could cut one in half.
-function sanitizeText(text: string): string {
-  return redactSecrets(text.replace(SYSTEM_REMINDER, '')).trim();
+function sanitizeText(text: string, transcript: Transcript): string {
+  const result = redactSecretsWithReview(text.replace(SYSTEM_REMINDER, ''));
+  if (result.requiresReview) transcript.secretReviewRequired = true;
+  return result.text.trim();
 }
 
 // Long turns keep their beginning (the request) and their end (the conclusion).
@@ -95,7 +133,7 @@ function elide(text: string, limit: number): string {
 }
 
 // A folder a record names, compared with `b`.
-const namesPath = (a: unknown, b: string): boolean => typeof a === 'string' && a !== '' && samePath(a, b);
+const namesPath = (a: unknown, b: string): boolean => typeof a === 'string' && a !== '' && sameProject(a, b);
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
@@ -118,20 +156,36 @@ interface ListDetails {
   updatedAt: number;
   sizeBytes: number;
   title?: string | undefined;
+  file: string;
+  projectDir: string;
+  sources: SessionSources;
+  profile?: string;
+  dependencies?: string[];
 }
 
 // A session list item, or null for sessions without a single user prompt. An empty title is
 // worded by the UI ("untitled session").
-function listEntry(transcript: Transcript, { updatedAt, sizeBytes, title }: ListDetails): SessionSummary | null {
+function listEntry(transcript: Transcript, details: ListDetails): SessionCandidate | null {
   if (!transcript.turnCount) return null;
+  const { updatedAt, sizeBytes, title, file, projectDir, sources, profile, dependencies = [] } = details;
+  const accountId = sourceAccount(transcript.providerId, profile, sources);
+  const source: SessionSourceRef = {
+    id: digest([transcript.providerId, canonicalPath(file), canonicalPath(projectDir), accountId ?? null]),
+    version: digest([[file, ...dependencies].map(fileVersion), transcript, title ?? null]),
+    ...(accountId ? { accountId } : {})
+  };
   return {
-    id: transcript.sessionId,
-    providerId: transcript.providerId,
-    title: title || transcript.sessionTitle,
-    updatedAt,
-    sizeBytes,
-    turnCount: transcript.turnCount,
-    model: transcript.sessionModel
+    summary: {
+      id: transcript.sessionId,
+      providerId: transcript.providerId,
+      source,
+      title: title || transcript.sessionTitle,
+      updatedAt,
+      sizeBytes,
+      turnCount: transcript.turnCount,
+      model: transcript.sessionModel
+    },
+    transcript: { ...transcript, ...(title ? { sessionTitle: title } : {}), source, projectDir: canonicalPath(projectDir) }
   };
 }
 
@@ -174,7 +228,7 @@ function remember({ recent }: Transcript, role: Turn['role'], message: string): 
 }
 
 function addUser(transcript: Transcript, message: string): void {
-  const clean = sanitizeText(message);
+  const clean = sanitizeText(message, transcript);
   if (!clean) return;
   transcript.turnCount++;
   if (!transcript.initialGoal) transcript.initialGoal = clean;
@@ -184,7 +238,7 @@ function addUser(transcript: Transcript, message: string): void {
 }
 
 function addAssistant(transcript: Transcript, message: string): void {
-  const clean = sanitizeText(message);
+  const clean = sanitizeText(message, transcript);
   if (!clean) return;
   transcript.lastAssistantMsg = clean;
   remember(transcript, 'assistant', clean);
@@ -198,12 +252,15 @@ function contentText(content: unknown, types: readonly string[]): string {
 }
 
 // ---------------------------------------------------------------- Claude Code
-function claudeProjectDirs(projectDir: string, { profiles }: SessionSources): string[] {
+function claudeProjectDirs(projectDir: string, { profiles }: SessionSources): { dir: string; profile: string; legacyProject: boolean }[] {
   const resolved = path.resolve(projectDir);
   const slugs = new Set([resolved.replace(/[/\\:]/g, '-'), resolved.replace(/[^a-zA-Z0-9]/g, '-')]);
-  return profiles.claude
-    .flatMap(root => [...slugs].map(slug => path.join(root, CLAUDE_FILES.projects, slug)))
-    .filter(dir => fs.existsSync(dir));
+  // A worktree's transcript can remain in its original repository's storage directory.
+  // Slugs are a discovery hint only; recorded/relocated cwd determines ownership.
+  return profiles.claude.flatMap(profile => {
+    const root = path.join(profile, CLAUDE_FILES.projects);
+    return subdirectories(root).map(entry => ({ dir: path.join(root, entry.name), profile, legacyProject: slugs.has(entry.name) }));
+  });
 }
 
 const CLAUDE_TEXT_PARTS = ['text'];
@@ -216,13 +273,15 @@ function claudeFilePath(record: JsonObject): unknown {
 
 // Parsed results per file, reused until the file changes.
 function mtimeMemo<T>(): (file: string, compute: () => Promise<T>) => Promise<T> {
-  const memo = new Map<string, { mtimeMs: number; value: T }>();
+  const memo = new Map<string, { version: string; value: T }>();
   return async (file, compute) => {
-    const { mtimeMs } = await fsp.stat(file);
+    const version = fileVersion(file);
     const hit = memo.get(file);
-    if (hit?.mtimeMs === mtimeMs) return hit.value;
+    if (hit?.version === version) return hit.value;
     const value = await compute();
-    memo.set(file, { mtimeMs, value });
+    if (fileVersion(file) !== version) throw new Error('Session changed while reading');
+    // A bounded cache, shared by listing and resolving the exact reviewed source.
+    cacheEntry(memo, file, { version, value });
     return value;
   };
 }
@@ -259,32 +318,35 @@ async function parseClaudeFile(file: string, id: string): Promise<Transcript> {
   return transcript;
 }
 
-async function listClaude(projectDir: string, sources: SessionSources): Promise<(SessionSummary | null)[]> {
-  const sessions: (SessionSummary | null)[] = [];
-  for (const dir of claudeProjectDirs(projectDir, sources)) {
+async function listClaude(projectDir: string, sources: SessionSources, sessionId?: string): Promise<(SessionCandidate | null)[]> {
+  const sessions: (SessionCandidate | null)[] = [];
+  for (const { dir, profile, legacyProject } of claudeProjectDirs(projectDir, sources)) {
     for (const name of await fsp.readdir(dir).catch(() => [])) {
       if (!name.endsWith(JSON_LINES_EXTENSION)) continue;
+      if (sessionId && name !== `${sessionId}${JSON_LINES_EXTENSION}`) continue;
       const file = path.join(dir, name);
       sessions.push(
         await attempt(async () => {
+          const ownership = await readClaudeProject(file);
+          if (!ownership) return null;
+          const recordedProject = ownership.projectDir;
+          if (recordedProject ? !sameProject(recordedProject, projectDir) : !legacyProject) return null;
           const stat = await fsp.stat(file);
-          return listEntry(await readClaudeFile(file, path.basename(name, JSON_LINES_EXTENSION)), {
+          const transcript = await readClaudeFile(file, path.basename(name, JSON_LINES_EXTENSION));
+          if (fileVersion(file) !== ownership.version) return null;
+          return listEntry(transcript, {
             updatedAt: stat.mtimeMs,
-            sizeBytes: stat.size
+            sizeBytes: stat.size,
+            file,
+            projectDir,
+            sources,
+            profile
           });
         })
       );
     }
   }
   return sessions;
-}
-
-async function readClaude(projectDir: string, sources: SessionSources, id: string): Promise<Transcript | null> {
-  for (const dir of claudeProjectDirs(projectDir, sources)) {
-    const file = path.join(dir, `${id}${JSON_LINES_EXTENSION}`);
-    if (fs.existsSync(file)) return readClaudeFile(file, id);
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------- Codex
@@ -407,46 +469,51 @@ function codexThreadNames({ profiles }: SessionSources): Map<string, string> {
 interface Rollout {
   file: string;
   id: string;
+  profile: string;
 }
 
 // Fork snapshots start with the parent's session_meta; a session's own rollout is preferred.
 async function findCodexRollouts(projectDir: string, { profiles }: SessionSources): Promise<Rollout[]> {
   const byId = new Map<string, Rollout & { own: boolean }>();
-  for (const file of profiles.codex.flatMap(root => walkRollouts(path.join(root, CODEX_SESSIONS_DIR)))) {
+  for (const { file, profile } of profiles.codex.flatMap(profile =>
+    walkRollouts(path.join(profile, CODEX_SESSIONS_DIR)).map(file => ({ file, profile }))
+  )) {
     const meta = await attempt(() => readCodexMeta(file));
-    if (!meta || meta.subagent || !namesPath(meta.cwd, projectDir)) continue;
+    if (!meta || meta.subagent || typeof meta.cwd !== 'string' || !sameProject(meta.cwd, projectDir)) continue;
     const own = OWN_ROLLOUT.exec(path.basename(file))?.[1] === meta.id;
-    const previous = byId.get(meta.id);
-    if (!previous || (own && !previous.own)) byId.set(meta.id, { file, id: meta.id, own });
+    const key = `${canonicalPath(profile)}:${meta.id}`;
+    const previous = byId.get(key);
+    if (!previous || (own && !previous.own)) byId.set(key, { file, id: meta.id, profile, own });
   }
-  return [...byId.values()].map(({ file, id }) => ({ file, id }));
+  return [...byId.values()].map(({ file, id, profile }) => ({ file, id, profile }));
 }
 
 // Turn counts need a full parse; reuse it until the rollout changes.
 const codexSummaryMemo = mtimeMemo<Transcript>();
 
-async function listCodex(projectDir: string, sources: SessionSources): Promise<(SessionSummary | null)[]> {
-  const names = codexThreadNames(sources);
-  const sessions: (SessionSummary | null)[] = [];
-  for (const { file, id } of await findCodexRollouts(projectDir, sources)) {
+async function listCodex(projectDir: string, sources: SessionSources, sessionId?: string): Promise<(SessionCandidate | null)[]> {
+  const sessions: (SessionCandidate | null)[] = [];
+  for (const { file, id, profile } of await findCodexRollouts(projectDir, sources)) {
+    if (sessionId && id !== sessionId) continue;
     sessions.push(
       await attempt(async () => {
         const stat = await fsp.stat(file);
         const transcript = await codexSummaryMemo(file, () => readCodexFile(file, id));
-        return listEntry(transcript, { updatedAt: stat.mtimeMs, sizeBytes: stat.size, title: names.get(id) });
+        const names = codexThreadNames({ ...sources, profiles: { ...sources.profiles, codex: [profile] } });
+        return listEntry(transcript, {
+          updatedAt: stat.mtimeMs,
+          sizeBytes: stat.size,
+          title: names.get(id),
+          file,
+          projectDir,
+          sources,
+          profile,
+          dependencies: [path.join(profile, 'session_index.jsonl')]
+        });
       })
     );
   }
   return sessions;
-}
-
-async function readCodex(projectDir: string, sources: SessionSources, id: string): Promise<Transcript | null> {
-  const hit = (await findCodexRollouts(projectDir, sources)).find(rollout => rollout.id === id);
-  if (!hit) return null;
-  const transcript = await readCodexFile(hit.file, id);
-  const name = codexThreadNames(sources).get(id);
-  if (name) transcript.sessionTitle = name;
-  return transcript;
 }
 
 // ----------------------------------------------------------------- Cursor CLI
@@ -501,19 +568,24 @@ function readCursorChat(dir: string, id: string): Transcript {
   return transcript;
 }
 
-function listCursor(projectDir: string, { homeDir }: SessionSources): (SessionSummary | null)[] {
-  return cursorChatDirs(projectDir, homeDir).map(({ id, dir, updatedAtMs }) =>
-    attemptSync(() => {
-      const stat = fs.statSync(path.join(dir, 'store.db'));
-      const updatedAt = typeof updatedAtMs === 'number' && updatedAtMs ? updatedAtMs : stat.mtimeMs;
-      return listEntry(readCursorChat(dir, id), { updatedAt, sizeBytes: stat.size });
-    })
-  );
-}
-
-function readCursor(projectDir: string, { homeDir }: SessionSources, id: string): Transcript | null {
-  const hit = cursorChatDirs(projectDir, homeDir).find(chat => chat.id === id);
-  return hit ? readCursorChat(hit.dir, id) : null;
+function listCursor(projectDir: string, sources: SessionSources, sessionId?: string): (SessionCandidate | null)[] {
+  return cursorChatDirs(projectDir, sources.homeDir)
+    .filter(chat => !sessionId || chat.id === sessionId)
+    .map(({ id, dir, updatedAtMs }) =>
+      attemptSync(() => {
+        const file = path.join(dir, 'store.db');
+        const stat = fs.statSync(file);
+        const updatedAt = typeof updatedAtMs === 'number' && updatedAtMs ? updatedAtMs : stat.mtimeMs;
+        return listEntry(readCursorChat(dir, id), {
+          updatedAt,
+          sizeBytes: stat.size,
+          file,
+          projectDir,
+          sources,
+          dependencies: [path.join(dir, 'meta.json'), `${file}-wal`]
+        });
+      })
+    );
 }
 
 // ---------------------------------------------------------------- Antigravity
@@ -600,11 +672,13 @@ function antigravityConversations(projectDir: string, homeDir: string): Antigrav
 }
 
 const MARKUP = /<[^>]+>/g;
+const antigravityTranscriptFile = (homeDir: string, id: string): string =>
+  path.join(antigravityRoot(homeDir), 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
 
 async function readAntigravityTranscript(homeDir: string, id: string, model: string): Promise<Transcript> {
   const transcript = emptyTranscript('antigravity', id);
   transcript.sessionModel = model;
-  const file = path.join(antigravityRoot(homeDir), 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+  const file = antigravityTranscriptFile(homeDir, id);
   for (const { type, content } of jsonLines(await fsp.readFile(file, 'utf8').catch(() => ''))) {
     if (typeof content !== 'string') continue;
     if (type === 'USER_INPUT') addUser(transcript, content.replace(MARKUP, ''));
@@ -613,22 +687,26 @@ async function readAntigravityTranscript(homeDir: string, id: string, model: str
   return transcript;
 }
 
-async function listAntigravity(projectDir: string, { homeDir }: SessionSources): Promise<(SessionSummary | null)[]> {
-  const sessions: (SessionSummary | null)[] = [];
+async function listAntigravity(projectDir: string, sources: SessionSources, sessionId?: string): Promise<(SessionCandidate | null)[]> {
+  const { homeDir } = sources;
+  const sessions: (SessionCandidate | null)[] = [];
   for (const { id, file, model } of antigravityConversations(projectDir, homeDir)) {
+    if (sessionId && id !== sessionId) continue;
     sessions.push(
       await attempt(async () => {
         const stat = await fsp.stat(file);
-        return listEntry(await readAntigravityTranscript(homeDir, id, model), { updatedAt: stat.mtimeMs, sizeBytes: stat.size });
+        return listEntry(await readAntigravityTranscript(homeDir, id, model), {
+          updatedAt: stat.mtimeMs,
+          sizeBytes: stat.size,
+          file,
+          projectDir,
+          sources,
+          dependencies: [`${file}-wal`, antigravityTranscriptFile(homeDir, id)]
+        });
       })
     );
   }
   return sessions;
-}
-
-async function readAntigravity(projectDir: string, { homeDir }: SessionSources, id: string): Promise<Transcript | null> {
-  const hit = antigravityConversations(projectDir, homeDir).find(conversation => conversation.id === id);
-  return hit ? readAntigravityTranscript(homeDir, id, hit.model) : null;
 }
 
 // ------------------------------------------------------------- latest session
@@ -653,7 +731,14 @@ const matchesSession = (session: RecentSession, identity?: SessionIdentity): boo
   !identity || (samePath(session.projectDir, identity.projectDir) && session.sessionId === identity.sessionId);
 
 // Claude Code writes the working directory into its records; it is near the top of the file.
-const CWD_SCAN_BYTES = 256 * 1024;
+const PROJECT_HEAD_BYTES = 256 * 1024;
+// Metadata only (a path and a version), so far more files than the content caches.
+const PROJECT_CACHE_LIMIT = 50_000;
+interface ClaudeProject {
+  version: string;
+  projectDir: string | null;
+}
+const claudeProjectMemo = new Map<string, ClaudeProject>();
 const mtime = (file: string): number => attemptSync(() => fs.statSync(file).mtimeMs) ?? 0;
 const isFileSync = (file: string): boolean => attemptSync(() => fs.statSync(file).isFile()) ?? false;
 
@@ -667,13 +752,103 @@ export async function recentSessionModel(session: RecentSession): Promise<string
 // The folder a Claude Code session belongs to, as Claude Code itself attributes it: where it was
 // relocated to (a worktree), else where it started. The `cwd` of later records follows the
 // agent's shell and can point anywhere inside the project.
+// The owner is the first record's cwd (head of the file) unless a later `relocated` record moved
+// the session. A transcript can be gigabytes, so the body is searched as raw bytes for the
+// marker and only the lines containing it are decoded.
+const RELOCATION_MARKER = Buffer.from('"relocatedCwd"');
+const SCAN_CHUNK_BYTES = 1024 * 1024;
+const MAX_CARRIED_LINE_BYTES = 4 * 1024 * 1024;
+const NEWLINE = 10;
+
+function projectScan(): { feed(chunk: Buffer): void; finish(): string | null } {
+  const owner: { initial: string | null; relocated: string | null } = { initial: null, relocated: null };
+  const head = new StringDecoder('utf8');
+  let headText = '';
+  let headRead = 0;
+  let carry: Buffer = Buffer.alloc(0);
+  const inspectRelocation = (line: Buffer): void => {
+    const [record] = jsonLines(line.toString('utf8'));
+    if (record?.type === 'relocated' && typeof record.relocatedCwd === 'string' && record.relocatedCwd)
+      owner.relocated = record.relocatedCwd;
+  };
+  return {
+    feed(chunk) {
+      if (headRead < PROJECT_HEAD_BYTES) {
+        headText += head.write(chunk);
+        headRead += chunk.length;
+      }
+      const data = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      let position = 0;
+      for (;;) {
+        const at = data.indexOf(RELOCATION_MARKER, position);
+        if (at < 0) break;
+        const end = data.indexOf(NEWLINE, at);
+        if (end < 0) {
+          // The line continues in the next chunk.
+          carry = data.subarray(data.lastIndexOf(NEWLINE, at) + 1);
+          return;
+        }
+        inspectRelocation(data.subarray(data.lastIndexOf(NEWLINE, at) + 1, end));
+        position = end + 1;
+      }
+      // Keep the unfinished line so a marker split across chunks is still found whole.
+      const unfinished = data.subarray(data.lastIndexOf(NEWLINE) + 1);
+      carry = unfinished.length <= MAX_CARRIED_LINE_BYTES ? unfinished : Buffer.alloc(0);
+    },
+    finish() {
+      if (carry.length && carry.includes(RELOCATION_MARKER)) inspectRelocation(carry);
+      const first = jsonLines(headText).find(record => typeof record.cwd === 'string' && record.cwd);
+      owner.initial = typeof first?.cwd === 'string' ? first.cwd : null;
+      return owner.relocated ?? owner.initial;
+    }
+  };
+}
+
+// Listing inspects many projects: read asynchronously and cache per file version, shared with
+// the targeted synchronous lookup below.
+async function readClaudeProject(file: string): Promise<ClaudeProject | null> {
+  const version = fileVersion(file);
+  const hit = claudeProjectMemo.get(file);
+  if (hit?.version === version) return hit;
+  const project = await attempt(async () => {
+    const scan = projectScan();
+    const handle = await fsp.open(file, 'r');
+    try {
+      const buffer = Buffer.alloc(SCAN_CHUNK_BYTES);
+      for (
+        let read = await handle.read(buffer, 0, buffer.length, null);
+        read.bytesRead;
+        read = await handle.read(buffer, 0, buffer.length, null)
+      )
+        scan.feed(Buffer.from(buffer.subarray(0, read.bytesRead)));
+    } finally {
+      await handle.close();
+    }
+    return { version, projectDir: scan.finish() };
+  });
+  if (!project || fileVersion(file) !== version) return null;
+  cacheEntry(claudeProjectMemo, file, project, PROJECT_CACHE_LIMIT);
+  return project;
+}
+
 export function claudeProjectDir(file: string): string | null {
-  const relocated = [...jsonLines(readTailSync(file, TAIL_SCAN_BYTES))]
-    .filter(record => record.type === 'relocated' && typeof record.relocatedCwd === 'string' && record.relocatedCwd)
-    .at(-1);
-  if (typeof relocated?.relocatedCwd === 'string') return relocated.relocatedCwd;
-  const head = [...jsonLines(readHeadSync(file, CWD_SCAN_BYTES))].find(record => typeof record.cwd === 'string' && record.cwd);
-  return typeof head?.cwd === 'string' ? head.cwd : null;
+  const version = fileVersion(file);
+  const hit = claudeProjectMemo.get(file);
+  if (hit?.version === version) return hit.projectDir;
+  const project = attemptSync(() => {
+    const fd = fs.openSync(file, 'r');
+    const buffer = Buffer.alloc(SCAN_CHUNK_BYTES);
+    const scan = projectScan();
+    try {
+      for (let size = fs.readSync(fd, buffer); size; size = fs.readSync(fd, buffer)) scan.feed(Buffer.from(buffer.subarray(0, size)));
+      return { version, projectDir: scan.finish() };
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+  if (!project || fileVersion(file) !== version) return null;
+  cacheEntry(claudeProjectMemo, file, project, PROJECT_CACHE_LIMIT);
+  return project.projectDir;
 }
 
 export function latestClaudeSession(root: string, identity?: SessionIdentity): RecentSession | null {
@@ -750,6 +925,13 @@ export function latestCursorSession(homeDir: string, identity?: SessionIdentity)
 }
 
 // ----------------------------------------------------------- stopped by a limit
+// A file can be copied or touched long after its stop. Event time is authoritative;
+// allow only a small clock skew for a record written as the clock is sampled.
+export function isRecentStop(stoppedAt: number | undefined, now: number, maxAgeMs: number): boolean {
+  const age = now - (stoppedAt ?? NaN);
+  return Number.isFinite(age) && age >= -5000 && age <= maxAgeMs;
+}
+
 // A session whose agent stopped because its account ran out: the tool wrote its own
 // usage-limit error as the last turn. Unlike a quota percentage, this says the agent is no
 // longer working, so continuing the session elsewhere cannot run two agents at once. Only the
@@ -926,14 +1108,16 @@ export interface TranscriptWrite {
   lastRecordAt: number;
   size: number;
 }
-const writeMemo = new Map<string, { size: number; mtimeMs: number; value: TranscriptWrite }>();
+const writeMemo = new Map<string, { version: string; value: TranscriptWrite }>();
 export function claudeTranscriptWrite(file: string): TranscriptWrite | null {
   const stat = attemptSync(() => fs.statSync(file));
   if (!stat) return null;
+  const version = fileVersion(file);
   const hit = writeMemo.get(file);
-  if (hit?.size === stat.size && hit.mtimeMs === stat.mtimeMs) return hit.value;
+  if (hit?.version === version) return hit.value;
   const value = { lastRecordAt: claudeLastWrittenAt(file), size: stat.size };
-  writeMemo.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, value });
+  if (fileVersion(file) !== version) return null;
+  cacheEntry(writeMemo, file, { version, value });
   return value;
 }
 
@@ -971,7 +1155,7 @@ export function claudeLimitStops(root: string, now: number, maxAgeMs: number): S
     .filter(({ updatedAt }) => now - updatedAt <= maxAgeMs)
     .flatMap(({ file, updatedAt }) => {
       const stop = claudeLimitStop(file);
-      return stop && !stop.headless
+      return stop && !stop.headless && isRecentStop(stop.stoppedAt, now, maxAgeMs)
         ? [
             {
               providerId: 'claude' as const,
@@ -994,32 +1178,52 @@ export async function codexLimitStops(root: string, now: number, maxAgeMs: numbe
     if (now - updatedAt > maxAgeMs) continue;
     const stop = codexLimitStop(file);
     const meta = stop && (await attempt(() => readCodexMeta(file)));
-    if (!stop || !meta || meta.subagent || meta.headless || typeof meta.cwd !== 'string' || !meta.cwd) continue;
+    if (
+      !stop ||
+      !isRecentStop(stop.stoppedAt, now, maxAgeMs) ||
+      !meta ||
+      meta.subagent ||
+      meta.headless ||
+      typeof meta.cwd !== 'string' ||
+      !meta.cwd
+    )
+      continue;
     stops.push({ providerId: 'codex', sessionId: meta.id, projectDir: meta.cwd, updatedAt, file, stoppedAt: stop.stoppedAt });
   }
   return stops.sort((a, b) => b.stoppedAt - a.stoppedAt);
 }
 
 // --------------------------------------------------------------------- public
-type Lister = (projectDir: string, sources: SessionSources) => Promise<(SessionSummary | null)[]> | (SessionSummary | null)[];
-type Reader = (projectDir: string, sources: SessionSources, id: string) => Promise<Transcript | null> | Transcript | null;
+type Lister = (
+  projectDir: string,
+  sources: SessionSources,
+  sessionId?: string
+) => Promise<(SessionCandidate | null)[]> | (SessionCandidate | null)[];
 
 const LISTERS: Record<ProviderId, Lister> = { claude: listClaude, codex: listCodex, cursor: listCursor, antigravity: listAntigravity };
-const READERS: Record<ProviderId, Reader> = { claude: readClaude, codex: readCodex, cursor: readCursor, antigravity: readAntigravity };
 
 const providersFor = (providerId: ProviderId | Auto): readonly ProviderId[] => (providerId === AUTO ? PROVIDER_IDS : [providerId]);
 
 // Sessions of the project, newest first. A provider whose data cannot be read lists none.
+async function sessionCandidates(
+  providerId: ProviderId | Auto,
+  projectDir: string,
+  sources: SessionSources,
+  sessionId?: string
+): Promise<SessionCandidate[]> {
+  const results = await Promise.allSettled(providersFor(providerId).map(async id => LISTERS[id](projectDir, sources, sessionId)));
+  return results
+    .flatMap(result => (result.status === 'fulfilled' ? result.value : []))
+    .filter(session => session !== null)
+    .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
+}
+
 export async function listProviderSessions(
   providerId: ProviderId | Auto,
   projectDir: string,
   sources: SessionSources
 ): Promise<SessionSummary[]> {
-  const results = await Promise.allSettled(providersFor(providerId).map(async id => LISTERS[id](projectDir, sources)));
-  return results
-    .flatMap(result => (result.status === 'fulfilled' ? result.value : []))
-    .filter(session => session !== null)
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+  return (await sessionCandidates(providerId, projectDir, sources)).map(candidate => candidate.summary);
 }
 
 export interface SessionQuery {
@@ -1027,18 +1231,29 @@ export interface SessionQuery {
   sessionId: string;
   projectDir: string;
   sources: SessionSources;
+  sessionSource?: SessionSourceRef;
 }
 
 // One session; with sessionId 'auto' the newest session of the provider(s). Null when
 // nothing matches: another provider's session is never substituted.
-export async function readSession({ providerId, sessionId, projectDir, sources }: SessionQuery): Promise<Transcript | null> {
-  if (!sessionId || sessionId === AUTO) {
-    const [latest] = await listProviderSessions(providerId, projectDir, sources);
-    return latest ? readSession({ providerId: latest.providerId, sessionId: latest.id, projectDir, sources }) : null;
-  }
-  for (const id of providersFor(providerId)) {
-    const transcript = await attempt(async () => READERS[id](projectDir, sources, sessionId));
-    if (transcript) return transcript;
-  }
-  return null;
+export async function readSession({
+  providerId,
+  sessionId,
+  projectDir,
+  sources,
+  sessionSource
+}: SessionQuery): Promise<ResolvedSession | null> {
+  const automatic = !sessionId || sessionId === AUTO;
+  const candidates = (await sessionCandidates(providerId, projectDir, sources, automatic ? undefined : sessionId)).filter(candidate => {
+    if (!automatic && candidate.summary.id !== sessionId) return false;
+    const actual = candidate.summary.source;
+    return (
+      !sessionSource ||
+      (actual.id === sessionSource.id && actual.version === sessionSource.version && actual.accountId === sessionSource.accountId)
+    );
+  });
+  // Auto selects one physical source directly, without re-resolving its logical id in the
+  // first profile. A named id shared by several sources needs an explicit reviewed source.
+  if (!automatic && candidates.length !== 1) return null;
+  return candidates[0]?.transcript ?? null;
 }

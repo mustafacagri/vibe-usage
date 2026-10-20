@@ -215,6 +215,8 @@ if (import.meta.main) {
           console.error(text);
         },
         runAttached
+      }).finally(() => {
+        service.dispose();
       })
     )
     .then(

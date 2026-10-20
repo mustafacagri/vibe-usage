@@ -77,10 +77,7 @@ nueva en la carpeta de proyecto que elijas. Si no puede verificar ninguna, lo di
 
 ### Transferir
 
-Elige una sesión de Claude Code, Codex, Cursor Agent o Antigravity. Vibe Usage la resume en `VIBE_HANDOVER.md` dentro de
-la carpeta del proyecto: el objetivo, los últimos turnos, los archivos tocados y el estado de git. Después abre la
-herramienta de destino con una instrucción para leer ese resumen. Solo se muestran las sesiones iniciadas en la carpeta
-elegida.
+Elige una sesión de Claude Code, Codex, Cursor Agent o Antigravity. `VIBE_HANDOVER.md` contiene el objetivo, la última petición, la conversación reciente, referencias a archivos y metadatos de rama/HEAD de Git; no se examina el árbol de trabajo. La vista previa fija la fuente física, la cuenta y la versión. Si la fuente cambia, hay que repetirla. Las sesiones trasladadas a un worktree se muestran en el proyecto correcto.
 
 </td>
 <td valign="top">
@@ -149,22 +146,17 @@ caché de modelos de Codex y `cursor-agent --list-models` (en caché durante 24 
 
 ## Privacidad y seguridad
 
-- **Solo lectura.** Usa las sesiones que ya existen. Nunca pide una contraseña, nunca guarda un token, nunca
-  cierra tu sesión y nunca toca el trabajo en curso.
-- **Inicio de sesión caducado.** Cuando el trabajo puede pasar solo de una cuenta a otra, el propio Claude Code renueva un inicio de sesión caducado: con una petición mínima a Haiku (una palabra, sin herramientas, nada guardado), como mucho cada 30 minutos por cuenta. La app nunca lee ni usa el token de actualización.
-- **Dos endpoints.** Las peticiones de cuota solo van a los endpoints de uso de Anthropic y Cursor, con la verificación
-  TLS activada. Codex y Antigravity se leen en local.
-- **Nada secreto en disco.** Los ajustes se guardan en `%APPDATA%\Vibe Usage\settings.json` (Windows) o
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). Las cuotas solo se guardan en memoria.
-- **Una app blindada.** La ventana se ejecuta en un sandbox con una CSP estricta, no puede navegar ni abrir otras
-  ventanas y solo responde a su propia página. Los fuses de Electron desactivan `runAsNode`, `NODE_OPTIONS` y el
-  inspector, y exigen la integridad de ASAR.
+Las credenciales existentes se leen en memoria; sus documentos pueden contener tokens de acceso y actualización. La app comprueba si existe un token de actualización, pero no lo guarda en sus propios datos. Claude Code realiza la renovación.
+
+Los ajustes, etiquetas de cuentas, rutas, historial de cuota y últimas mediciones se guardan localmente. Continuar en otra cuenta copia la conversación completa. `VIBE_HANDOVER.md` contiene contexto con datos sensibles ocultos; no se garantiza detectar todos los formatos de secretos. Revisa la vista previa antes de transferir. Un archivo ya rastreado por Git o una exclusión fallida impiden la transferencia. Cursor conserva sus propias preguntas de confianza.
+
+Las cuotas usan los endpoints del proveedor y la comprobación de versiones usa GitHub. Descargar e instalar son acciones separadas del usuario. Consulta [Privacidad y datos locales](../PRIVACY.md).
 
 ## Instalación
 
 ### Windows
 
-Descarga `Vibe-Usage-<versión>-win-setup.exe` de la [última versión](https://github.com/mustafacagri/vibe-usage/releases/latest) y ejecútalo: se instala solo para tu usuario, sin permisos de administrador. O usa el portable `Vibe-Usage-<versión>-win-x64.zip` (o `-arm64`), descomprímelo y ejecuta `Vibe Usage.exe`. La app instalada se mantiene al día: la nueva versión se descarga en segundo plano y se instala con **Reiniciar para actualizar**. La copia portable enlaza a la nueva versión. Vive en la bandeja del sistema.
+Descarga `Vibe-Usage-<versión>-win-setup.exe` de la [última versión](https://github.com/mustafacagri/vibe-usage/releases/latest) y ejecútalo: se instala solo para tu usuario, sin permisos de administrador. O usa el portable `Vibe-Usage-<versión>-win-x64.zip` (o `-arm64`), descomprímelo y ejecuta `Vibe Usage.exe`. Una instalación firmada compatible descarga la actualización al pulsar **Descargar** y la instala con **Reiniciar para actualizar**. La copia portable enlaza a la nueva versión. Vive en la bandeja del sistema.
 
 La app no está firmada, así que en el primer arranque Windows SmartScreen puede mostrar **Windows protegió su PC**. Haz clic en **Más información** y luego en **Ejecutar de todas formas**.
 

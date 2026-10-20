@@ -306,7 +306,12 @@ async function start(): Promise<void> {
     renewSignIn: { claude: account => renewClaudeSignIn(account, { dataDir, home: homeDir }) }
   });
   const history = await createHistory({ dataDir });
-  const continuity = await createContinuity({ homeDir, dataDir, launch: { dataDir, homeDir, platform: process.platform } });
+  const continuity = await createContinuity({
+    homeDir,
+    dataDir,
+    launch: { dataDir, homeDir, platform: process.platform },
+    getCurrentSnapshot: () => service.syncSettings()
+  });
   quitContinuity = () => {
     continuity.quit();
   };
@@ -393,10 +398,17 @@ async function start(): Promise<void> {
     const snapshot = view();
     send(snapshot);
     updateTray(snapshot);
-    const low = watchLow(current);
     // A suggestion replaces the plain low-quota notification for its account.
+    // The CLI can change automation preferences while an earlier observation is still running.
+    // Both settings and quota edges are read when this serialized observation actually starts.
+    let low: readonly QuotaAlert[] = [];
     void continuity
-      .observe(current, { low })
+      .observe(() => service.syncSettings(), {
+        low: current => {
+          low = watchLow(current);
+          return low;
+        }
+      })
       .then(notices => {
         if (notices.length) send(view());
         if (quiet()) return;
@@ -606,6 +618,7 @@ async function start(): Promise<void> {
     resumeTimer = setTimeout(refreshInBackground, RESUME_REFRESH_DELAY_MS);
   });
   app.on('will-quit', () => {
+    service.dispose();
     void history.flush();
   });
   await win.loadFile(HTML);

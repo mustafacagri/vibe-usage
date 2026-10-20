@@ -1201,8 +1201,9 @@ dialog header h2 {
 }
 
 .dialog-actions .secondary-button {
-  flex: 0 0 100px;
-  width: 100px;
+  flex: 0 0 auto;
+  min-width: 100px;
+  width: auto;
 }
 
 .dialog-actions .primary-button {
@@ -1226,6 +1227,7 @@ dialog header h2 {
 
 .project-dir-row input {
   flex: 1;
+  min-width: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
   font-size: 11px;
   padding: 8px 10px;

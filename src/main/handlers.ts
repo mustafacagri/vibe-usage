@@ -20,7 +20,7 @@ import type { DiscoveredAccount } from '../providers/types.ts';
 import { HEALTHY_STATUSES } from '../shared/account-state.ts';
 import { APP_NAME, APP_SLUG, AUTO, isProfileProvider, isProviderId, type ProfileProviderId, type ProviderId } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
-import type { Channel, HandoverRequest, LoginItem, SettingsPatch, VibeMethods } from '../shared/ipc.ts';
+import type { Channel, HandoverRequest, LoginItem, SessionSourceRef, SettingsPatch, VibeMethods } from '../shared/ipc.ts';
 import type { Account, Settings, Snapshot } from '../shared/types.ts';
 import { optionalProvider, optionalString, options, requiredBoolean, requiredNumber, requiredString } from './ipc-policy.ts';
 
@@ -155,7 +155,8 @@ export function createHandlers(context: MainContext): Handlers {
   // A session that is still being written runs in its terminal: continuing it elsewhere too
   // would have two agents editing the same folder, so the user confirms first.
   async function confirmIfRunning(suggestionId: string): Promise<boolean> {
-    const snapshot = await context.refresh();
+    await context.refresh();
+    const snapshot = await service.syncSettings();
     return (
       !(await context.continuity.isRunning(suggestionId, snapshot)) || context.confirmWarnings([{ key: 'warnSessionRunning', params: {} }])
     );
@@ -167,13 +168,27 @@ export function createHandlers(context: MainContext): Handlers {
     if (!projectDir) throw new AppError('folder_not_found');
     const targetModel = optionalString(fields.targetModel);
     const sessionProvider = optionalProvider(fields.sessionProvider);
+    const sourceAccountId = optionalString(fields.sourceAccountId);
+    let sessionSource: SessionSourceRef | null | undefined;
+    if (fields.sessionSource === null) sessionSource = null;
+    else if (fields.sessionSource !== undefined) {
+      const source = options(fields.sessionSource);
+      const id = requiredString(source.id);
+      const version = requiredString(source.version);
+      const accountId = optionalString(source.accountId);
+      if (!/^[a-f0-9]{64}$/.test(id) || !/^[a-f0-9]{64}$/.test(version) || (sourceAccountId && accountId && sourceAccountId !== accountId))
+        throw new AppError('invalid_argument');
+      sessionSource = { id, version, ...(accountId ? { accountId } : {}) };
+    }
     return {
       projectDir,
       fromProvider: parseProviderChoice(fields.fromProvider ?? AUTO),
       toProvider: parseProviderChoice(fields.toProvider ?? AUTO),
       sessionId: optionalString(fields.sessionId) ?? AUTO,
       ...(targetModel ? { targetModel } : {}),
-      ...(sessionProvider ? { sessionProvider } : {})
+      ...(sessionProvider ? { sessionProvider } : {}),
+      ...(sourceAccountId ? { sourceAccountId } : {}),
+      ...(sessionSource !== undefined ? { sessionSource } : {})
     };
   }
 
@@ -248,7 +263,9 @@ export function createHandlers(context: MainContext): Handlers {
     async addAccount(providerId) {
       if (!isProviderId(providerId) || !isProfileProvider(providerId)) throw new AppError('invalid_provider');
       const used = new Set(settings().accounts.flatMap(a => (a.configDir ? [pathKey(a.configDir)] : [])));
-      const isFree = async (dir: string): Promise<boolean> => !used.has(pathKey(dir)) && !(await PROFILES[providerId].isSignedIn(dir));
+      // A folder that cannot be inspected is not free: it may hold a sign-in.
+      const isFree = async (dir: string): Promise<boolean> =>
+        !used.has(pathKey(dir)) && !(await PROFILES[providerId].isSignedIn(dir).catch(() => true));
       const {
         label: _folderName,
         primary: _primary,
@@ -264,28 +281,34 @@ export function createHandlers(context: MainContext): Handlers {
       return context.publish();
     },
     async launchClaude(accountId) {
-      const account = enabledAccount('claude', accountId);
+      await service.syncSettings();
+      enabledAccount('claude', accountId);
       const projectDir = await context.chooseDirectory('chooseProjectFolder');
       if (!projectDir) return { status: 'canceled' };
-      if (!(await context.confirmWarnings(await launchWarnings(service.snapshot(), account, { projectDir }))))
+      const current = await service.syncSettings();
+      if (!(await context.confirmWarnings(await launchWarnings(current, enabledAccount('claude', accountId), { projectDir }))))
         return { status: 'canceled' };
-      const { accounts } = service.snapshot().settings;
+      const { accounts } = (await service.syncSettings()).settings;
+      const account = enabledAccount('claude', accountId);
       await launchTool({ providerId: 'claude', account, cwd: projectDir, dataDir, title: APP_NAME, platform, spawnProcess, accounts });
       return { status: 'launched' };
     },
     async getModels() {
       await refreshCursorModels({ cacheDir: dataDir });
+      await service.syncSettings();
       return discoverModels({ homeDir, cacheDir: dataDir, accounts: settings().accounts });
     },
-    previewSmartLaunch: () => Promise.resolve(previewSmartLaunch(service.snapshot(), launchContext)),
+    previewSmartLaunch: async () => previewSmartLaunch(await service.syncSettings(), launchContext),
     async smartLaunch() {
       const projectDir = await context.chooseDirectory('chooseProjectFolder');
       if (!projectDir) return { status: 'canceled' };
-      const current = await context.refresh();
+      const refreshed = await context.refresh();
+      const current = { ...refreshed, settings: (await service.syncSettings()).settings };
       return { status: 'launched', ...(await smartLaunch(projectDir, current, launchContext)) };
     },
     async listSessions(request) {
       const { providerId, projectDir } = options(request);
+      await service.syncSettings();
       return listSessions(
         parseProviderChoice(providerId ?? AUTO),
         requiredString(projectDir),
@@ -295,7 +318,7 @@ export function createHandlers(context: MainContext): Handlers {
     async continueWork(suggestionId) {
       const id = requiredString(suggestionId);
       if (!(await confirmIfRunning(id))) return { status: 'canceled' };
-      const result = await context.continuity.accept(id, service.snapshot());
+      const result = await context.continuity.accept(id, await service.syncSettings());
       context.publish();
       return { status: 'continued', ...result };
     },
@@ -305,7 +328,7 @@ export function createHandlers(context: MainContext): Handlers {
       const record = context.continuity.transitions().find(r => r.id === id);
       if (record?.status !== 'failed') throw new AppError('suggestion_expired');
       if (!(await confirmIfRunning(record.suggestionId))) return { status: 'canceled' };
-      const result = await context.continuity.retry(id, service.snapshot());
+      const result = await context.continuity.retry(id, await service.syncSettings());
       context.publish();
       return { status: 'continued', ...result };
     },
@@ -321,19 +344,18 @@ export function createHandlers(context: MainContext): Handlers {
       }),
     // Turning update checks off also turns off installing them.
     async downloadUpdate() {
-      if (settings().checkUpdates) await context.installer.download();
+      if ((await service.syncSettings()).settings.checkUpdates) await context.installer.download();
     },
-    installUpdate: () =>
-      Promise.try(() => {
-        if (settings().checkUpdates) context.installer.install();
-      }),
+    async installUpdate() {
+      if ((await service.syncSettings()).settings.checkUpdates) context.installer.install();
+    },
     fitHeight: height =>
       Promise.try(() => {
         context.fitHeight(requiredNumber(height));
       }),
     selectDirectory: async request => context.chooseDirectory('chooseProjectFolder', optionalString(options(request).defaultPath)),
     defaultProjectDir: () => Promise.resolve(homeDir),
-    previewHandover: async request => previewHandover(handoverRequest(request), service.snapshot(), launchContext),
-    executeHandover: async request => executeHandover(handoverRequest(request), service.snapshot(), launchContext)
+    previewHandover: async request => previewHandover(handoverRequest(request), await service.syncSettings(), launchContext),
+    executeHandover: async request => executeHandover(handoverRequest(request), await service.syncSettings(), launchContext)
   };
 }

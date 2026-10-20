@@ -117,6 +117,9 @@ export async function openFixtureWindow(
     });
   }
   await win.loadFile(path.join(BUILD, 'ui/index.html'));
+  // Hidden Ozone/headless windows can keep a zero-sized renderer until the first explicit
+  // resize. Measure the requested content viewport consistently on every test platform.
+  win.setContentSize(width, height);
   return win;
 }
 

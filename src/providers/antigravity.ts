@@ -10,6 +10,7 @@ import type { Account, QuotaWindow } from '../shared/types.ts';
 import {
   MAX_RESPONSE_BYTES,
   readJsonResponse,
+  remainingTimeout,
   runProcess as defaultRunProcess,
   settleOnce,
   sha256Prefix,
@@ -17,12 +18,18 @@ import {
   windowsPowerShell,
   type RunProcess
 } from './common.ts';
-import type { DiscoveredAccount, ProviderAdapter } from './types.ts';
+import {
+  discoverSafely,
+  providerReading,
+  type FetchResult,
+  type ProviderAdapter,
+  type ProviderReading,
+  type RefreshContext
+} from './types.ts';
 
 const MAX_SERVERS = 4;
 const MAX_PORTS_PER_SERVER = 4;
 const LOCAL_REQUEST_TIMEOUT_MS = 3000;
-const MIN_REQUEST_TIMEOUT_MS = 100;
 const DISCOVERY_BUDGET_MS = 6000;
 const FETCH_BUDGET_MS = 12000;
 const WINDOWS_DISCOVERY_TIMEOUT_MS = 12000;
@@ -110,13 +117,13 @@ function addUnique(ids: Set<string>, id: string): string {
 export function parseAntigravitySummary(raw: unknown): AntigravityReading {
   checkedCode(field(raw, 'code'));
   const groups = field(field(raw, 'response'), 'groups') ?? field(field(raw, 'summary'), 'groups') ?? field(raw, 'groups');
-  if (!Array.isArray(groups)) throw new ProviderError('invalid_response');
+  if (!Array.isArray(groups) || !groups.every(isObject)) throw new ProviderError('invalid_response');
   const windows: QuotaWindow[] = [];
   const ids = new Set<string>();
-  for (const group of groups.filter(isObject)) {
-    if (!Array.isArray(group.buckets)) continue;
+  for (const group of groups) {
+    if (!Array.isArray(group.buckets) || !group.buckets.every(isObject)) throw new ProviderError('invalid_response');
     const groupKey = sourceKey(group.groupId, group.id, group.displayName, group.name);
-    for (const bucket of group.buckets.filter(isObject)) {
+    for (const bucket of group.buckets) {
       const bucketKey = sourceKey(bucket.bucketId, bucket.id, bucket.window, bucket.displayName, bucket.name);
       if (!bucketKey) throw new ProviderError('invalid_response');
       const name = sourceKey(bucket.displayName, bucket.name) || bucketKey;
@@ -141,10 +148,11 @@ export function parseAntigravitySummary(raw: unknown): AntigravityReading {
 export function parseAntigravityUserStatus(raw: unknown): AntigravityReading {
   checkedCode(field(raw, 'code'));
   const models = field(field(field(raw, 'userStatus'), 'cascadeModelConfigData'), 'clientModelConfigs') ?? field(raw, 'clientModelConfigs');
-  if (!Array.isArray(models)) throw new ProviderError('invalid_response');
+  if (!Array.isArray(models) || !models.every(isObject)) throw new ProviderError('invalid_response');
   const ids = new Set<string>();
-  const windows = models.filter(isObject).flatMap(model => {
+  const windows = models.flatMap(model => {
     const quota = model.quotaInfo;
+    if (quota !== undefined && quota !== null && !isObject(quota)) throw new ProviderError('invalid_response');
     if (!isObject(quota)) return [];
     const modelKey = sourceKey(field(model.modelOrAlias, 'model'), model.modelId, model.label, model.displayName);
     if (!modelKey) throw new ProviderError('invalid_response');
@@ -241,13 +249,13 @@ export function parseListeningPorts(output: string, expectedPid: unknown): numbe
   return [...ports].sort((a, b) => a - b);
 }
 
-async function discoverWindowsServers(run: RunProcess, env: Environment): Promise<unknown> {
+async function discoverWindowsServers(run: RunProcess, env: Environment, context: Partial<RefreshContext>): Promise<unknown> {
   let output: unknown;
   try {
     const stdout = await run(
       windowsPowerShell(env),
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', DISCOVERY_SCRIPT],
-      { timeoutMs: WINDOWS_DISCOVERY_TIMEOUT_MS, maxBytes: MAX_LSOF_BYTES }
+      { timeoutMs: WINDOWS_DISCOVERY_TIMEOUT_MS, maxBytes: MAX_LSOF_BYTES, ...context }
     );
     output = parseJson(stdout);
   } catch (error) {
@@ -260,11 +268,12 @@ async function discoverWindowsServers(run: RunProcess, env: Environment): Promis
   return field(output, 'servers');
 }
 
-async function discoverMacServers(run: RunProcess, currentUid: number | undefined): Promise<unknown> {
+async function discoverMacServers(run: RunProcess, currentUid: number | undefined, context: Partial<RefreshContext>): Promise<unknown> {
   if (currentUid === undefined) throw new ProviderError('local_service_unavailable');
   const processes = await run('/bin/ps', ['-ax', '-o', 'pid=,uid=,command='], {
     timeoutMs: MAC_PROCESS_TIMEOUT_MS,
-    maxBytes: MAX_PS_BYTES
+    maxBytes: MAX_PS_BYTES,
+    ...context
   });
   const entries = parseMacProcessList(processes, currentUid);
   if (!entries.length) throw new ProviderError('app_closed');
@@ -273,7 +282,8 @@ async function discoverMacServers(run: RunProcess, currentUid: number | undefine
     entries.map(entry =>
       run('/usr/sbin/lsof', ['-nP', '-i4TCP', '-sTCP:LISTEN', '-a', '-p', String(entry.pid)], {
         timeoutMs: MAC_PROCESS_TIMEOUT_MS,
-        maxBytes: MAX_LSOF_BYTES
+        maxBytes: MAX_LSOF_BYTES,
+        ...context
       }).then(
         output => ({ ...entry, ports: parseListeningPorts(output, entry.pid) }),
         () => null
@@ -283,7 +293,7 @@ async function discoverMacServers(run: RunProcess, currentUid: number | undefine
   return listed.filter(Boolean);
 }
 
-export interface DiscoveryOptions {
+export interface DiscoveryOptions extends Partial<RefreshContext> {
   runProcess?: RunProcess;
   platform?: NodeJS.Platform;
   env?: Environment;
@@ -294,11 +304,12 @@ export async function discoverAntigravityServers({
   runProcess = defaultRunProcess,
   platform = process.platform,
   env = process.env,
-  currentUid = process.geteuid?.()
+  currentUid = process.geteuid?.(),
+  ...context
 }: DiscoveryOptions = {}): Promise<LanguageServer[]> {
   let raw: unknown;
-  if (platform === 'win32') raw = await discoverWindowsServers(runProcess, env);
-  else if (platform === 'darwin') raw = await discoverMacServers(runProcess, currentUid);
+  if (platform === 'win32') raw = await discoverWindowsServers(runProcess, env, context);
+  else if (platform === 'darwin') raw = await discoverMacServers(runProcess, currentUid, context);
   else throw new ProviderError('unsupported_platform');
   const servers = validateServers(raw);
   if (!servers.length) throw new ProviderError('local_service_unavailable');
@@ -319,7 +330,7 @@ function requestBody(method: RpcMethod): string {
 
 type HttpsRequest = (options: https.RequestOptions, callback: (response: IncomingMessage) => void) => ClientRequest;
 
-export interface LocalRequestOptions {
+export interface LocalRequestOptions extends Partial<RefreshContext> {
   timeoutMs?: number;
   maxBytes?: number;
   request?: HttpsRequest;
@@ -335,10 +346,16 @@ export const requestLocalJson: RequestLocalJson = (server, port, method, options
       reject(new ProviderError('endpoint_not_allowed'));
       return;
     }
-    const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? LOCAL_REQUEST_TIMEOUT_MS, LOCAL_REQUEST_TIMEOUT_MS));
+    let timeoutMs: number;
+    try {
+      timeoutMs = remainingTimeout(Math.min(options.timeoutMs ?? LOCAL_REQUEST_TIMEOUT_MS, LOCAL_REQUEST_TIMEOUT_MS), options);
+    } catch (error) {
+      reject(error instanceof Error ? error : new ProviderError('request_timeout'));
+      return;
+    }
     const maxBytes = Math.min(options.maxBytes ?? MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES);
     const body = requestBody(method);
-    const settle = settleOnce<unknown>(resolve, reject, timeoutMs);
+    const settle = settleOnce<unknown>(resolve, reject, timeoutMs, options.signal);
     try {
       const request = settle.attach(
         (options.request ?? https.request)(
@@ -378,7 +395,7 @@ export function antigravityAccountId(email: string): string {
   return accountId('antigravity', sha256Prefix(normalizeEmail(email), ACCOUNT_HASH_LENGTH));
 }
 
-const timeLeft = (deadline: number): number => Math.min(LOCAL_REQUEST_TIMEOUT_MS, Math.max(MIN_REQUEST_TIMEOUT_MS, deadline - Date.now()));
+const timeLeft = (deadline: number): number => remainingTimeout(LOCAL_REQUEST_TIMEOUT_MS, { deadline });
 const asProviderError = (error: unknown): ProviderError =>
   error instanceof ProviderError ? error : new ProviderError('local_service_unavailable', { cause: error });
 
@@ -390,13 +407,16 @@ function rethrowIfRateLimited(error: unknown): void {
 async function fetchServerWindows(
   server: LanguageServer,
   read: RequestLocalJson,
-  deadline: number,
+  context: RefreshContext,
   needsEmail: boolean
 ): Promise<AntigravityReading> {
   let lastError: ProviderError | null = null;
-  const request = (port: number, method: RpcMethod): Promise<unknown> => read(server, port, method, { timeoutMs: timeLeft(deadline) });
+  const request = (port: number, method: RpcMethod): Promise<unknown> => {
+    const timeoutMs = remainingTimeout(LOCAL_REQUEST_TIMEOUT_MS, context);
+    return read(server, port, method, { ...context, timeoutMs });
+  };
   for (const port of server.ports) {
-    if (Date.now() >= deadline) throw new ProviderError('request_timeout');
+    remainingTimeout(LOCAL_REQUEST_TIMEOUT_MS, context);
     let email: string | null = null;
     let status: unknown = null;
     if (needsEmail) {
@@ -410,8 +430,19 @@ async function fetchServerWindows(
       }
       if (!email) continue;
     }
+    const response = await request(port, RPC_METHODS.quota).then(
+      value => ({ value }),
+      (error: unknown) => ({ error })
+    );
+    if ('value' in response) {
+      const reportedEmail = extractEmail(response.value);
+      // A sign-in may change between the status and quota requests. Check identity before
+      // parsing or falling back: old status data cannot make a conflicting response safe.
+      if (email && reportedEmail && email !== reportedEmail) throw new ProviderError('invalid_response');
+    }
     try {
-      const reading = parseAntigravitySummary(await request(port, RPC_METHODS.quota));
+      if ('error' in response) throw response.error;
+      const reading = parseAntigravitySummary(response.value);
       return { windows: reading.windows, email: email ?? reading.email };
     } catch (error) {
       rethrowIfRateLimited(error);
@@ -477,53 +508,84 @@ export interface AntigravityProviderOptions extends DiscoveryOptions {
 }
 
 export function createAntigravityProvider(options: AntigravityProviderOptions = {}): ProviderAdapter {
-  const discoverServers = (): Promise<LanguageServer[]> => (options.discoverAntigravityServers ?? discoverAntigravityServers)(options);
+  const discoverServers = (context?: RefreshContext): Promise<LanguageServer[]> =>
+    (options.discoverAntigravityServers ?? discoverAntigravityServers)({ ...options, ...context });
   const read = options.requestLocalJson ?? requestLocalJson;
+  const fetchTimeoutMs = Math.max(WINDOWS_DISCOVERY_TIMEOUT_MS, DISCOVERY_BUDGET_MS) + FETCH_BUDGET_MS;
+
+  function readingForAccount(account: Account, all: AntigravityReading[]): FetchResult {
+    if (account.configDir) throw new ProviderError('unsupported_profile');
+    const accountEmail = account.email === undefined ? undefined : normalizeEmail(account.email);
+    let readings = all;
+    if (accountEmail) {
+      readings = readings.filter(reading => reading.email === accountEmail);
+      if (!readings.length) throw new ProviderError('auth_missing');
+    } else if (new Set(readings.map(reading => reading.email).filter(Boolean)).size > 1) {
+      throw new ProviderError('unsupported_profile');
+    }
+    const windows = mergeWindows(readings);
+    if (!windows.length) throw new ProviderError('invalid_response');
+    return { windows, completeness: 'complete' };
+  }
+
+  async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
+    const context = provided ?? { deadline: Date.now() + fetchTimeoutMs, signal: new AbortController().signal };
+    remainingTimeout(fetchTimeoutMs, context);
+    const servers = await discoverServers(context);
+    if (!servers.length) throw new ProviderError('app_closed');
+    const quotaContext = { ...context, deadline: Math.min(context.deadline, Date.now() + FETCH_BUDGET_MS) };
+    const needsEmail = accounts.some(account => Boolean(account.email)) || servers.length > 1 || accounts.length > 1;
+    // Every PID is queried once. The verified identity partitions this refresh's readings;
+    // no credential-bearing cache survives into the next refresh.
+    const queries = await Promise.allSettled(servers.map(server => fetchServerWindows(server, read, quotaContext, needsEmail)));
+    const readings = fulfilled(queries);
+    remainingTimeout(fetchTimeoutMs, context);
+    if (!readings.length) {
+      const rejected = queries.find(query => query.status === 'rejected');
+      throw rejected?.reason instanceof ProviderError ? rejected.reason : new ProviderError('local_service_unavailable');
+    }
+    // An unidentified server could belong to any account; a partial collection is unsafe.
+    if (servers.length > 1 && (readings.length !== servers.length || readings.some(reading => !reading.email)))
+      throw new ProviderError('local_service_unavailable');
+    return new Map(
+      accounts.map(account => {
+        try {
+          return [account.id, providerReading(readingForAccount(account, readings))];
+        } catch (error) {
+          return [account.id, { kind: 'failed', error }];
+        }
+      })
+    );
+  }
+
   return {
     id: 'antigravity',
     // Finding the servers (PowerShell on Windows), then reading them.
-    fetchTimeoutMs: Math.max(WINDOWS_DISCOVERY_TIMEOUT_MS, DISCOVERY_BUDGET_MS) + FETCH_BUDGET_MS,
-    async discover(): Promise<DiscoveredAccount[]> {
-      const servers = await discoverServers();
-      if (!servers.length) throw new ProviderError('app_closed');
-      const queries = await resolveServerEmails(servers, read);
-      const emails = fulfilled(queries);
-      // Fail closed: an unidentified server could belong to any account.
-      if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
-      return [...new Set(emails.filter(email => email !== null))].map((email, index) => ({
-        id: antigravityAccountId(email),
-        providerId: 'antigravity',
-        label: email.slice(0, MAX_LABEL_LENGTH),
-        email,
-        primary: index === 0,
-        enabled: true
-      }));
-    },
-    async fetch(account: Account) {
+    fetchTimeoutMs,
+    discover: () =>
+      discoverSafely(async () => {
+        const servers = await discoverServers();
+        if (!servers.length) throw new ProviderError('app_closed');
+        const queries = await resolveServerEmails(servers, read);
+        const emails = fulfilled(queries);
+        // Fail closed: an unidentified server could belong to any account.
+        if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
+        return [...new Set(emails.filter(email => email !== null))].map((email, index) => ({
+          id: antigravityAccountId(email),
+          providerId: 'antigravity',
+          label: email.slice(0, MAX_LABEL_LENGTH),
+          email,
+          primary: index === 0,
+          enabled: true
+        }));
+      }),
+    fetchAll,
+    async fetch(account: Account, context?: RefreshContext) {
       if (account.configDir) throw new ProviderError('unsupported_profile');
-      const servers = await discoverServers();
-      if (!servers.length) throw new ProviderError('app_closed');
-      const deadline = Date.now() + FETCH_BUDGET_MS;
-      const needsEmail = Boolean(account.email) || servers.length > 1;
-      const queries = await Promise.allSettled(servers.map(server => fetchServerWindows(server, read, deadline, needsEmail)));
-      let readings = fulfilled(queries);
-      if (!readings.length) {
-        const rejected = queries.find(query => query.status === 'rejected');
-        throw rejected?.reason instanceof ProviderError ? rejected.reason : new ProviderError('local_service_unavailable');
-      }
-      // Several servers can only be merged when every one of them is tied to an account.
-      if (servers.length > 1 && (readings.length !== servers.length || readings.some(reading => !reading.email)))
-        throw new ProviderError('local_service_unavailable');
-      const accountEmail = account.email === undefined ? undefined : normalizeEmail(account.email);
-      if (accountEmail) {
-        readings = readings.filter(reading => reading.email === accountEmail);
-        if (!readings.length) throw new ProviderError('auth_missing');
-      } else if (new Set(readings.map(reading => reading.email).filter(Boolean)).size > 1) {
-        throw new ProviderError('unsupported_profile');
-      }
-      const windows = mergeWindows(readings);
-      if (!windows.length) throw new ProviderError('invalid_response');
-      return { windows };
+      const reading = (await fetchAll([account], context)).get(account.id);
+      if (!reading) throw new ProviderError('invalid_response');
+      if (reading.kind === 'failed') throw reading.error;
+      return reading.result;
     }
   };
 }

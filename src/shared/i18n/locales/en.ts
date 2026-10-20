@@ -119,7 +119,8 @@ export const en = {
   restoreAccountsBtn: 'Restore accounts ({n})',
   settingsHelp: 'Initial login for each account is done in a separate profile. The 1st priority tool leads smart launch.',
   confirmRemoveAccount: 'Are you sure you want to remove account "{label}" from the widget? (You can restore it anytime in Settings)',
-  handoverDesc: 'Compiles current session terminal/project logs, git status, and modified files to hand over to the selected AI tool.',
+  handoverDesc:
+    'Preview recent conversation, file references and Git branch/HEAD metadata before sharing with the selected tool. Working-tree changes are not scanned.',
   sourceProvider: 'Source Provider',
   autoDetectSession: 'All tools',
   targetProvider: 'Target Provider',
@@ -241,6 +242,10 @@ export const en = {
   error_invalid_path: 'The folder path is not valid.',
   error_invalid_settings: 'These settings are not valid.',
   error_session_not_found: 'The selected session was not found.',
+  error_handover_file_tracked: 'Git already tracks VIBE_HANDOVER.md. Remove it from the index before handing over.',
+  error_handover_exclusion_failed: 'The handover file could not be excluded from Git. Check repository permissions and try again.',
+  error_handover_sensitive_context:
+    'The conversation contains sensitive content that could not be safely redacted. Review and remove it before handing over.',
   error_suggestion_expired: 'This suggestion is no longer available.',
   error_session_newer_elsewhere:
     'This session went on in the other account after this copy was made, so it was not moved back over the newer one.',

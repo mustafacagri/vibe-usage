@@ -141,6 +141,20 @@ test('Claude discovery reads immediate legitimate credential roots, excludes bac
   assert.equal(accounts.length, 3);
 });
 
+test('one unreadable Claude profile neither hides the others nor counts as absent', async t => {
+  const dir = await tempDir(t, 'vibe-discovery-unreadable-');
+  for (const name of ['.claude', '.claude-work']) await fs.mkdir(path.join(dir, name));
+  await fs.writeFile(path.join(dir, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-token' } }));
+  await fs.writeFile(path.join(dir, '.claude-work', '.credentials.json'), '{ half written');
+  const discovery = await createClaudeProvider({ home: dir, platform: 'win32' }).discover();
+  assert.ok(!Array.isArray(discovery));
+  assert.equal(discovery.kind, 'unknown');
+  assert.deepEqual(
+    discovery.accounts.map(a => a.id),
+    ['claude:default']
+  );
+});
+
 test('transport rejects hosts that are not allow-listed and the process runner uses no shell', async () => {
   await assert.rejects(getJson('https://evil.example/usage' as QuotaEndpoint), /endpoint_not_allowed/);
   await assert.rejects(getJson('https://api.anthropic.com.evil.example/api/oauth/usage' as QuotaEndpoint), /endpoint_not_allowed/);
@@ -250,7 +264,9 @@ test('Codex profiles: the default folder, then signed-in siblings; copies and li
     }
   });
   await folder('.codex-empty', 'none');
-  const accounts = await createCodexProvider({ home, env: {} }).discover();
+  const discovery = await createCodexProvider({ home, env: {} }).discover();
+  assert.ok(!Array.isArray(discovery) && discovery.kind === 'complete');
+  const accounts = discovery.accounts;
   assert.deepEqual(
     accounts.map(a => [a.id, a.label ?? a.labelKey, a.configDir, a.primary]),
     [

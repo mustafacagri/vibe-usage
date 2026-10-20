@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { claudeLimitStop, claudeProjectDir, latestClaudeSession, RECENT_TURNS, sessionSources } from '../src/core/sessions.ts';
+import { claudeLimitStop, claudeProjectDir, latestClaudeSession, readSession, RECENT_TURNS, sessionSources } from '../src/core/sessions.ts';
 import test from 'node:test';
 import zlib from 'node:zlib';
 import { collectHandoverContext, listSessions } from '../src/core/handover.ts';
@@ -97,10 +97,143 @@ test('a Claude transcript is parsed again only after it changes', async t => {
   const first = new Date('2026-10-01T10:00:00Z');
   await write('First title', first);
   assert.equal(await title(), 'First title');
+  assert.equal(await title(), 'First title', 'an unchanged file can reuse its parsed transcript');
   await write('Unseen title', first);
-  assert.equal(await title(), 'First title', 'an unchanged file is not read again');
+  assert.equal(await title(), 'Unseen title', 'replacing contents while preserving mtime invalidates the cache');
   await write('Second title', new Date('2026-10-01T11:00:00Z'));
   assert.equal(await title(), 'Second title');
+});
+
+test('a copied Claude session keeps its physical profile and reviewed version from listing through reading', async t => {
+  const home = await tempDir(t, 'vibe-copied-session-');
+  const project = path.join(home, 'project');
+  await fs.mkdir(project);
+  const main = account({ id: 'claude:main', configDir: path.join(home, '.claude') });
+  const spare = account({ id: 'claude:spare', configDir: path.join(home, '.claude-spare'), primary: false });
+  const sources = sessionSources(home, [main, spare]);
+  const files: string[] = [];
+  for (const [index, profile] of [main, spare].entries()) {
+    const file = path.join(profile.configDir ?? '', 'projects', project.replace(/[/\\:]/g, '-'), 'shared.jsonl');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({ type: 'user', cwd: project, message: { content: index ? 'New request on spare' : 'Old request on main' } })
+    );
+    const time = new Date(Date.parse('2026-10-17T12:00:00Z') + index * 60_000);
+    await fs.utimes(file, time, time);
+    files.push(file);
+  }
+  const listed = await listSessions('claude', project, sources);
+  assert.equal(listed.length, 2);
+  const newest = session(listed, entry => entry.source.accountId === spare.id);
+  const older = session(listed, entry => entry.source.accountId === main.id);
+  assert.notEqual(newest.source.id, older.source.id, 'the logical id is shared, the physical source is not');
+  assert.equal(listed[0]?.source.id, newest.source.id);
+  const query = { providerId: 'claude' as const, sessionId: 'shared', projectDir: project, sources };
+  assert.equal((await readSession({ ...query, sessionId: 'auto' }))?.lastUserMsg, 'New request on spare');
+  assert.equal(await readSession(query), null, 'an ambiguous named id needs a physical source');
+  assert.equal((await readSession({ ...query, sessionSource: newest.source }))?.lastUserMsg, 'New request on spare');
+  assert.equal((await readSession({ ...query, sessionSource: older.source }))?.lastUserMsg, 'Old request on main');
+  assert.equal(
+    await readSession({ ...query, sessionSource: { ...newest.source, accountId: main.id } }),
+    null,
+    'the account is part of the identity'
+  );
+  assert.equal(
+    await readSession({ ...query, projectDir: home, sessionSource: newest.source }),
+    null,
+    'the source cannot be replayed for another project'
+  );
+  assert.equal(
+    await readSession({ ...query, sessionSource: { id: files[0] ?? '', version: newest.source.version } }),
+    null,
+    'a path is never a source capability'
+  );
+
+  const changed = files[1];
+  assert.ok(changed);
+  const stat = await fs.stat(changed);
+  await fs.appendFile(changed, `\n${JSON.stringify({ type: 'user', cwd: project, message: { content: 'Changed after preview' } })}\n`);
+  await fs.utimes(changed, stat.atime, stat.mtime);
+  assert.equal(await readSession({ ...query, sessionSource: newest.source }), null, 'a stale review never silently reads a new version');
+  const refreshed = session(await listSessions('claude', project, sources), entry => entry.source.accountId === spare.id);
+  assert.equal(refreshed.source.id, newest.source.id);
+  assert.notEqual(refreshed.source.version, newest.source.version);
+  assert.equal((await readSession({ ...query, sessionSource: refreshed.source }))?.lastUserMsg, 'Changed after preview');
+});
+
+test('relocated Claude sessions are discovered under their worktree even when relocation is outside the transcript tail', async t => {
+  const home = await tempDir(t, 'vibe-worktree-session-');
+  const project = path.join(home, 'project');
+  const worktree = path.join(project, '.claude', 'worktrees', 'task');
+  await fs.mkdir(worktree, { recursive: true });
+  const dir = path.join(home, '.claude', 'projects', project.replace(/[/\\:]/g, '-'));
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, 'relocated.jsonl');
+  const records = [
+    { type: 'user', cwd: project, message: { content: 'Continue this worktree task' } },
+    { type: 'relocated', relocatedCwd: worktree },
+    ...Array.from({ length: 800 }, () => ({ type: 'progress', data: 'x'.repeat(1024) })),
+    { type: 'assistant', cwd: path.join(worktree, 'src'), message: { content: 'Latest worktree state' } }
+  ];
+  await fs.writeFile(file, records.map(record => JSON.stringify(record)).join('\n'));
+  assert.equal(claudeProjectDir(file), worktree);
+  const sources = sessionSources(home);
+  assert.deepEqual(await listSessions('claude', project, sources), [], 'the parent slug is not the session project');
+  const listed = await listSessions('claude', worktree, sources);
+  assert.equal(listed.length, 1, 'the worktree is found without its own storage slug');
+  const selected = listed[0];
+  assert.ok(selected);
+  assert.equal(
+    (await readSession({ providerId: 'claude', sessionId: selected.id, sessionSource: selected.source, projectDir: worktree, sources }))
+      ?.projectDir,
+    await fs.realpath(worktree)
+  );
+  assert.equal(
+    await readSession({ providerId: 'claude', sessionId: selected.id, sessionSource: selected.source, projectDir: project, sources }),
+    null
+  );
+  assert.equal(
+    latestClaudeSession(path.join(home, '.claude'))?.projectDir,
+    worktree,
+    'manual and continuity discovery share project ownership'
+  );
+});
+
+test('Codex copies in separate profiles remain distinct sources with their own thread names', async t => {
+  const home = await tempDir(t, 'vibe-codex-copies-');
+  const project = path.join(home, 'project');
+  await fs.mkdir(project);
+  const profiles = [
+    account({ id: 'codex:main', providerId: 'codex', configDir: path.join(home, '.codex') }),
+    account({ id: 'codex:spare', providerId: 'codex', configDir: path.join(home, '.codex-spare'), primary: false })
+  ];
+  const id = '0199a213-81c0-7800-8aa1-bbab2a035a99';
+  for (const [index, profile] of profiles.entries()) {
+    const root = profile.configDir ?? '';
+    const file = path.join(root, 'sessions', `rollout-2026-10-17-${id}.jsonl`);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, codexRollout({ id, cwd: project, user: [index ? 'Latest spare work' : 'Original main work'] }));
+    await fs.writeFile(path.join(root, 'session_index.jsonl'), JSON.stringify({ id, thread_name: index ? 'Spare title' : 'Main title' }));
+    const at = new Date(Date.parse('2026-10-17T12:00:00Z') + index * 60_000);
+    await fs.utimes(file, at, at);
+  }
+  const sources = sessionSources(home, profiles);
+  const listed = await listSessions('codex', project, sources);
+  assert.equal(listed.length, 2);
+  assert.deepEqual(
+    listed.map(entry => [entry.title, entry.source.accountId]),
+    [
+      ['Spare title', 'codex:spare'],
+      ['Main title', 'codex:main']
+    ]
+  );
+  const query = { providerId: 'codex' as const, sessionId: id, projectDir: project, sources };
+  assert.equal(await readSession(query), null);
+  assert.equal((await readSession({ ...query, sessionId: 'auto' }))?.lastUserMsg, 'Latest spare work');
+  const original = listed[1];
+  assert.ok(original);
+  assert.equal((await readSession({ ...query, sessionSource: original.source }))?.lastUserMsg, 'Original main work');
 });
 
 test('Codex sessions are project-scoped, include compressed rollouts and exclude subagents', async t => {
@@ -393,4 +526,13 @@ test('a Claude session belongs to the folder Claude Code attributes it to, where
   ]);
   assert.equal(claudeProjectDir(relocated), worktree);
   assert.equal(claudeProjectDir(await write('empty.jsonl', [{ type: 'summary' }])), null);
+  // A relocation in the middle of a multi-megabyte transcript is found wherever the 1 MiB read
+  // boundary falls, including inside the marker itself.
+  const filler = { type: 'assistant', cwd: project, message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } };
+  for (const padding of [0, 1, 7, 13, 500]) {
+    const lines: Record<string, unknown>[] = [{ type: 'user', cwd: project, message: { role: 'user', content: 'go' } }];
+    for (let size = 0; size < 1024 * 1024 + padding; size += 1100) lines.push(filler);
+    lines.push({ type: 'relocated', sessionId: 'big', relocatedCwd: worktree }, ...Array.from({ length: 1500 }, () => filler));
+    assert.equal(claudeProjectDir(await write(`big-${padding}.jsonl`, lines)), worktree, `padding ${padding}`);
+  }
 });

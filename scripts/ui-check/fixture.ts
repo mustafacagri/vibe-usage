@@ -361,6 +361,7 @@ export function sessions(now = Date.now()): SessionSummary[] {
   return [
     {
       id: 's1',
+      source: { id: 's1', version: 'fixture-v1' },
       providerId: 'claude',
       title: 'Quota UI polish',
       updatedAt: now - 2 * HOUR,
@@ -368,6 +369,15 @@ export function sessions(now = Date.now()): SessionSummary[] {
       model: 'claude-opus-5-5',
       sizeBytes: 3.2 * MEGABYTE
     },
-    { id: 's2', providerId: 'cursor', title: 'Refactor storage', updatedAt: now - 26 * HOUR, turnCount: 3, model: '', sizeBytes: 0 }
+    {
+      id: 's2',
+      source: { id: 's2', version: 'fixture-v1' },
+      providerId: 'cursor',
+      title: 'Refactor storage',
+      updatedAt: now - 26 * HOUR,
+      turnCount: 3,
+      model: '',
+      sizeBytes: 0
+    }
   ];
 }

@@ -76,9 +76,7 @@ açar. Hiçbir aracın kotası doğrulanamazsa tahmin yürütmek yerine bunu sö
 
 ### Görev Devret
 
-Claude Code, Codex, Cursor Agent veya Antigravity'den bir oturum seç. Vibe Usage onu proje klasöründe
-`VIBE_HANDOVER.md` olarak özetler: hedef, son konuşmalar, dokunulan dosyalar ve git durumu. Ardından hedef aracı bu
-özeti okuyacak bir istemle başlatır. Yalnızca seçilen klasörde başlatılmış oturumlar listelenir.
+Claude Code, Codex, Cursor Agent veya Antigravity’den bir oturum seç. `VIBE_HANDOVER.md`; hedefi, son isteği, yakın konuşmaları, dosya referanslarını ve Git dalı/HEAD bilgisini içerir; çalışma ağacı taranmaz. Önizleme gerçek oturum kaynağını, hesabı ve sürümü sabitler; kaynak değişirse yeniden önizleme gerekir. Worktree’ye taşınan oturumlar doğru proje altında listelenir.
 
 </td>
 <td valign="top">
@@ -146,22 +144,17 @@ Model listeleri her aracın kendi verisinden gelir: Claude Code takma adları ve
 
 ## Gizlilik ve güvenlik
 
-- **Yalnızca okur.** Var olan oturumları kullanır. Asla şifre istemez, token saklamaz, oturumunu
-  kapatmaz ve devam eden işlere dokunmaz.
-- **Süresi dolan oturum açma.** İş hesaplar arasında kendiliğinden geçebiliyorsa, süresi dolmuş bir Claude Code oturum açmasını Claude Code kendisi yeniler: tek bir küçük Haiku isteğiyle (tek kelime, araç yok, hiçbir şey kaydedilmez), hesap başına en fazla 30 dakikada bir. Uygulama yenileme token’ını asla okumaz veya kullanmaz.
-- **İki adres.** Kota istekleri yalnızca Anthropic ve Cursor kullanım adreslerine gider, TLS doğrulaması açıktır.
-  Codex ve Antigravity yerelden okunur.
-- **Diskte gizli bilgi yok.** Ayarlar `%APPDATA%\Vibe Usage\settings.json` (Windows) veya
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS) altında durur. Kotalar yalnızca bellekte tutulur.
-- **Kilitli uygulama.** Pencere sıkı bir CSP ile sandbox içinde çalışır, başka bir adrese gidemez veya yeni pencere
-  açamaz ve yalnızca kendi sayfasına yanıt verir. Electron fuse'ları `runAsNode`, `NODE_OPTIONS` ve inspector'ı kapatır,
-  ASAR bütünlük doğrulamasını açar.
+Var olan kimlik bilgileri bellekte okunur; bu belgeler erişim ve yenileme token’ları içerebilir. Uygulama yenileme token’ının varlığını kontrol eder, kendi verilerine kaydetmez; yenilemeyi Claude Code yapar.
+
+Ayarlar, hesap etiketleri ve yollar; kota geçmişi ve son ölçümler yerel diskte tutulur. Hesaplar arasında devam ederken tam konuşma kopyalanır. `VIBE_HANDOVER.md` ise temizlenmiş konuşma bağlamı içerir; bilinmeyen sır biçimleri için garanti yoktur. Devir öncesi önizlemeyi incele. Git’in izlediği dosyalar veya başarısız Git hariç tutma işlemi devri durdurur; Cursor kendi güven sorularını korur.
+
+Kota istekleri sağlayıcı uç noktalarını, sürüm kontrolü GitHub’ı kullanır. Güncelleme indirme ve kurulum ayrı kullanıcı eylemleridir. Saklanan veriler ve paylaşım sınırları için [ayrıntılı gizlilik belgesine](../PRIVACY.md) bak.
 
 ## Kurulum
 
 ### Windows
 
-[Son sürümden](https://github.com/mustafacagri/vibe-usage/releases/latest) `Vibe-Usage-<sürüm>-win-setup.exe` dosyasını indirip çalıştır: yalnızca senin kullanıcın için kurulur, yönetici yetkisi gerekmez. Ya da taşınabilir `Vibe-Usage-<sürüm>-win-x64.zip` (veya `-arm64`) dosyasını indir, zip'i aç ve `Vibe Usage.exe`'yi çalıştır. Kurulan uygulama kendini günceller: yeni sürüm arka planda iner, **Güncellemek için yeniden başlat** ile kurulur. Taşınabilir kopya yeni sürüm için bağlantı verir. Uygulama sistem tepsisinde durur.
+[Son sürümden](https://github.com/mustafacagri/vibe-usage/releases/latest) `Vibe-Usage-<sürüm>-win-setup.exe` dosyasını indirip çalıştır: yalnızca senin kullanıcın için kurulur, yönetici yetkisi gerekmez. Ya da taşınabilir `Vibe-Usage-<sürüm>-win-x64.zip` (veya `-arm64`) dosyasını indir, zip'i aç ve `Vibe Usage.exe`'yi çalıştır. Desteklenen imzalı kurulumda güncelleme **İndir** düğmesiyle alınır ve ancak **Güncellemek için yeniden başlat** seçilince kurulur. Taşınabilir kopya yeni sürüm için bağlantı verir. Uygulama sistem tepsisinde durur.
 
 Uygulama kod imzalı olmadığından ilk açılışta Windows SmartScreen **Windows bilgisayarınızı korudu** diyebilir. **Ek bilgi**'ye, ardından **Yine de çalıştır**'a tıkla.
 

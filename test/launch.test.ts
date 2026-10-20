@@ -226,6 +226,22 @@ test('model ids are validated before they reach a command line', async () => {
   assert.equal(await launchPlan('antigravity', { model: 'sonnet[1m]' }), null, 'well-formed ids pass the check');
 });
 
+test('Cursor launch leaves the project trust decision to Cursor', async t => {
+  const binary = path.join(await tempDir(t, 'vibe-cursor-bin-'), process.platform === 'win32' ? 'agent.exe' : 'agent');
+  await fs.writeFile(binary, '');
+  const previous = process.env.VIBE_AGENT_BINARY;
+  process.env.VIBE_AGENT_BINARY = binary;
+  t.after(() => {
+    if (previous === undefined) delete process.env.VIBE_AGENT_BINARY;
+    else process.env.VIBE_AGENT_BINARY = previous;
+  });
+  const plan = await launchPlan('cursor', { model: 'auto', prompt: 'Read the brief.' });
+  assert.ok(plan);
+  assert.equal(plan.binary, binary);
+  assert.deepEqual(plan.args, ['--model', 'auto', 'Read the brief.']);
+  assert.equal(plan.args.includes('--trust'), false);
+});
+
 test('a session the app resumes gets no resume question; a fresh start keeps Claude Code’s defaults', async t => {
   const root = await tempDir(t, 'vibe-resume-env-');
   const binary = path.join(root, 'claude');

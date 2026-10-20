@@ -86,6 +86,7 @@ import {
   claudeTranscriptWrite,
   claudeTurnEnded,
   codexLimitStops,
+  isRecentStop,
   latestClaudeSession,
   latestCodexSession,
   latestCursorSession,
@@ -377,7 +378,11 @@ export type Notice =
 
 export interface Continuity {
   // Looks at the accounts (and the accounts crossing the low line in `low`) and acts.
-  observe(snapshot: Snapshot, alerts: { low: readonly QuotaAlert[] }): Promise<Notice[]>;
+  // A supplier is read inside the serialized queue, not when the observation is enqueued.
+  observe(
+    snapshot: Snapshot | (() => Promise<Snapshot>),
+    alerts: { low: readonly QuotaAlert[] | ((snapshot: Snapshot) => readonly QuotaAlert[]) }
+  ): Promise<Notice[]>;
   suggestions(): Suggestion[];
   // Whether the suggestion's session still looks busy in its terminal (written moments ago).
   isRunning(id: string, snapshot?: Snapshot): Promise<boolean>;
@@ -402,6 +407,8 @@ export interface ContinuityOptions {
   // The interactive Claude Code sessions open in the account's profile now; throws when that
   // cannot be told.
   findOpen?: (account: Account) => Promise<OpenClaudeSession[]>;
+  // Reload shared settings after waiting for process/transcript checks and before dispatch.
+  getCurrentSnapshot?: () => Promise<Snapshot>;
   start?: typeof continueSession;
   clock?: () => number;
   // How many settled history records are kept.
@@ -424,6 +431,14 @@ interface Offer {
   returning?: string;
   // The session cut off by the system going down that this offer opens again.
   reopening?: string;
+}
+
+// No side effect occurred: a changed setting needs a fresh decision, not a failed launch.
+// Manual callers receive the existing stale-suggestion error; automatic callers keep an offer.
+class DispatchDeferred extends AppError {
+  constructor() {
+    super('suggestion_expired');
+  }
 }
 
 // Persist only identifiers and session locations, never account credentials or transcript text:
@@ -731,6 +746,7 @@ export async function createContinuity({
   findRunning = (account, sessionId) => findClaudeProcess(account.configDir ?? defaultProfileDir('claude', homeDir), sessionId),
   findTasks = claudeBackgroundTasks,
   findOpen = defaultFindOpen(homeDir),
+  getCurrentSnapshot,
   start = continueSession,
   clock = Date.now,
   historyCap = MAX_HANDLED_STOPS
@@ -747,7 +763,9 @@ export async function createContinuity({
   const interrupted = new Map(Object.entries(stored.interrupted));
   // How the app's previous run ended, until this run has looked at what is open now.
   let previousQuit: boolean | null = stored.quit;
+  const unsettledAccounts = new Set(!stored.quit ? [...open.values()].map(entry => entry.accountId) : []);
   let quitting = false;
+  const isQuitting = (): boolean => quitting;
   const offers = new Map<string, Offer>(
     stored.offers.map(o => [
       o.suggestion.id,
@@ -827,6 +845,9 @@ export async function createContinuity({
   }
   // A time ahead of the clock (a touched file, a clock that moved) is as fresh as it gets.
   const fresh = (session: RecentSession, maxAge: number): boolean => clock() - session.updatedAt <= maxAge;
+  const freshStop = (stoppedAt: number | undefined): boolean => isRecentStop(stoppedAt, clock(), STOP_MAX_AGE_MS);
+  const offerFresh = (pending: Offer): boolean =>
+    pending.stopped ? freshStop(pending.stoppedAt) : fresh(pending.session, RECENT_SESSION_MS);
   // When a transcript was last written, by its records; one that says nothing is taken as now.
   const writtenAt = (write: TranscriptWrite): number => (Number.isFinite(write.lastRecordAt) ? write.lastRecordAt : clock());
   async function recent(account: Account | null, maxAge: number, identity?: SessionIdentity): Promise<RecentSession | null> {
@@ -855,6 +876,17 @@ export async function createContinuity({
       return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) };
     }
   }
+  // Reopening must prove absence for this exact session, including a copy the user may
+  // have resumed in another profile. Positive evidence wins over an unrelated failure.
+  async function reopenLookup(session: RecentSession, accounts: readonly Account[]): Promise<ProcessLookup> {
+    let result: ProcessLookup = { kind: 'none' };
+    for (const account of accounts.filter(account => account.enabled && account.providerId === 'claude')) {
+      const found = await lookup(account, session);
+      if (found.kind === 'found') return found;
+      if (found.kind === 'unknown') result = found;
+    }
+    return result;
+  }
   // The background commands the process started that have not finished.
   async function openTasks(session: RecentSession, process: LiveClaudeSession | null): Promise<BackgroundTask[]> {
     if (!process) return [];
@@ -863,10 +895,13 @@ export async function createContinuity({
   }
   // How the offer's session moves: its process ended while it waits (a busy one the user chose
   // to leave running is not), told what it left running, in the tab it runs in.
-  async function moveOptions(pending: Offer, session: RecentSession, holder: Account): Promise<MoveOptions> {
-    // Reopened after the system went down: nothing runs it any more, and a turn that was under
-    // way (or cut off by a limit) goes on.
+  async function moveOptions(pending: Offer, session: RecentSession, holder: Account, snapshot: Snapshot): Promise<MoveOptions> {
+    // The crash observation can be old: recheck immediately before dispatch. Reopening
+    // never kills a process that the user already restarted in the meantime.
     if (pending.reopening) {
+      const found = await reopenLookup(session, snapshot.settings.accounts);
+      if (found.kind === 'found') throw new AppError('suggestion_expired');
+      if (found.kind === 'unknown') throw new AppError('process_unknown');
       const busy = interrupted.get(pending.reopening)?.busy ?? false;
       return { prompt: busy || cutOff(session.file) ? RESTART_PROMPT : undefined, running: null };
     }
@@ -978,24 +1013,19 @@ export async function createContinuity({
   }
   async function sourceSession(pending: Offer, snapshot: Snapshot): Promise<{ session: RecentSession; holder: Account }> {
     const holder = accountOf(snapshot, pending.holder.id);
-    if (
-      !holder ||
-      (!followed(pending) && !fresh(pending.session, pending.stopped ? STOP_MAX_AGE_MS : RECENT_SESSION_MS)) ||
-      expired(pending)
-    )
-      throw new AppError('suggestion_expired');
+    if (!holder || (!followed(pending) && !offerFresh(pending)) || expired(pending)) throw new AppError('suggestion_expired');
     // Cut off by the system going down: it opens again from its transcript where it ran, unless
     // it is open again already.
     if (pending.reopening) {
       const found = holder.configDir ? claudeSessionById(holder.configDir, pending.session.sessionId) : null;
-      if (!found || !interrupted.has(pending.reopening)) throw new AppError('suggestion_expired');
+      if (!found || !sameSession(found, pending.session) || !interrupted.has(pending.reopening)) throw new AppError('suggestion_expired');
       return { session: { ...pending.session, file: found.file, updatedAt: found.updatedAt, accountId: holder.id }, holder };
     }
     if (pending.stopped) {
       const stopped = (await findStopped(holder)).find(
         stop => stop.sessionId === pending.session.sessionId && stop.stoppedAt === pending.stoppedAt
       );
-      if (!stopped || !sameSession(stopped, pending.session) || !fresh(stopped, STOP_MAX_AGE_MS)) throw new AppError('suggestion_expired');
+      if (!stopped || !sameSession(stopped, pending.session) || !freshStop(stopped.stoppedAt)) throw new AppError('suggestion_expired');
       return { session: { ...stopped, accountId: holder.id }, holder };
     }
     // A moved session goes back whenever its main account has room, however long it sat idle.
@@ -1008,23 +1038,53 @@ export async function createContinuity({
     if (!current) throw new AppError('suggestion_expired');
     return { session: { ...current, accountId: holder.id }, holder };
   }
-  async function acceptNow(id: string, snapshot: Snapshot, scope: ContinueScope = 'tools'): Promise<ContinueResult> {
+  const sameAccountSource = (a: Account, b: Account): boolean =>
+    a.id === b.id && a.providerId === b.providerId && a.configDir === b.configDir && !!a.configDirExplicit === !!b.configDirExplicit;
+  const sameTarget = (a: Successor, b: Successor): boolean =>
+    a.providerId === b.providerId &&
+    (a.model ?? null) === (b.model ?? null) &&
+    (a.account && b.account ? sameAccountSource(a.account, b.account) : a.account === b.account);
+  const sameReopenProfiles = (before: Snapshot, after: Snapshot): boolean => {
+    const profiles = (snapshot: Snapshot) => snapshot.settings.accounts.filter(a => a.enabled && a.providerId === 'claude');
+    const previous = profiles(before);
+    const current = profiles(after);
+    return previous.length === current.length && previous.every(a => current.some(b => sameAccountSource(a, b)));
+  };
+  function automaticAllowed(pending: Offer, snapshot: Snapshot): boolean {
+    if (pending.reopening)
+      return (
+        snapshot.settings.reopenAfterRestart === 'auto' &&
+        (pending.suggestion.target.accountId === pending.holder.id || snapshot.settings.returnToPrimary !== 'off')
+      );
+    if (pending.returning)
+      return snapshot.settings.returnToPrimary === 'auto' && accountOf(snapshot, pending.suggestion.target.accountId)?.primary === true;
+    return pending.stopped && stopScope(snapshot, pending.session) !== 'off';
+  }
+  function targetFor(pending: Offer, session: RecentSession, holder: Account, snapshot: Snapshot, scope: ContinueScope): Successor {
+    const models = modelsFor(snapshot, session);
+    const back = accountOf(snapshot, pending.suggestion.target.accountId);
+    // A session reopened goes where it was offered to, room or not: it ran there, and a limit
+    // it meets there is a stop like any other.
+    const to =
+      pending.suggestion.kind === 'low'
+        ? successor(snapshot, holder, session, scope, pending.stopped)
+        : back && (pending.reopening || recovered(snapshot, back.id, models[back.providerId]))
+          ? { providerId: back.providerId, account: back, model: pending.reopening ? null : (models[back.providerId] ?? null) }
+          : null;
+    if (!to || (pending.suggestion.kind === 'low' && recovered(snapshot, holder.id, session.model)))
+      throw new AppError('no_verified_quota');
+    return to;
+  }
+  async function acceptNow(id: string, snapshot: Snapshot, scope: ContinueScope = 'tools', automatic = false): Promise<ContinueResult> {
     const pending = offers.get(id);
     if (!pending) throw new AppError('suggestion_expired');
     try {
+      snapshot = getCurrentSnapshot ? await getCurrentSnapshot() : snapshot;
+      if (quitting || (automatic && !automaticAllowed(pending, snapshot))) throw new DispatchDeferred();
+      if (automatic && pending.stopped) scope = continueScope(stopScope(snapshot, pending.session));
       const { session, holder } = await sourceSession(pending, snapshot);
-      const models = modelsFor(snapshot, session);
-      const back = accountOf(snapshot, pending.suggestion.target.accountId);
-      // A session reopened goes where it was offered to, room or not: it ran there, and a limit
-      // it meets there is a stop like any other.
-      const to =
-        pending.suggestion.kind === 'low'
-          ? successor(snapshot, holder, session, scope, pending.stopped)
-          : back && (pending.reopening || recovered(snapshot, back.id, models[back.providerId]))
-            ? { providerId: back.providerId, account: back, model: pending.reopening ? null : (models[back.providerId] ?? null) }
-            : null;
-      if (!to || (pending.suggestion.kind === 'low' && recovered(snapshot, holder.id, session.model)))
-        throw new AppError('no_verified_quota');
+      let to = targetFor(pending, session, holder, snapshot, scope);
+      pending.to = to;
       const record = recordOf(pending);
       if (record)
         record.target = {
@@ -1036,9 +1096,23 @@ export async function createContinuity({
       // A durable intent must precede dispatch. A crash leaves an ambiguous operation that
       // cannot be blindly retried. A failed write prevents launch altogether.
       await save();
+      const options = await moveOptions(pending, session, holder, snapshot);
+      const current = getCurrentSnapshot ? await getCurrentSnapshot() : snapshot;
+      // A slow process lookup must not keep old permission to automate, an old profile, or an
+      // old model alive. The checked process still belongs to the exact source profile below.
+      if (isQuitting() || offers.get(id) !== pending || (automatic && !automaticAllowed(pending, current))) throw new DispatchDeferred();
+      const currentHolder = accountOf(current, holder.id);
+      if (!currentHolder) throw new AppError('suggestion_expired');
+      if (!sameAccountSource(holder, currentHolder) || (pending.reopening && !sameReopenProfiles(snapshot, current)))
+        throw new DispatchDeferred();
+      const currentScope = automatic && pending.stopped ? continueScope(stopScope(current, session)) : scope;
+      const currentTarget = targetFor(pending, session, currentHolder, current, currentScope);
+      if (!sameTarget(to, currentTarget)) throw new DispatchDeferred();
+      to = currentTarget;
+      pending.to = to;
       let result: ContinueResult;
       try {
-        result = await start(session, to, snapshot, launch, await moveOptions(pending, session, holder));
+        result = await start(session, to, current, launch, options);
       } catch (error) {
         status(pending, 'failed', errorCode(error));
         await save();
@@ -1076,7 +1150,8 @@ export async function createContinuity({
       // Still `dispatching` here means the intent could not be written, so nothing started.
       if (recordOf(pending)?.status !== 'dispatched') {
         // An offer whose session is gone is not a failure to retry: it is withdrawn.
-        if (error instanceof AppError && error.code === 'suggestion_expired') {
+        if (error instanceof DispatchDeferred) status(pending, offers.get(id) === pending ? 'offered' : 'dismissed');
+        else if (error instanceof AppError && error.code === 'suggestion_expired') {
           status(pending, 'dismissed');
           offers.delete(id);
           if (pending.reopening) interrupted.delete(pending.reopening);
@@ -1091,7 +1166,7 @@ export async function createContinuity({
     if (!accountOf(snapshot, account.id)) return [];
     const notices: Notice[] = [];
     for (const session of await findStopped(account).catch(() => []))
-      if (fresh(session, STOP_MAX_AGE_MS)) notices.push(...(await onStop(snapshot, account, session)));
+      if (freshStop(session.stoppedAt)) notices.push(...(await onStop(snapshot, account, session)));
     return notices;
   }
   async function onStop(snapshot: Snapshot, account: MeasuredAccount, session: StoppedSession): Promise<Notice[]> {
@@ -1148,10 +1223,12 @@ export async function createContinuity({
     handled.add(key);
     await save();
     if (scope === 'off') return [{ kind: 'suggested', suggestion }];
+    const pending = offers.get(suggestion.id);
     try {
-      const result = await acceptNow(suggestion.id, snapshot, scope);
-      return [{ kind: 'continued', from: account, to, result, projectDir: session.projectDir }];
+      const result = await acceptNow(suggestion.id, snapshot, scope, true);
+      return [{ kind: 'continued', from: account, to: pending?.to ?? to, result, projectDir: session.projectDir }];
     } catch (error) {
+      if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
       return [{ kind: 'failed', from: account, code: errorCode(error) }];
     }
   }
@@ -1224,7 +1301,7 @@ export async function createContinuity({
       const holder = accountOf(snapshot, pending.holder.id);
       if (holder) pending.holder = holder;
       if (
-        (!followed(pending) && !fresh(pending.session, pending.stopped ? STOP_MAX_AGE_MS : RECENT_SESSION_MS)) ||
+        (!followed(pending) && !offerFresh(pending)) ||
         !accountOf(snapshot, pending.holder.id) ||
         (pending.suggestion.kind === 'low' && recovered(snapshot, pending.suggestion.accountId, pending.session.model)) ||
         expired(pending) ||
@@ -1256,15 +1333,17 @@ export async function createContinuity({
     await save().catch(() => undefined);
     return notices;
   }
-  // The Claude Code sessions open now, across the tool's accounts; null when that cannot be told.
-  async function openNow(snapshot: Snapshot): Promise<Map<string, Open> | null> {
+  // Keep each account's evidence even when another account cannot be inspected.
+  async function openNow(snapshot: Snapshot): Promise<{ sessions: Map<string, Open>; knownAccounts: Set<string> }> {
     const now = new Map<string, Open>();
+    const knownAccounts = new Set<string>();
     for (const account of snapshot.settings.accounts.filter(a => a.enabled && a.providerId === 'claude')) {
       let sessions: OpenClaudeSession[];
       try {
         sessions = await findOpen(account);
+        knownAccounts.add(account.id);
       } catch {
-        return null;
+        continue;
       }
       for (const session of sessions)
         now.set(keys.session({ providerId: 'claude', sessionId: session.sessionId }), {
@@ -1275,27 +1354,30 @@ export async function createContinuity({
           at: clock()
         });
     }
-    return now;
+    return { sessions: now, knownAccounts };
   }
   // Follows which sessions are open. The first look of a run settles the last run: if it ended
   // without being quit, it went down with the system, and what it saw open and is gone now was
   // cut off. Later in a run, one gone was closed. One open again (by hand, anywhere) is no
   // longer to reopen.
   async function track(snapshot: Snapshot): Promise<void> {
-    const now = await openNow(snapshot);
-    // Not knowing what is open decides nothing: the last look stands.
-    if (!now) return;
+    const { sessions: now, knownAccounts } = await openNow(snapshot);
     if (previousQuit === false)
       for (const [key, entry] of open)
-        if (!now.has(key) && !interrupted.has(key)) {
+        if (unsettledAccounts.has(entry.accountId) && knownAccounts.has(entry.accountId) && !now.has(key) && !interrupted.has(key)) {
           // It went down around when it was last seen open, not when the app looked again: a
           // session cut off days ago is past reopening.
           interrupted.set(key, entry);
           // Its tab went with it.
           tabs.delete(key);
         }
-    previousQuit = null;
-    open = now;
+    for (const accountId of [...unsettledAccounts])
+      if (knownAccounts.has(accountId) || !accountOf(snapshot, accountId)) unsettledAccounts.delete(accountId);
+    if (!unsettledAccounts.size) previousQuit = null;
+    open = new Map([
+      ...[...open].filter(([, entry]) => !knownAccounts.has(entry.accountId) && accountOf(snapshot, entry.accountId)),
+      ...now
+    ]);
     for (const key of [...interrupted.keys()]) if (now.has(key)) forget(key);
   }
   // A session no longer to reopen, and its offer.
@@ -1333,7 +1415,7 @@ export async function createContinuity({
       (home && (measuredOf(snapshot, home.id)?.status ?? 'pending') === 'pending')
     )
       return [];
-    const session: RecentSession = { ...found, projectDir: entry.cwd, accountId: holder.id };
+    const session: RecentSession = { ...found, accountId: holder.id };
     const target = home && recovered(snapshot, home.id, modelsFor(snapshot, session)[home.providerId]) ? home : holder;
     const to = { providerId: target.providerId, account: target };
     const suggestion =
@@ -1346,11 +1428,13 @@ export async function createContinuity({
         id
       );
     if (setting === 'ask') return [{ kind: 'suggested', suggestion }];
+    const pending = offers.get(suggestion.id);
     try {
-      const result = await acceptNow(suggestion.id, snapshot);
+      const result = await acceptNow(suggestion.id, snapshot, 'tools', true);
       const from = measuredOf(snapshot, target.id);
-      return from ? [{ kind: 'reopened', from, to, result, projectDir: session.projectDir }] : [];
+      return from ? [{ kind: 'reopened', from, to: pending?.to ?? to, result, projectDir: session.projectDir }] : [];
     } catch (error) {
+      if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
       return [{ kind: 'failed', from: measured, code: errorCode(error), attempt: 'reopen' }];
     }
   }
@@ -1417,22 +1501,27 @@ export async function createContinuity({
     const offered = offers.get(id);
     if (offered && recordOf(offered)?.status === 'failed') return [];
     const suggestion = offered?.suggestion ?? ask();
+    const pending = offers.get(suggestion.id);
     try {
-      const result = await acceptNow(suggestion.id, snapshot);
+      const result = await acceptNow(suggestion.id, snapshot, 'tools', true);
       const from = measuredOf(snapshot, holder.id);
-      return from ? [{ kind: 'returned', from, to, result, projectDir: session.projectDir }] : [];
+      return from ? [{ kind: 'returned', from, to: pending?.to ?? to, result, projectDir: session.projectDir }] : [];
     } catch (error) {
+      if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
       return [{ kind: 'failed', from: measured, code: errorCode(error), attempt: 'return' }];
     }
   }
   async function isRunning(id: string, snapshot?: Snapshot): Promise<boolean> {
     const pending = offers.get(id);
-    // A session to reopen is offered only while nothing runs it.
-    if (!pending || pending.reopening) return false;
+    if (!pending) return false;
     if (snapshot) {
       const holder = accountOf(snapshot, pending.holder.id);
       if (!holder) return false;
       pending.holder = holder;
+    }
+    if (pending.reopening) {
+      const found = await reopenLookup(pending.session, snapshot?.settings.accounts ?? [pending.holder]);
+      return found.kind !== 'none';
     }
     if (pending.session.providerId === 'claude') {
       const found = await lookup(pending.holder, pending.session);
@@ -1448,7 +1537,12 @@ export async function createContinuity({
     return current !== null;
   }
   return {
-    observe: (snapshot, { low }) => serial(() => observeNow(snapshot, low)),
+    observe: (snapshot, { low }) =>
+      serial(async () => {
+        if (quitting) return [];
+        const current = typeof snapshot === 'function' ? await snapshot() : getCurrentSnapshot ? await getCurrentSnapshot() : snapshot;
+        return isQuitting() ? [] : observeNow(current, typeof low === 'function' ? low(current) : low);
+      }),
     // A stranded stop has no one to continue it: it waits in the history for an explicit retry
     // rather than as a card naming a target that has no quota.
     suggestions: () =>

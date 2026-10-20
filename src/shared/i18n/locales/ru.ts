@@ -122,7 +122,7 @@ export const ru: Messages = {
   restoreAccountsBtn: 'Восстановить аккаунты ({n})',
   settingsHelp: 'Первичный вход выполняется в отдельном профиле. 1-й приоритет управляет умным запуском.',
   confirmRemoveAccount: 'Вы действительно хотите удалить аккаунт "{label}"?',
-  handoverDesc: 'Передает логи сессии, статус git и измененные файлы выбранному ИИ.',
+  handoverDesc: 'Проверьте разговор, ссылки на файлы и ветку/HEAD Git перед передачей. Рабочее дерево не сканируется.',
   sourceProvider: 'Исходный инструмент',
   autoDetectSession: 'Все инструменты',
   targetProvider: 'Целевой инструмент',
@@ -243,6 +243,10 @@ export const ru: Messages = {
   error_invalid_path: 'Недопустимый путь к папке.',
   error_invalid_settings: 'Эти настройки недопустимы.',
   error_session_not_found: 'Выбранный сеанс не найден.',
+  error_handover_file_tracked: 'Git уже отслеживает VIBE_HANDOVER.md. Удалите файл из индекса перед передачей.',
+  error_handover_exclusion_failed: 'Не удалось исключить файл передачи из Git. Проверьте права доступа к репозиторию и повторите попытку.',
+  error_handover_sensitive_context:
+    'Разговор содержит конфиденциальные данные, которые не удалось безопасно скрыть. Проверьте и удалите их перед передачей.',
   error_suggestion_expired: 'Это предложение больше не актуально.',
   error_session_newer_elsewhere: 'После этой копии сессия продолжилась в другом аккаунте, поэтому она не перенесена поверх более новой.',
   error_session_still_running:

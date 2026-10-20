@@ -42,7 +42,8 @@ function relevantWindows(account: MeasuredAccount | null, model: string | undefi
 
 export function isMeasurementFresh(account: MeasuredAccount | null, now: number): account is MeasuredAccount {
   const fetchedAt = Date.parse(account?.fetchedAt ?? '');
-  return account?.status === 'ok' && Number.isFinite(fetchedAt) && now - fetchedAt <= FRESH_READING_MAX_AGE_MS;
+  const age = now - fetchedAt;
+  return account?.status === 'ok' && Number.isFinite(fetchedAt) && age >= 0 && age <= FRESH_READING_MAX_AGE_MS;
 }
 
 export type KnownWindow = QuotaWindow & { remainingPercent: number };

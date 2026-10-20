@@ -56,6 +56,8 @@ test('eligibility needs a fresh, complete measurement above the floor', () => {
   assert.equal(eligible(ok), true);
   assert.equal(eligible({ ...ok, status: 'stale' }), false);
   assert.equal(eligible({ ...ok, fetchedAt: new Date(NOW - 10 * 60 * 1000).toISOString() }), false, 'too old');
+  assert.equal(eligible({ ...ok, fetchedAt: new Date(NOW + 1).toISOString() }), false, 'a future reading is not fresh');
+  assert.equal(eligible({ ...ok, fetchedAt: new Date(NOW).toISOString() }), true, 'a reading from now is fresh');
   assert.equal(eligible(measured(general(40, null))), false, 'unknown weekly');
   assert.equal(eligible(measured(general(QUOTA_FLOOR_PERCENT, 60))), false, 'at the floor');
   assert.equal(eligible(measured([])), false);

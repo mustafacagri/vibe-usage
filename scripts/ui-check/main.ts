@@ -11,6 +11,7 @@ import type { Snapshot } from '../../src/shared/types.ts';
 import { capture, isNumber, isStringList, openFixtureWindow, quiet, ROOT, run, runFor, serveFixture } from '../fixture-app.ts';
 import { isObject } from '../../src/core/files.ts';
 import { DIAGNOSTICS, history, MODELS, sessions, SMART_PREVIEW, snapshot, transitions } from './fixture.ts';
+import { checkHandoverOrdering } from './handover-check.ts';
 
 const OUT_DIR = path.join(ROOT, 'artifacts', 'ui-check');
 const option = (name: string): string | undefined => process.argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -196,6 +197,14 @@ void app.whenReady().then(async () => {
     const problems = await check(language);
     console.log(`${problems.length ? '✖' : '✔'} ${language} @ ${WIDTH}px${problems.length ? `\n    ${problems.join('\n    ')}` : ''}`);
     failed ||= problems.length > 0;
+  }
+  state = loadSnapshot('en');
+  try {
+    await checkHandoverOrdering();
+    console.log('✔ handover ordering, source identity, cancellation and execution');
+  } catch (error) {
+    failed = true;
+    console.error('✖ handover ordering', error);
   }
   console.log(`Screenshots: ${OUT_DIR}`);
   app.exit(failed ? 1 : 0);

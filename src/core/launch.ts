@@ -247,7 +247,8 @@ const LAUNCHERS: Record<ProviderId, (options: LaunchOptions) => Promise<Terminal
   async cursor({ model, prompt }) {
     // Only the Cursor Agent CLI runs a task in a terminal; without it the app is opened.
     const binary = await findCursorAgent();
-    return binary ? { binary, args: ['--trust', ...optional('--model', model), ...trailing(prompt)], env: {} } : null;
+    // Selecting a folder does not grant trust to its code. Cursor asks the user itself.
+    return binary ? { binary, args: [...optional('--model', model), ...trailing(prompt)], env: {} } : null;
   },
   antigravity: () => Promise.resolve(null)
 };

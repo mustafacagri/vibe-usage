@@ -15,7 +15,8 @@ import {
   RESUME_PROMPT,
   RETURN_PROMPT,
   RETURN_TASK_WAIT_MS,
-  type ContinueResult
+  type ContinueResult,
+  type ContinuityOptions
 } from '../src/core/continuity.ts';
 import { AppError } from '../src/core/errors.ts';
 import { isObject } from '../src/core/files.ts';
@@ -141,6 +142,62 @@ test('a stop is read from the transcript: the tool’s own usage-limit error as 
   assert.equal(codexLimitStop(await write('codex-done.jsonl', [exceeded, event('task_complete')])), null);
 });
 
+test('touching or restoring a transcript cannot make an ancient or future usage stop current', async t => {
+  const home = await tempDir(t, 'vibe-stop-event-time-');
+  for (const providerId of ['claude', 'codex'] as const) {
+    const configDir = path.join(home, providerId);
+    const holder = account({ id: `${providerId}:clock`, providerId, configDir });
+    const id = '0199a213-81c0-7800-8aa1-bbab2a035a99';
+    const file =
+      providerId === 'claude'
+        ? path.join(configDir, 'projects', '-work-app', `${id}.jsonl`)
+        : path.join(configDir, 'sessions', `rollout-2026-10-17-${id}.jsonl`);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    for (const [age, expected] of [
+      [7 * 24 * 60 * MINUTE, false],
+      [-60 * MINUTE, false],
+      [2 * MINUTE, true]
+    ] as const) {
+      const timestamp = new Date(NOW - age).toISOString();
+      const body =
+        providerId === 'claude'
+          ? [
+              { type: 'user', cwd: '/work/app', message: { content: 'Continue the task' } },
+              {
+                type: 'assistant',
+                cwd: '/work/app',
+                timestamp,
+                isApiErrorMessage: true,
+                apiError: 'usage_limit_reached',
+                message: { model: '<synthetic>', content: 'Usage limit' }
+              }
+            ]
+              .map(record => JSON.stringify(record))
+              .join('\n')
+          : `${codexRollout({ id, cwd: '/work/app', user: ['Continue the task'] })}\n${JSON.stringify({ type: 'event_msg', timestamp, payload: { type: 'task_complete', error: { codex_error_info: 'usage_limit_exceeded' } } })}`;
+      await fs.writeFile(file, body);
+      await fs.utimes(file, new Date(NOW), new Date(NOW));
+      assert.equal(Boolean(await findStoppedSession(holder, home, NOW)), expected, `${providerId}: event age ${age}ms, fresh file mtime`);
+    }
+  }
+});
+
+test('stop freshness is rechecked at observation and acceptance using the event time', async t => {
+  const state = snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts');
+  const ancient = await harness(t, { stopped: { [claudeA.id]: session({ updatedAt: NOW, stoppedAt: NOW - 7 * 24 * 60 * MINUTE }) } });
+  assert.deepEqual(await ancient.continuity.observe(state, { low: [] }), []);
+  assert.equal(ancient.started.length, 0);
+  let now = NOW;
+  const offered = await harness(t, { stopped: { [claudeA.id]: session() }, clock: () => now });
+  const manual = { ...state, settings: { ...state.settings, autoContinue: 'off' as const } };
+  await offered.continuity.observe(manual, { low: [] });
+  const suggestion = offered.continuity.suggestions()[0];
+  assert.ok(suggestion);
+  now += 31 * MINUTE;
+  await assert.rejects(offered.continuity.accept(suggestion.id, manual), /suggestion_expired/);
+  assert.equal(offered.started.length, 0, 'an offer cannot outlive the stop it was made for');
+});
+
 test('a Claude Code session moves to the other profile whole and goes on by itself there', async t => {
   const root = await tempDir(t, 'vibe-continue-');
   const project = path.join(root, 'project');
@@ -197,7 +254,8 @@ async function harness(
     resumed = true,
     fails = () => false,
     historyCap,
-    dataDir
+    dataDir,
+    options = {}
   }: {
     recent?: Record<string, RecentSession>;
     // Each account's stopped session, or its several stopped sessions.
@@ -214,6 +272,7 @@ async function harness(
     fails?: (n: number) => boolean;
     historyCap?: number;
     dataDir?: string;
+    options?: Pick<ContinuityOptions, 'getCurrentSnapshot' | 'findOpen' | 'findRunning'>;
   } = {}
 ) {
   const started: {
@@ -241,6 +300,7 @@ async function harness(
       const sessions = open[target.id];
       return sessions === 'unknown' ? Promise.reject(new Error('timed out')) : Promise.resolve(sessions ?? []);
     },
+    ...options,
     start: (moved, to, _state, _context, options): Promise<ContinueResult> => {
       started.push({ session: moved, to, prompt: options?.prompt, running: options?.running ?? null, tab: options?.tab ?? null });
       if (fails(started.length)) return Promise.reject(new AppError('launch_failed'));
@@ -250,6 +310,166 @@ async function harness(
   });
   return { continuity, started };
 }
+
+test('queued observations read settings and quota alerts only when their serialized work starts', { timeout: 10_000 }, async t => {
+  const scanning = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  let firstScan = true;
+  const { continuity, started } = await harness(t, {
+    stopped: { [claudeA.id]: session() },
+    options: {
+      findOpen: async () => {
+        if (firstScan) {
+          firstScan = false;
+          scanning.resolve(undefined);
+          await release.promise;
+        }
+        return [];
+      }
+    }
+  });
+  const first = continuity.observe(snapshot([]), { low: [] });
+  await scanning.promise;
+  let current = snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts');
+  let supplierCalls = 0;
+  const alertsSettings: AutoContinue[] = [];
+  const queued = continuity.observe(
+    () => {
+      supplierCalls++;
+      return Promise.resolve(current);
+    },
+    {
+      low: state => {
+        alertsSettings.push(state.settings.autoContinue);
+        return [];
+      }
+    }
+  );
+  assert.equal(supplierCalls, 0, 'settings are not captured before an earlier observation finishes');
+  current = { ...current, settings: { ...current.settings, autoContinue: 'off' } };
+  release.resolve(undefined);
+  await first;
+  const notices = await queued;
+  assert.equal(supplierCalls, 1);
+  assert.deepEqual(alertsSettings, ['off']);
+  assert.deepEqual(
+    notices.map(notice => notice.kind),
+    ['suggested']
+  );
+  assert.equal(started.length, 0, 'turning automation off while queued cannot start an agent');
+});
+
+test('settings changed during process preflight stop automation without losing an explicit manual choice', { timeout: 10_000 }, async t => {
+  const checking = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  let lookups = 0;
+  let current = snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts');
+  const dataDir = await tempDir(t, 'vibe-dispatch-settings-');
+  const { continuity, started } = await harness(t, {
+    dataDir,
+    stopped: { [claudeA.id]: session() },
+    options: {
+      getCurrentSnapshot: () => Promise.resolve(current),
+      findRunning: async () => {
+        if (++lookups === 2) {
+          checking.resolve(undefined);
+          await release.promise;
+        }
+        return { kind: 'none' };
+      }
+    }
+  });
+  const observing = continuity.observe(current, { low: [] });
+  await checking.promise;
+  const durable = JSON.parse(await fs.readFile(path.join(dataDir, 'continuity.json'), 'utf8')) as { transitions: { status: string }[] };
+  assert.equal(durable.transitions[0]?.status, 'dispatching', 'the intent was durable before process preflight');
+  current = { ...current, settings: { ...current.settings, autoContinue: 'off' } };
+  release.resolve(undefined);
+  const notices = await observing;
+  assert.deepEqual(
+    notices.map(notice => notice.kind),
+    ['suggested']
+  );
+  assert.equal(started.length, 0);
+  assert.equal(continuity.transitions()[0]?.status, 'offered', 'an unstarted action is not recorded as a failed launch');
+  const suggestion = continuity.suggestions()[0];
+  assert.ok(suggestion);
+  await continuity.accept(suggestion.id, current);
+  assert.equal(started.length, 1, 'autoContinue off still permits the user to accept a suggestion');
+});
+
+test('dispatch rejects source, destination and model routing changes made during process preflight', { timeout: 10_000 }, async t => {
+  for (const changed of ['source profile', 'target profile', 'target credential selector', 'target model'] as const) {
+    const checking = Promise.withResolvers<undefined>();
+    const release = Promise.withResolvers<undefined>();
+    let lookups = 0;
+    let current = snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts');
+    const { continuity, started } = await harness(t, {
+      stopped: { [claudeA.id]: session() },
+      options: {
+        getCurrentSnapshot: () => Promise.resolve(current),
+        findRunning: async () => {
+          if (++lookups === 2) {
+            checking.resolve(undefined);
+            await release.promise;
+          }
+          return { kind: 'none' };
+        }
+      }
+    });
+    const observing = continuity.observe(current, { low: [] });
+    await checking.promise;
+    current = {
+      ...current,
+      settings: {
+        ...current.settings,
+        accounts: current.settings.accounts.map(account => {
+          if (changed === 'source profile' && account.id === claudeA.id) return { ...account, configDir: '/profiles/replaced-source' };
+          if (changed === 'target profile' && account.id === claudeB.id) return { ...account, configDir: '/profiles/replaced-target' };
+          if (changed === 'target credential selector' && account.id === claudeB.id) return { ...account, configDirExplicit: true };
+          return account;
+        }),
+        ...(changed === 'target model'
+          ? {
+              projectPreferences: [
+                { projectDir: '/work/app', tool: 'claude' as const, model: 'claude-opus-5-5', autoContinue: 'inherit' as const }
+              ]
+            }
+          : {})
+      }
+    };
+    release.resolve(undefined);
+    await observing;
+    assert.equal(started.length, 0, `${changed}: the durable intent cannot silently change its routing`);
+    assert.equal(continuity.transitions()[0]?.status, 'offered', `${changed}: a fresh user decision remains possible`);
+  }
+});
+
+test('quitting during preflight prevents the queued action from launching', { timeout: 10_000 }, async t => {
+  const checking = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  let lookups = 0;
+  const current = snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts');
+  const { continuity, started } = await harness(t, {
+    stopped: { [claudeA.id]: session() },
+    options: {
+      findRunning: async () => {
+        if (++lookups === 2) {
+          checking.resolve(undefined);
+          await release.promise;
+        }
+        return { kind: 'none' };
+      }
+    }
+  });
+  const observing = continuity.observe(current, { low: [] });
+  await checking.promise;
+  continuity.quit();
+  release.resolve(undefined);
+  assert.deepEqual(await observing, []);
+  assert.equal(started.length, 0);
+  assert.deepEqual(await continuity.observe(current, { low: [] }), []);
+});
 
 const live = (fields: Partial<LiveClaudeSession> = {}): LiveClaudeSession => ({
   pid: 4242,
@@ -330,6 +550,45 @@ test('back on the main account: offered, or on its own once idle and quiet, in t
   assert.equal(back.tab, '/data/tabs/session-1-1.json', 'in the tab it ran in');
   assert.ok(back.prompt?.startsWith(RETURN_PROMPT) && back.prompt.includes('b9 (npm run build)'), 'told what is still running');
   assert.deepEqual(await continuity.observe(state(100, 'auto', now), { low: [] }), [], 'home: nothing more to do');
+});
+
+test('return-to-primary changed to ask during its final preflight leaves a manual offer', { timeout: 10_000 }, async t => {
+  const { state } = await movedCopy(t, 'vibe-return-settings-');
+  const checking = Promise.withResolvers<undefined>();
+  const release = Promise.withResolvers<undefined>();
+  let returning = false;
+  let lookups = 0;
+  let current = state(0, 'auto');
+  const { continuity, started } = await harness(t, {
+    stopped: { [claudeA.id]: session() },
+    options: {
+      getCurrentSnapshot: () => Promise.resolve(current),
+      findRunning: async account => {
+        if (account.id !== claudeB.id) return { kind: 'none' };
+        // Pickup was verified in the first observation; now the idle check and final preflight.
+        if (returning && ++lookups === 2) {
+          checking.resolve(undefined);
+          await release.promise;
+        }
+        return { kind: 'found', process: live() };
+      }
+    }
+  });
+  await continuity.observe(current, { low: [] });
+  assert.equal(started.length, 1);
+  returning = true;
+  current = state(100, 'auto');
+  const observing = continuity.observe(current, { low: [] });
+  await checking.promise;
+  current = state(100, 'ask');
+  release.resolve(undefined);
+  assert.deepEqual(
+    (await observing).map(notice => notice.kind),
+    ['suggested']
+  );
+  assert.equal(started.length, 1, 'the source process is not ended or relaunched under the old auto setting');
+  assert.equal(continuity.suggestions()[0]?.kind, 'return');
+  assert.equal(continuity.transitions().at(-1)?.status, 'offered');
 });
 
 test('the wait for background commands before going home starts over when the session was busy in between', async t => {
@@ -1129,7 +1388,8 @@ test('a waiting offer shows the quota left now and who would take the work now',
 test('the copy a session was moved with is not taken for a stop of the account it moved to', async t => {
   const { state } = await movedCopy(t, 'vibe-carried-stop-');
   const stopped: Record<string, StoppedSession[]> = { 'claude:a': [session()] };
-  const { continuity, started } = await harness(t, { stopped });
+  let now = NOW;
+  const { continuity, started } = await harness(t, { stopped, clock: () => now });
   await continuity.observe(state(0, 'ask'), { low: [] });
   assert.equal(started.length, 1);
   // Until it goes on, the copy ends with the limit error it was moved for, written before the move.
@@ -1146,6 +1406,7 @@ test('the copy a session was moved with is not taken for a stop of the account i
   assert.deepEqual(continuity.transitions().length, 1, 'no offer for it');
   assert.equal(started.length, 1);
   // A stop the copy hits later, on this account, is a stop of this account.
+  now += MINUTE;
   stopped['claude:b'] = [session({ file: '/profiles/b/projects/-work-app/session-1.jsonl', stoppedAt: NOW + MINUTE })];
   assert.deepEqual(
     (await continuity.observe(lowB(10), { low: [] })).map(n => n.kind),
@@ -1559,6 +1820,49 @@ test('sessions open when the system went down open again where they ran, and a t
   assert.deepEqual(await after.continuity.observe(state(80, 'auto'), { low: [] }), [], 'once');
 });
 
+test('reopening rechecks both automation permission and the profiles covered by its process preflight', { timeout: 10_000 }, async t => {
+  for (const changed of ['ask', 'off', 'another profile'] as const) {
+    const { main, write, state, dataDir } = await restartProfiles(t);
+    await write(main, 'session-1');
+    const before = await harness(t, { dataDir, open: { [main.id]: [opened('session-1')] } });
+    await before.continuity.observe(state(80, 'auto'), { low: [] });
+    const checking = Promise.withResolvers<undefined>();
+    const release = Promise.withResolvers<undefined>();
+    let firstLookup = true;
+    let current = state(80, 'auto');
+    const after = await harness(t, {
+      dataDir,
+      options: {
+        getCurrentSnapshot: () => Promise.resolve(current),
+        findRunning: async () => {
+          if (firstLookup) {
+            firstLookup = false;
+            checking.resolve(undefined);
+            await release.promise;
+          }
+          return { kind: 'none' };
+        }
+      }
+    });
+    const observing = after.continuity.observe(current, { low: [] });
+    await checking.promise;
+    current = {
+      ...current,
+      settings: {
+        ...current.settings,
+        ...(changed === 'another profile' ? { accounts: [...current.settings.accounts, claudeC] } : { reopenAfterRestart: changed })
+      }
+    };
+    release.resolve(undefined);
+    assert.deepEqual(
+      (await observing).map(notice => notice.kind),
+      ['suggested']
+    );
+    assert.equal(after.started.length, 0, `${changed}: old permission or an incomplete profile scan cannot reopen a session`);
+    assert.equal(after.continuity.transitions()[0]?.status, 'offered');
+  }
+});
+
 test('a state written before records named their session still opens its sessions again', async t => {
   const { main, write, state, dataDir } = await restartProfiles(t);
   await write(main, 'session-1');
@@ -1701,4 +2005,57 @@ test('asked, a session cut off is offered once; not knowing what is open, or one
   assert.deepEqual(await restarted.continuity.observe(off.state(80, 'off'), { low: [] }), []);
   assert.deepEqual(await restarted.continuity.observe(off.state(80, 'auto'), { low: [] }), [], 'off forgets it');
   assert.equal(restarted.started.length, 0);
+});
+
+test('a positive open-session observation withdraws a reopen even when another profile cannot be scanned', async t => {
+  const { main, write, state, dataDir } = await restartProfiles(t);
+  await write(main, 'session-1');
+  const before = await harness(t, { dataDir, open: { [main.id]: [opened('session-1')] } });
+  await before.continuity.observe(state(80, 'ask'), { low: [] });
+  const open: Record<string, OpenClaudeSession[] | 'unknown'> = {};
+  const after = await harness(t, { dataDir, open });
+  await after.continuity.observe(state(80, 'ask'), { low: [] });
+  assert.equal(after.continuity.suggestions().length, 1);
+  open[main.id] = [opened('session-1', { status: 'busy' })];
+  open['claude:b'] = 'unknown';
+  await after.continuity.observe(state(80, 'ask'), { low: [] });
+  assert.deepEqual(after.continuity.suggestions(), [], 'an unrelated scan failure never erases a live process');
+  await assert.rejects(after.continuity.accept('reopen:claude:session-1', state(80, 'ask')), /suggestion_expired/);
+  assert.equal(after.started.length, 0);
+});
+
+test('reopening checks the exact session again at dispatch and never restarts a live or unknown copy', async t => {
+  for (const [holderId, lookupResult] of [
+    ['claude:a', 'found'],
+    ['claude:b', 'found'],
+    ['claude:a', 'unknown'],
+    ['claude:b', 'unknown']
+  ] as const) {
+    const { main, write, state, dataDir } = await restartProfiles(t);
+    await write(main, 'session-1');
+    const before = await harness(t, { dataDir, open: { [main.id]: [opened('session-1')] } });
+    await before.continuity.observe(state(80, 'ask'), { low: [] });
+    const running: Record<string, LiveClaudeSession | 'unknown'> = {};
+    const after = await harness(t, { dataDir, running, open: { 'claude:b': 'unknown' } });
+    await after.continuity.observe(state(80, 'ask'), { low: [] });
+    assert.equal(after.continuity.suggestions().length, 1);
+    // The user opens a copy, or the targeted process query fails, after the offer was made.
+    running[holderId] = lookupResult === 'found' ? live({ status: 'busy' }) : 'unknown';
+    assert.equal(await after.continuity.isRunning('reopen:claude:session-1', state(80, 'ask')), true);
+    await assert.rejects(
+      after.continuity.accept('reopen:claude:session-1', state(80, 'ask')),
+      lookupResult === 'found' ? /suggestion_expired/ : /process_unknown/
+    );
+    assert.equal(after.started.length, 0, `${holderId} ${lookupResult}: no duplicate process is dispatched`);
+    assert.equal(
+      after.continuity.suggestions().length,
+      lookupResult === 'found' ? 0 : 1,
+      'unknown remains available for a safe explicit retry'
+    );
+    if (lookupResult === 'unknown') {
+      Reflect.deleteProperty(running, holderId);
+      await after.continuity.accept('reopen:claude:session-1', state(80, 'ask'));
+      assert.equal(after.started.length, 1, 'a subsequent targeted proof of absence permits reopening');
+    }
+  }
 });

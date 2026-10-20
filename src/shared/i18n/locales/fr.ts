@@ -118,7 +118,8 @@ export const fr: Messages = {
   restoreAccountsBtn: 'Restaurer les comptes ({n})',
   settingsHelp: 'La première connexion se fait dans un profil séparé. La priorité 1 gère le lancement intelligent.',
   confirmRemoveAccount: 'Voulez-vous vraiment retirer le compte "{label}" ?',
-  handoverDesc: "Compile les logs, statut git et fichiers vers l'IA choisie.",
+  handoverDesc:
+    'Vérifiez les échanges, les références aux fichiers et la branche/HEAD Git avant le partage. L’arbre de travail n’est pas analysé.',
   sourceProvider: 'Fournisseur source',
   autoDetectSession: 'Tous les outils',
   targetProvider: 'Fournisseur cible',
@@ -241,6 +242,10 @@ export const fr: Messages = {
   error_invalid_path: "Le chemin du dossier n'est pas valide.",
   error_invalid_settings: 'Ces paramètres ne sont pas valides.',
   error_session_not_found: 'La session choisie est introuvable.',
+  error_handover_file_tracked: 'Git suit déjà VIBE_HANDOVER.md. Retirez ce fichier de l’index avant le transfert.',
+  error_handover_exclusion_failed: 'Le fichier de transfert n’a pas pu être exclu de Git. Vérifiez les permissions du dépôt et réessayez.',
+  error_handover_sensitive_context:
+    'La conversation contient des informations sensibles qui n’ont pas pu être masquées de façon sûre. Vérifiez-les et supprimez-les avant le transfert.',
   error_suggestion_expired: 'Cette suggestion n’est plus disponible.',
   error_session_newer_elsewhere:
     "La session a continué dans l'autre compte après cette copie ; elle n'a donc pas été ramenée par-dessus la plus récente.",

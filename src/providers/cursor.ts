@@ -1,5 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Environment } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
 import { isObject, type JsonObject } from '../core/files.ts';
@@ -14,13 +15,14 @@ import {
   jwtClaims,
   QUOTA_ENDPOINTS,
   readCredentialFile,
+  remainingTimeout,
   runProcess as defaultRunProcess,
   TOOL_INSTALLS,
   type Clock,
   type GetJson,
   type RunProcess
 } from './common.ts';
-import type { ParsedQuota, ProviderAdapter } from './types.ts';
+import type { ParsedQuota, ProviderAdapter, RefreshContext } from './types.ts';
 
 const USAGE_TIMEOUT_MS = 20000;
 const SQLITE_TIMEOUT_MS = 5000;
@@ -52,9 +54,14 @@ function poolValue(pool: JsonObject): { valueKey?: MessageKey } {
 
 export function parseCursorUsage(summary: unknown): ParsedQuota {
   if (!isObject(summary) || !SUMMARY_FIELDS.some(field => summary[field] !== undefined)) throw new ProviderError('invalid_response');
+  for (const group of USAGE_GROUPS) {
+    const usage = summary[`${group}Usage`];
+    if (usage !== undefined && usage !== null && !isObject(usage)) throw new ProviderError('invalid_response');
+  }
   const resetsAt = summary.billingCycleEnd;
   const windows: QuotaWindow[] = [];
   const individual = isObject(summary.individualUsage) ? summary.individualUsage : {};
+  if (individual.plan !== undefined && individual.plan !== null && !isObject(individual.plan)) throw new ProviderError('invalid_response');
   if (isObject(individual.plan)) {
     const plan = individual.plan;
     for (const [scope, keys] of Object.entries(PLAN_SCOPES)) {
@@ -76,6 +83,7 @@ export function parseCursorUsage(summary: unknown): ParsedQuota {
     const usage = summary[`${group}Usage`];
     for (const [key, labelKey] of Object.entries(SPEND_POOLS)) {
       const pool = isObject(usage) ? usage[key] : undefined;
+      if (pool !== undefined && pool !== null && !isObject(pool)) throw new ProviderError('invalid_response');
       if (!isObject(pool)) continue;
       windows.push(
         normalizeWindow({
@@ -93,6 +101,7 @@ export function parseCursorUsage(summary: unknown): ParsedQuota {
   const membership = safePlan(summary.membershipType);
   return {
     windows,
+    completeness: 'complete',
     ...(membership ? { plan: membership } : {}),
     ...(windows.length ? {} : { status: 'no_limits_reported' as const })
   };
@@ -105,20 +114,23 @@ interface TokenSource {
   runProcess: RunProcess;
 }
 
-async function readAccessToken({ home, platform, env, runProcess }: TokenSource): Promise<unknown> {
+async function readAccessToken({ home, platform, env, runProcess }: TokenSource, context?: RefreshContext): Promise<unknown> {
   if (platform === 'win32') {
-    const auth = await readCredentialFile(path.join(env.APPDATA ?? path.join(home, 'AppData/Roaming'), 'Cursor/auth.json'));
+    const auth = await readCredentialFile(path.join(env.APPDATA ?? path.join(home, 'AppData/Roaming'), 'Cursor/auth.json'), context);
     return auth.accessToken;
   }
   if (platform !== 'darwin') throw new ProviderError('unsupported_platform');
-  // Cursor keeps its access token in the editor's state database. `immutable=1` reads the live
-  // database without locking or mutating it.
+  // This is a live WAL database. Read-only mode includes committed WAL frames; immutable
+  // mode would ignore them and could use a previous account's token after a sign-in change.
   const db = path.join(home, 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
+  const uri = pathToFileURL(db);
+  uri.searchParams.set('mode', 'ro');
   const query = "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;";
   try {
-    return (await runProcess('/usr/bin/sqlite3', ['-readonly', `file:${db}?immutable=1`, query], { timeoutMs: SQLITE_TIMEOUT_MS })).trim();
+    return (await runProcess('/usr/bin/sqlite3', ['-readonly', uri.href, query], { timeoutMs: SQLITE_TIMEOUT_MS, ...context })).trim();
   } catch (error) {
-    throw new ProviderError('auth_missing', { cause: error });
+    if (error instanceof ProviderError) throw error;
+    throw new ProviderError('process_failed', { cause: error });
   }
 }
 
@@ -161,17 +173,20 @@ export function createCursorProvider(options: CursorProviderOptions = {}): Provi
   const getJson = options.getJson ?? defaultGetJson;
   return {
     id: 'cursor',
+    fetchTimeoutMs: SQLITE_TIMEOUT_MS + USAGE_TIMEOUT_MS,
     discover: () =>
       Promise.resolve([
         { id: accountId('cursor', DEFAULT_ACCOUNT_KEY), providerId: 'cursor', labelKey: 'defaultAccount', primary: true, enabled: true }
       ]),
-    async fetch(account) {
+    async fetch(account, context) {
       if (account.configDir) throw new ProviderError('unsupported_profile');
-      const token = await readAccessToken(source);
+      const token = await readAccessToken(source, context);
+      remainingTimeout(USAGE_TIMEOUT_MS, context);
       if (typeof token !== 'string' || !token.trim()) throw new ProviderError('auth_missing');
       const usage = await getJson(QUOTA_ENDPOINTS.cursor, {
         headers: { Accept: 'application/json', Cookie: sessionCookie(token, options.clock) },
-        timeoutMs: USAGE_TIMEOUT_MS
+        timeoutMs: USAGE_TIMEOUT_MS,
+        ...context
       });
       return parseCursorUsage(usage);
     }

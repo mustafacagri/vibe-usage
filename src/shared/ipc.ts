@@ -11,9 +11,18 @@ export type LaunchMode = 'terminal' | 'app';
 export type SettingsPatch = Partial<Omit<Settings, 'quietHours'>> & { quietHours?: QuietHours | null };
 export type ModelCatalog = Record<ProviderId, string[]>;
 
+// Opaque identity of a discovered physical session and the version the user reviewed.
+// These are matched against trusted discovery; neither value is a renderer-supplied path.
+export interface SessionSourceRef {
+  id: string;
+  version: string;
+  accountId?: string;
+}
+
 export interface SessionSummary {
   id: string;
   providerId: ProviderId;
+  source: SessionSourceRef;
   // Empty when the session has no usable title; the UI words it.
   title: string;
   updatedAt: number;
@@ -39,6 +48,8 @@ export interface HandoverRequest {
   sessionProvider?: ProviderId;
   targetModel?: string;
   sourceAccountId?: string | undefined;
+  // Null pins a preview that found no session; undefined keeps automatic CLI discovery.
+  sessionSource?: SessionSourceRef | null;
 }
 
 // What a handover would do, shown before anything is written or started. Under an automatic
@@ -51,6 +62,7 @@ export interface HandoverPreview {
   // Null when the project has no session to hand over.
   sessionId: string | null;
   sessionProvider: ProviderId | null;
+  sessionSource?: SessionSourceRef;
   // The exact brief execution writes (its generation time aside).
   brief: string;
 }

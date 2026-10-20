@@ -230,6 +230,7 @@ export function sessions(now = Date.now()): SessionSummary[] {
   return [
     {
       id: 'csv-export',
+      source: { id: 'csv-export', version: 'fixture-v1' },
       providerId: 'claude',
       title: 'Add CSV export to reports',
       updatedAt: now - 25 * MINUTE,
@@ -239,6 +240,7 @@ export function sessions(now = Date.now()): SessionSummary[] {
     },
     {
       id: 'flaky-login',
+      source: { id: 'flaky-login', version: 'fixture-v1' },
       providerId: 'codex',
       title: 'Fix flaky login test',
       updatedAt: now - 3 * HOUR,

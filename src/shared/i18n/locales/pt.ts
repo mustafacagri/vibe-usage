@@ -118,7 +118,8 @@ export const pt: Messages = {
   restoreAccountsBtn: 'Restaurar contas ({n})',
   settingsHelp: 'O login inicial é feito em perfil separado. Prioridade 1 comanda o início inteligente.',
   confirmRemoveAccount: 'Deseja remover a conta "{label}"?',
-  handoverDesc: 'Compila logs de sessão, git e arquivos modificados para a ferramenta de IA.',
+  handoverDesc:
+    'Confira a conversa, as referências a arquivos e o branch/HEAD do Git antes de compartilhar. A árvore de trabalho não é examinada.',
   sourceProvider: 'Provedor de origem',
   autoDetectSession: 'Todas as ferramentas',
   targetProvider: 'Provedor de destino',
@@ -241,6 +242,11 @@ export const pt: Messages = {
   error_invalid_path: 'O caminho da pasta é inválido.',
   error_invalid_settings: 'Estas configurações não são válidas.',
   error_session_not_found: 'A sessão selecionada não foi encontrada.',
+  error_handover_file_tracked: 'O Git já rastreia VIBE_HANDOVER.md. Remova o arquivo do índice antes da transferência.',
+  error_handover_exclusion_failed:
+    'Não foi possível excluir do Git o arquivo de transferência. Confira as permissões do repositório e tente novamente.',
+  error_handover_sensitive_context:
+    'A conversa contém informações sensíveis que não puderam ser ocultadas com segurança. Revise e remova essas informações antes da transferência.',
   error_suggestion_expired: 'Esta sugestão não está mais disponível.',
   error_session_newer_elsewhere: 'A sessão continuou na outra conta depois desta cópia, então não foi movida por cima da mais recente.',
   error_session_still_running:

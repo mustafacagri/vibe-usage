@@ -40,7 +40,10 @@ export function profileLabel(providerId: ProfileProviderId, configDir: string): 
 // The default profile folder and its `-<name>` siblings that exist in `home`.
 export async function profileFolders(providerId: ProfileProviderId, home: string): Promise<string[]> {
   const base = PROFILE_DIRS[providerId];
-  const entries = await fsp.readdir(home, { withFileTypes: true }).catch(() => []);
+  const entries = await fsp.readdir(home, { withFileTypes: true }).catch((error: unknown) => {
+    if (systemErrorCode(error) === 'ENOENT') return [];
+    throw error;
+  });
   return entries
     .filter(entry => {
       if (!entry.isDirectory()) return false;
@@ -74,6 +77,9 @@ export async function createProfileFolder(
 
 // A sign-in file counts only as a regular file: a symbolic link could point anywhere.
 export async function isRegularFile(file: string): Promise<boolean> {
-  const stat = await fsp.lstat(file).catch(() => null);
+  const stat = await fsp.lstat(file).catch((error: unknown) => {
+    if (systemErrorCode(error) === 'ENOENT') return null;
+    throw error;
+  });
   return stat?.isFile() ?? false;
 }

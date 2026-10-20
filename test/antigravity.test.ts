@@ -79,7 +79,9 @@ test('multiple servers split accounts by e-mail and merge windows by reset perio
       target.pid === 1001 ? { ...status('work@corp.com'), ...quota(0.85) } : { ...status('personal@gmail.com'), ...quota(0.15) }
     )
   );
-  const discovered = await accounts.discover();
+  const discovery = await accounts.discover();
+  assert.ok(!Array.isArray(discovery) && discovery.kind === 'complete');
+  const discovered = discovery.accounts;
   assert.deepEqual(
     discovered.map(a => a.email),
     ['work@corp.com', 'personal@gmail.com']
@@ -103,8 +105,10 @@ test('going from one to two accounts never mixes their quota', async () => {
   const adapter = provider([server(101, 'tok1', [6101]), server(102, 'tok2', [6102])], target =>
     Promise.resolve(target.pid === 101 ? { ...status('work@corp.com'), ...quota(0.9) } : { ...status('personal@gmail.com'), ...quota(0.1) })
   );
+  const discovery = await adapter.discover();
+  assert.ok(!Array.isArray(discovery) && discovery.kind === 'complete');
   assert.deepEqual(
-    (await adapter.discover()).map(a => a.id),
+    discovery.accounts.map(a => a.id),
     [antigravityAccountId('work@corp.com'), antigravityAccountId('personal@gmail.com')]
   );
   assert.equal(windowsOf(await adapter.fetch(emailAccount('work@corp.com')))[0]?.remainingPercent, 90);
@@ -130,11 +134,54 @@ test('a quota summary without identity is tied to its account through the status
   await assert.rejects(adapter.fetch(emailAccount('other@unknown.com')), /auth_missing/);
 });
 
+test('conflicting status and quota identities fail closed even when status has valid fallback quota', async t => {
+  const statusWithFallback = {
+    userStatus: {
+      email: ' First@Example.com ',
+      cascadeModelConfigData: {
+        clientModelConfigs: [{ modelId: 'model-a', label: 'Model A', quotaInfo: { remainingFraction: 0.8 } }]
+      }
+    }
+  };
+  for (const malformed of [false, true]) {
+    await t.test(
+      malformed ? 'malformed quota cannot hide the identity mismatch' : 'valid quota belongs to a different account',
+      async () => {
+        let calls = 0;
+        const adapter = provider([server(101, 'synthetic-token', [3101, 3102])], (_server, _port, method) => {
+          calls++;
+          return Promise.resolve(
+            method === 'GetUserStatus'
+              ? statusWithFallback
+              : {
+                  email: 'second@example.com',
+                  groups: malformed ? 'unsupported' : [group('models', 'Models', [bucket('session', '5h', 0.91)])]
+                }
+          );
+        });
+        await assert.rejects(adapter.fetch(emailAccount('first@example.com')), { code: 'invalid_response' });
+        assert.equal(calls, 2, 'identity mismatch neither accepts cached status quota nor retries another port');
+      }
+    );
+  }
+  const matching = provider([server(101, 'synthetic-token', [3101])], (_server, _port, method) =>
+    Promise.resolve(
+      method === 'GetUserStatus'
+        ? statusWithFallback
+        : {
+            email: 'FIRST@example.com',
+            groups: [group('models', 'Models', [bucket('session', '5h', 0.91)])]
+          }
+    )
+  );
+  assert.equal(windowsOf(await matching.fetch(emailAccount('first@example.com')))[0]?.remainingPercent, 91);
+});
+
 test('discovery fails closed when any server cannot be identified', async () => {
   const adapter = provider([server(101, 'tok1', [3101]), server(202, 'tok2', [3202])], target =>
     target.pid === 101 ? Promise.resolve(status('user1@company.com')) : Promise.reject(new Error('connection_refused'))
   );
-  await assert.rejects(adapter.discover(), { code: 'local_service_unavailable' });
+  assert.deepEqual(await adapter.discover(), { kind: 'unknown', accounts: [] });
 });
 
 test('windows are not merged while any server lacks a verified identity', async () => {

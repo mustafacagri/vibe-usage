@@ -102,16 +102,45 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
       - name: Check that the tag names the package version
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: packages
           merge-multiple: true
-      - name: Create the release
+      - name: Create or resume a draft release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" packages/* --verify-tag --title "Vibe Usage $GITHUB_REF_NAME" --generate-notes
+        shell: bash
+        run: |
+          # The by-tag endpoint hides drafts, so a draft would look missing (and could never be
+          # resumed or verified). The release list includes them.
+          load_release() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name == env.GITHUB_REF_NAME)' > releases.jsonl
+            node -e "
+              const fs = require('node:fs');
+              const first = fs.readFileSync('releases.jsonl', 'utf8').split('\n').find(Boolean);
+              if (first) fs.writeFileSync('release-state.json', first);
+              console.log(first ? (JSON.parse(first).draft ? 'draft' : 'public') : 'missing');
+            "
+          }
+          state=$(load_release)
+          if [ "$state" = public ]; then
+            node scripts/verify-release.ts release-state.json packages
+            echo "The verified release is already public; leaving its assets unchanged."
+            exit 0
+          fi
+          if [ "$state" = missing ]; then
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Vibe Usage $GITHUB_REF_NAME" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" packages/* --clobber
+          state=$(load_release)
+          test "$state" = draft
+          node scripts/verify-release.ts release-state.json packages
+          gh release edit "$GITHUB_REF_NAME" --draft=false
 
   # A pushed version tag also publishes the CLI to npm through trusted publishing: npm accepts this
   # workflow's OIDC identity (set up in the package's settings on npmjs.com), so no token is stored,
@@ -140,5 +169,7 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
-      # prepublishOnly builds the package first.
-      - run: npm publish
+      - run: npm run build
+      # An existing version is accepted only if its immutable tarball matches this build.
+      # The desktop release does not wait for this job: a missing npm binding must not block updates.
+      - run: node scripts/publish-cli.ts

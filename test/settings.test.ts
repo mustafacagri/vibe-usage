@@ -111,7 +111,7 @@ test('atomic round trip persists only public settings', async t => {
   };
   await saveSettings(file, settings);
   assert.deepEqual(await loadSettings(file), settings);
-  assert.deepEqual(await fs.readdir(dir), ['settings.json']);
+  assert.deepEqual((await fs.readdir(dir)).sort(), ['settings.json', 'settings.json.lock.sqlite']);
   await assert.rejects(saveSettings(file, { ...settings, token: 'secret' }), /unknown_setting/);
   await fs.writeFile(file, JSON.stringify({ ...base, fallbackOrder: ['cursor'] }));
   await assert.rejects(loadSettings(file), /unknown_setting/);

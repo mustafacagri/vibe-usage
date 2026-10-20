@@ -81,6 +81,7 @@ test('only a good reading is kept, without what was carried over or forecast', a
     status: 'ok',
     fetchedAt: new Date(NOW).toISOString(),
     signedInAs: 'me@example.com',
+    email: 'private-account@example.com',
     windows: [
       quotaWindow({ id: 'five_hour', remainingPercent: 56, usedPercent: 44, exhaustsAt: new Date(NOW).toISOString() }),
       quotaWindow({ id: 'seven_day', remainingPercent: 34, usedPercent: 66, stale: true })
@@ -98,6 +99,8 @@ test('only a good reading is kept, without what was carried over or forecast', a
   await saveMeasurements(file, new Map([['claude:a', kept]]));
   const text = await fs.readFile(file, 'utf8');
   assert.ok(!text.includes('me@example.com'), 'no email on disk');
+  assert.ok(!text.includes('private-account@example.com'), 'source binding adds no raw account email to disk');
+  assert.match(kept.sourceKey ?? '', /^[a-f0-9]{64}$/);
   assert.deepEqual(
     (await loadMeasurements(file, NOW)).get('claude:a')?.windows.map(w => w.remainingPercent),
     [56]
@@ -140,4 +143,24 @@ test('after a restart the last good reading shows as stale until a fresh one, an
   await fs.writeFile(settingsPath, JSON.stringify(moved));
   const otherFolder = await createService({ settingsPath, measurementsPath, providers: [claude], clock: () => now });
   assert.equal(first(first(otherFolder.snapshot().providers).accounts).status, 'pending', 'another folder is another account');
+});
+
+test('a legacy cached reading without source identity is not restored into an account', async t => {
+  const dir = await tempDir(t, 'vibe-measurements-unbound-');
+  const settingsPath = path.join(dir, 'settings.json');
+  const measurementsPath = path.join(dir, 'measurements.json');
+  await fs.writeFile(settingsPath, JSON.stringify({ pinned: false, intervalSeconds: 120, accounts: [account({ origin: 'user' })] }));
+  await fs.writeFile(
+    measurementsPath,
+    JSON.stringify({
+      version: 1,
+      accounts: {
+        'claude:a': { configDir: null, fetchedAt: new Date(NOW).toISOString(), windows: [{ id: 'five', remainingPercent: 91 }] }
+      }
+    })
+  );
+  const provider: ProviderAdapter = { id: 'claude', discover: () => Promise.resolve([]), fetch: () => Promise.resolve({ windows: [] }) };
+  const service = await createService({ settingsPath, measurementsPath, providers: [provider], clock: () => NOW });
+  assert.deepEqual(first(first(service.snapshot().providers).accounts).windows, []);
+  assert.equal(first(first(service.snapshot().providers).accounts).status, 'pending');
 });

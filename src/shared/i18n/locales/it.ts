@@ -117,7 +117,8 @@ export const it: Messages = {
   restoreAccountsBtn: 'Ripristina account ({n})',
   settingsHelp: 'Il primo accesso viene eseguito in un profilo separato. La priorità 1 gestisce l’avvio intelligente.',
   confirmRemoveAccount: 'Rimuovere l\'account "{label}" dal widget?',
-  handoverDesc: "Compila log di sessione, stato git e file modificati verso l'IA selezionata.",
+  handoverDesc:
+    'Controlla conversazione, riferimenti ai file e ramo/HEAD Git prima della condivisione. L’albero di lavoro non viene analizzato.',
   sourceProvider: 'Provider sorgente',
   autoDetectSession: 'Tutti gli strumenti',
   targetProvider: 'Provider di destinazione',
@@ -241,6 +242,11 @@ export const it: Messages = {
   error_invalid_path: 'Il percorso della cartella non è valido.',
   error_invalid_settings: 'Queste impostazioni non sono valide.',
   error_session_not_found: 'Sessione selezionata non trovata.',
+  error_handover_file_tracked: 'Git tiene già traccia di VIBE_HANDOVER.md. Rimuovi il file dall’indice prima del trasferimento.',
+  error_handover_exclusion_failed:
+    'Non è stato possibile escludere da Git il file di trasferimento. Controlla i permessi del repository e riprova.',
+  error_handover_sensitive_context:
+    'La conversazione contiene dati sensibili che non è stato possibile oscurare in modo sicuro. Esaminali e rimuovili prima del trasferimento.',
   error_suggestion_expired: 'Questo suggerimento non è più disponibile.',
   error_session_newer_elsewhere:
     "La sessione è proseguita nell'altro account dopo questa copia, quindi non è stata riportata sopra quella più recente.",

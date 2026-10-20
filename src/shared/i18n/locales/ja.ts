@@ -116,7 +116,7 @@ export const ja: Messages = {
   restoreAccountsBtn: '削除したアカウントを復元 ({n})',
   settingsHelp: '各アカウントの初期ログインは個別プロファイルで行われます。第1優先ツールがスマート起動を制御します。',
   confirmRemoveAccount: 'アカウント「{label}」をウィジェットから削除しますか？',
-  handoverDesc: 'セッションログ、Git状態、変更ファイルをまとめて移行先AIへ引き継ぎます。',
+  handoverDesc: '共有前に最近の会話、ファイル参照、Git のブランチ/HEAD を確認します。作業ツリーは走査しません。',
   sourceProvider: '引き継ぎ元',
   autoDetectSession: 'すべてのツール',
   targetProvider: '引き継ぎ先',
@@ -234,6 +234,9 @@ export const ja: Messages = {
   error_invalid_path: 'フォルダーのパスが無効です。',
   error_invalid_settings: 'この設定は無効です。',
   error_session_not_found: '選択したセッションが見つかりません。',
+  error_handover_file_tracked: 'VIBE_HANDOVER.md はすでに Git で追跡されています。引き継ぐ前にインデックスから削除してください。',
+  error_handover_exclusion_failed: '引き継ぎファイルを Git の対象外にできませんでした。リポジトリの権限を確認して再試行してください。',
+  error_handover_sensitive_context: '会話に安全に伏せられない機密情報が含まれています。引き継ぐ前に確認して削除してください。',
   error_suggestion_expired: 'この提案はもう利用できません。',
   error_session_newer_elsewhere:
     'このコピーの後、セッションはもう一方のアカウントで続いたため、新しい方を上書きして戻すことはしませんでした。',

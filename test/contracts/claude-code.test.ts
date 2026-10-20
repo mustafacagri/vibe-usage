@@ -7,7 +7,6 @@
 // (`npm run probe:claude`) checks the live install the same way.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { CLAUDE_SESSION_STATUSES } from '../../src/core/claude-processes.ts';
@@ -338,63 +337,39 @@ const walk = async (d: string): Promise<string[]> =>
     )
   ).flat();
 
-// What the state files of this machine's profiles say about their accounts, and the user's
-// name: none of it may appear in a fixture. Where the files are not there, only the fixed
-// checks run. Names, addresses and uuids are taken; a role or a plan name is a word any text
-// may hold.
-async function machineIdentifiers(): Promise<RegExp[]> {
-  const identifiers = new Set<string>();
-  // A CI runner's account belongs to no person (GitHub's is "runner", a word any text may
-  // hold), and nothing written there is committed.
-  if (!process.env.CI)
-    try {
-      identifiers.add(os.userInfo().username);
-    } catch {
-      // Unknown user: nothing to add.
-    }
-  const home = os.homedir();
-  for (const file of [
-    path.join(home, '.claude.json'),
-    ...(await fs.readdir(home)).filter(n => /^\.claude-.+/.test(n)).map(n => path.join(home, n, '.claude.json'))
-  ]) {
-    const state = await fs.readFile(file, 'utf8').then(JSON.parse as (text: string) => unknown, () => null);
-    const account = (state as { oauthAccount?: Record<string, unknown> } | null)?.oauthAccount ?? {};
-    for (const [key, value] of Object.entries(account))
-      if (typeof value === 'string' && value.length >= 4 && /name|email|uuid|id$/i.test(key)) identifiers.add(value);
-  }
-  // An identifier counts as a whole word, in any case: an organization's short name is one.
-  return [...identifiers].map(id => new RegExp(`(?<![\\p{L}\\p{N}])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu'));
-}
-
-const assertNoIdentifiers = (text: string, identifiers: readonly RegExp[], rel: string): void => {
-  // Paths are JSON-escaped, so a backslash may be doubled.
-  assert.doesNotMatch(text, /sk-ant-|@gmail|[\\/]+Users[\\/]+(?![\\/]|me\b)/, rel);
-  // A token runs long without a path separator; a transcript's key in mtimes.json does not.
+// A capture is checked against fixed privacy rules, never the runner's home directory or
+// signed-in accounts. Live-install inspection belongs to the opt-in probe, not npm test.
+const assertNoIdentifiers = (text: string, rel: string): void => {
+  // Paths may be JSON-escaped. Only the corpus's synthetic home name is allowed.
+  assert.doesNotMatch(text, /sk-ant-|[\\/]+(?:Users|home)[\\/]+(?![\\/]|me\b)/, rel);
   assert.doesNotMatch(text, /[A-Za-z0-9+_-]{80,}/, `${rel}: a token-sized string`);
-  for (const id of identifiers) assert.doesNotMatch(text, id, `${rel}: holds an identifier of this machine's account`);
+  assert.doesNotMatch(text, /"(?:accessToken|refreshToken)"\s*:\s*"(?!string")[^"]+"/, `${rel}: a credential value`);
+  for (const address of text.matchAll(/[A-Z0-9._%+-]+@([A-Z0-9.-]+\.[A-Z]{2,})/gi))
+    assert.match(address[1] ?? '', /^(?:example\.(?:com|org|net|test)|[^.]+\.example)$/i, `${rel}: a non-fixture email`);
 };
 
-// Everything under test/ and scripts/ is hand-written (tests, timelines and their generators,
-// probes), so prose and long strings are expected there; the identifiers are not, anywhere.
-test('tests, timelines and scripts name nothing of this machine', async () => {
-  const identifiers = await machineIdentifiers();
-  const roots = [path.resolve(import.meta.dirname, '..'), path.resolve(import.meta.dirname, '..', '..', 'scripts')];
-  for (const root of roots)
-    for (const file of await walk(root)) {
-      const text = await fs.readFile(file, 'utf8');
-      const rel = path.relative(root, file);
-      // Tests make up addresses and keys (the redaction tests hold a fake one); the user's own
-      // address is among the identifiers.
-      for (const id of identifiers) assert.doesNotMatch(text, id, `${rel}: holds an identifier of this machine's account`);
-    }
+test('corpus privacy checks reject synthetic personal data without reading local credentials', () => {
+  for (const value of [
+    '/home/synthetic-person/project',
+    String.raw`C:\Users\synthetic-person\project`,
+    'person@private.invalid',
+    JSON.stringify({ accessToken: 'fake-token-value' }),
+    JSON.stringify({ refreshToken: 'fake-refresh-value' }),
+    'z'.repeat(81)
+  ])
+    assert.throws(() => {
+      assertNoIdentifiers(value, 'synthetic capture');
+    });
+  assertNoIdentifiers('/home/me/project person@example.test "accessToken": "string"', 'sanitized capture');
+  // Ordinary identifiers such as a root variable must not depend on the OS username.
+  assertNoIdentifiers('const root = "fixture";', 'source');
 });
 
 test('corpus: the capture holds nothing personal: no identifiers, no prose', async () => {
-  const identifiers = await machineIdentifiers();
   for (const file of await walk(CORPUS)) {
     const rel = path.relative(CORPUS, file);
     const text = await fs.readFile(file, 'utf8');
-    assertNoIdentifiers(text, identifiers, rel);
+    assertNoIdentifiers(text, rel);
     const values = file.endsWith('.jsonl')
       ? text
           .split('\n')

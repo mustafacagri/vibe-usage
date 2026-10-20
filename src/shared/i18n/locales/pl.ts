@@ -122,7 +122,7 @@ export const pl: Messages = {
   restoreAccountsBtn: 'Przywróć konta ({n})',
   settingsHelp: 'Pierwsze logowanie odbywa się w osobnym profilu. Priorytet 1 zarządza inteligentnym startem.',
   confirmRemoveAccount: 'Czy na pewno chcesz usunąć konto "{label}"?',
-  handoverDesc: 'Przekazuje logi, stan git i pliki do wybranego narzędzia AI.',
+  handoverDesc: 'Sprawdź rozmowę, odwołania do plików i gałąź/HEAD Git przed przekazaniem. Drzewo robocze nie jest skanowane.',
   sourceProvider: 'Dostawca źródłowy',
   autoDetectSession: 'Wszystkie narzędzia',
   targetProvider: 'Dostawca docelowy',
@@ -244,6 +244,10 @@ export const pl: Messages = {
   error_invalid_path: 'Ścieżka folderu jest nieprawidłowa.',
   error_invalid_settings: 'Te ustawienia są nieprawidłowe.',
   error_session_not_found: 'Nie znaleziono wybranej sesji.',
+  error_handover_file_tracked: 'Git już śledzi VIBE_HANDOVER.md. Przed przekazaniem usuń plik z indeksu.',
+  error_handover_exclusion_failed: 'Nie udało się wykluczyć pliku przekazania z Git. Sprawdź uprawnienia repozytorium i spróbuj ponownie.',
+  error_handover_sensitive_context:
+    'Rozmowa zawiera poufne dane, których nie udało się bezpiecznie ukryć. Przejrzyj je i usuń przed przekazaniem.',
   error_suggestion_expired: 'Ta propozycja jest już nieaktualna.',
   error_session_newer_elsewhere: 'Po wykonaniu tej kopii sesja była kontynuowana na drugim koncie, więc nie nadpisano nowszej wersji.',
   error_session_still_running:

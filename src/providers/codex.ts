@@ -15,11 +15,19 @@ import {
   jwtClaims,
   MAX_RESPONSE_BYTES,
   readCredentialFile,
+  remainingTimeout,
   type BinaryLocation,
   type Clock
 } from './common.ts';
 import { defaultProfileDir, isRegularFile, profileAccountId, profileFolders, profileLabel } from './profiles.ts';
-import type { DiscoveredAccount, FetchResult, ParsedQuota, ProviderAdapter } from './types.ts';
+import {
+  type Discovery,
+  type DiscoveredAccount,
+  type FetchResult,
+  type ParsedQuota,
+  type ProviderAdapter,
+  type RefreshContext
+} from './types.ts';
 
 export const DEFAULT_ACCOUNT_ID = accountId('codex', DEFAULT_ACCOUNT_KEY);
 const AUTH_FILE = 'auth.json';
@@ -39,8 +47,10 @@ export function parseCodexRateLimits(response: unknown): ParsedQuota {
   const buckets = isObject(response.rateLimitsByLimitId) ? response.rateLimitsByLimitId : { [DEFAULT_BUCKET]: response.rateLimits };
   const windows: QuotaWindow[] = [];
   for (const [bucketId, value] of Object.entries(buckets)) {
+    if (value !== null && !isObject(value)) throw new ProviderError('invalid_response');
     for (const slot of WINDOW_SLOTS) {
       const raw = isObject(value) ? value[slot] : undefined;
+      if (raw !== undefined && raw !== null && !isObject(raw)) throw new ProviderError('invalid_response');
       if (!isObject(raw)) continue;
       windows.push(
         normalizeWindow({
@@ -53,7 +63,7 @@ export function parseCodexRateLimits(response: unknown): ParsedQuota {
       );
     }
   }
-  return windows.length ? { windows } : { windows, status: 'no_limits_reported' };
+  return windows.length ? { windows, completeness: 'complete' } : { windows, status: 'no_limits_reported', completeness: 'complete' };
 }
 
 interface RpcServer {
@@ -72,7 +82,8 @@ type ServerProcess = Pick<ChildProcess, 'on' | 'once' | 'kill' | 'exitCode' | 's
 export type SpawnAppServer = (binary: string, args: readonly string[], options: SpawnOptions) => ServerProcess;
 const spawnAppServer: SpawnAppServer = (binary, args, options) => spawn(binary, args, { ...options, stdio: ['pipe', 'pipe', 'ignore'] });
 
-function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAppServer): RpcServer {
+function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAppServer, context?: RefreshContext): RpcServer {
+  remainingTimeout(RPC_TIMEOUT_MS, context);
   const child = spawnProcess(binary, ['app-server', '--listen', 'stdio://'], {
     shell: false,
     windowsHide: true,
@@ -84,9 +95,9 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
   let closed = false;
   let serial = 0;
 
-  function rejectAll(): void {
+  function rejectAll(error = new ProviderError('server_closed')): void {
     closed = true;
-    for (const item of pending.values()) item.reject(new ProviderError('server_closed'));
+    for (const item of pending.values()) item.reject(error);
     pending.clear();
   }
 
@@ -105,8 +116,18 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
     else item.resolve(packet.result);
   }
 
-  child.on('error', rejectAll);
-  child.on('close', rejectAll);
+  child.on('error', () => {
+    rejectAll();
+  });
+  child.on('close', () => {
+    rejectAll();
+  });
+  const abort = (): void => {
+    rejectAll(new ProviderError('request_timeout'));
+    child.kill('SIGKILL');
+  };
+  context?.signal.addEventListener('abort', abort, { once: true });
+  if (context?.signal.aborted) abort();
   // Writing to a server that already exited fails with EPIPE; `close` reports that instead.
   child.stdin.on('error', () => undefined);
   child.stdout.on('data', (chunk: Buffer) => {
@@ -134,10 +155,13 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
           return;
         }
         const id = ++serial;
-        const timeout = setTimeout(() => {
-          pending.delete(id);
-          reject(new ProviderError('rpc_timeout'));
-        }, RPC_TIMEOUT_MS);
+        const timeout = setTimeout(
+          () => {
+            pending.delete(id);
+            reject(new ProviderError('rpc_timeout'));
+          },
+          remainingTimeout(RPC_TIMEOUT_MS, context)
+        );
         pending.set(id, {
           resolve: value => {
             clearTimeout(timeout);
@@ -151,6 +175,7 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
         send({ id, method, ...(params ? { params } : {}) });
       }),
     notify: method => {
+      remainingTimeout(RPC_TIMEOUT_MS, context);
       send({ method });
     },
     async stop() {
@@ -158,20 +183,29 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
       child.kill();
       if (child.exitCode === null && child.signalCode === null) {
         await new Promise<void>(resolve => {
-          const timer = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+          const timer = setTimeout(() => {
+            child.kill('SIGKILL');
+            resolve();
+          }, SHUTDOWN_GRACE_MS);
           child.once('close', () => {
             clearTimeout(timer);
             resolve();
           });
         });
       }
+      context?.signal.removeEventListener('abort', abort);
       rejectAll();
     }
   };
 }
 
-async function probeAccount(binary: string, configDir: string, spawnProcess: SpawnAppServer): Promise<FetchResult> {
-  const server = startAppServer(binary, configDir, spawnProcess);
+async function probeAccount(
+  binary: string,
+  configDir: string,
+  spawnProcess: SpawnAppServer,
+  context?: RefreshContext
+): Promise<FetchResult> {
+  const server = startAppServer(binary, configDir, spawnProcess, context);
   try {
     await server.request('initialize', {
       // The app server takes a client name as an identifier with underscores.
@@ -192,8 +226,8 @@ async function probeAccount(binary: string, configDir: string, spawnProcess: Spa
 
 // The signed-in e-mail from the local auth file, failing fast on a locally expired token. A
 // missing auth file is left to the app server, which reports the signed-out state itself.
-async function readLocalSignIn(configDir: string, clock?: Clock): Promise<string | undefined> {
-  const auth = await readCredentialFile(path.join(configDir, AUTH_FILE)).catch((error: unknown) => {
+async function readLocalSignIn(configDir: string, clock?: Clock, context?: RefreshContext): Promise<string | undefined> {
+  const auth = await readCredentialFile(path.join(configDir, AUTH_FILE), context).catch((error: unknown) => {
     if (error instanceof ProviderError && error.code === 'auth_missing') return null;
     throw error;
   });
@@ -228,13 +262,22 @@ export const isSignedInCodexHome = (root: string): Promise<boolean> => isRegular
 
 // The default folder always counts: its app server reports a signed-out state itself. Other
 // profile folders count once they hold a sign-in.
-async function discoverCodexAccounts(home: string, env: Environment): Promise<DiscoveredAccount[]> {
+// A profile folder that cannot be inspected is unknown, not absent, and does not hide the others.
+async function discoverCodexAccounts(home: string, env: Environment): Promise<Discovery> {
   const defaultDir = path.resolve(codexDefaultDir(home, env));
   const others: DiscoveredAccount[] = [];
+  let complete = true;
   for (const root of await profileFolders('codex', home)) {
-    if (path.resolve(root) !== defaultDir && (await isSignedInCodexHome(root))) others.push(codexProfile(root, home, env));
+    try {
+      if (path.resolve(root) !== defaultDir && (await isSignedInCodexHome(root))) others.push(codexProfile(root, home, env));
+    } catch {
+      complete = false;
+    }
   }
-  return [codexProfile(defaultDir, home, env), ...others.sort((a, b) => a.id.localeCompare(b.id))];
+  return {
+    kind: complete ? 'complete' : 'unknown',
+    accounts: [codexProfile(defaultDir, home, env), ...others.sort((a, b) => a.id.localeCompare(b.id))]
+  };
 }
 
 export interface CodexProviderOptions extends BinaryLocation {
@@ -249,11 +292,11 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
   return {
     id: 'codex',
     fetchTimeoutMs: PROBE_REQUESTS * RPC_TIMEOUT_MS + SHUTDOWN_GRACE_MS,
-    discover: () => discoverCodexAccounts(home, env),
-    async fetch(account) {
+    discover: () => discoverCodexAccounts(home, env).catch((): Discovery => ({ kind: 'unknown', accounts: [] })),
+    async fetch(account, context) {
       const configDir = account.configDir ?? defaultConfigDir;
-      const signedInAs = await readLocalSignIn(configDir, options.clock);
-      const result = await probeAccount(await findBinary('codex', options), configDir, options.spawnProcess ?? spawnAppServer);
+      const signedInAs = await readLocalSignIn(configDir, options.clock, context);
+      const result = await probeAccount(await findBinary('codex', options), configDir, options.spawnProcess ?? spawnAppServer, context);
       return signedInAs ? { ...result, signedInAs } : result;
     }
   };

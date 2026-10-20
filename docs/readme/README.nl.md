@@ -77,9 +77,7 @@ gokken.
 
 ### Overdragen
 
-Kies een sessie uit Claude Code, Codex, Cursor Agent of Antigravity. Vibe Usage vat die samen in `VIBE_HANDOVER.md` in
-de projectmap: het doel, de laatste beurten, de aangeraakte bestanden en de git-status. Daarna start het de doeltool met
-de opdracht die samenvatting te lezen. Alleen sessies die in de gekozen map zijn gestart, worden getoond.
+Kies een sessie uit Claude Code, Codex, Cursor Agent of Antigravity. `VIBE_HANDOVER.md` bevat doel, laatste verzoek, recent gesprek, bestandsverwijzingen en Git-branch/HEAD-metadata; de werkboom wordt niet gescand. De voorvertoning legt de fysieke bron, het account en de versie vast. Een gewijzigde bron vraagt een nieuwe voorvertoning. Sessies die naar een worktree zijn verplaatst staan bij het juiste project.
 
 </td>
 <td valign="top">
@@ -148,22 +146,17 @@ modelcache van Codex en `cursor-agent --list-models` (24 uur gecachet).
 
 ## Privacy en veiligheid
 
-- **Alleen lezen.** Het gebruikt de bestaande sessies. Het vraagt nooit om een wachtwoord, bewaart nooit
-  een token, meldt je nooit af en raakt lopend werk nooit aan.
-- **Verlopen aanmelding.** Als werk vanzelf tussen accounts mag verhuizen, vernieuwt Claude Code zelf een verlopen aanmelding: met één minimaal Haiku-verzoek (één woord, geen tools, niets opgeslagen), hooguit eens per 30 minuten per account. De app leest of gebruikt het vernieuwingstoken nooit.
-- **Twee endpoints.** Quotumverzoeken gaan alleen naar de gebruiksendpoints van Anthropic en Cursor, met TLS-verificatie
-  aan. Codex en Antigravity worden lokaal gelezen.
-- **Niets geheims op schijf.** Instellingen staan in `%APPDATA%\Vibe Usage\settings.json` (Windows) of
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). Quota blijven alleen in het geheugen.
-- **Een afgeschermde app.** Het venster draait in een sandbox met een strikte CSP, kan niet navigeren of andere vensters
-  openen en antwoordt alleen zijn eigen pagina. Electron-fuses schakelen `runAsNode`, `NODE_OPTIONS` en de inspector uit
-  en dwingen ASAR-integriteit af.
+Bestaande aanmeldgegevens worden in het geheugen gelezen; de documenten kunnen toegangs- en vernieuwingstokens bevatten. De app controleert of er een vernieuwingstoken is, maar slaat het niet op in eigen gegevens. Claude Code voert de vernieuwing uit.
+
+Instellingen, accountlabels, paden, quotumgeschiedenis en laatste metingen blijven op de lokale schijf. Doorgaan met een ander account kopieert het volledige gesprek. `VIBE_HANDOVER.md` bevat opgeschoonde gesprekscontext; niet elk geheim formaat kan worden herkend. Bekijk de voorvertoning vóór de overdracht. Een bestand dat Git al volgt of een mislukte Git-uitsluiting stopt de overdracht. Cursor behoudt zijn eigen vertrouwensvragen.
+
+Quotumverzoeken gaan naar de aanbieder en versiecontroles naar GitHub. Downloaden en installeren zijn afzonderlijke gebruikersacties. Zie [Privacy en lokale gegevens](../PRIVACY.md).
 
 ## Installatie
 
 ### Windows
 
-Download `Vibe-Usage-<versie>-win-setup.exe` uit de [nieuwste release](https://github.com/mustafacagri/vibe-usage/releases/latest) en voer het uit: het installeert alleen voor jouw gebruiker, zonder beheerdersrechten. Of neem de draagbare `Vibe-Usage-<versie>-win-x64.zip` (of `-arm64`), pak hem uit en start `Vibe Usage.exe`. De geïnstalleerde app houdt zichzelf bij: een nieuwe versie wordt op de achtergrond gedownload en met **Herstarten om bij te werken** geïnstalleerd. De draagbare kopie linkt naar elke nieuwe versie. De app staat in het systeemvak.
+Download `Vibe-Usage-<versie>-win-setup.exe` uit de [nieuwste release](https://github.com/mustafacagri/vibe-usage/releases/latest) en voer het uit: het installeert alleen voor jouw gebruiker, zonder beheerdersrechten. Of neem de draagbare `Vibe-Usage-<versie>-win-x64.zip` (of `-arm64`), pak hem uit en start `Vibe Usage.exe`. Een ondersteunde ondertekende installatie downloadt een update na een klik op **Downloaden** en installeert die met **Herstarten om bij te werken**. De draagbare kopie linkt naar elke nieuwe versie. De app staat in het systeemvak.
 
 De app is niet ondertekend, dus bij de eerste start kan Windows SmartScreen **Uw pc is beveiligd door Windows** tonen. Klik op **Meer informatie** en daarna op **Toch uitvoeren**.
 

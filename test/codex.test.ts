@@ -86,3 +86,34 @@ test('a locally expired token fails before the app server is started', async t =
   await fs.writeFile(path.join(dir, 'auth.json'), '{ broken');
   await assert.rejects(provider.fetch(account({ id: 'codex:default', providerId: 'codex', configDir: dir })), /auth_invalid/);
 });
+
+test('aborting a quota refresh terminates the owned app-server process and settles its pending RPC', async t => {
+  const dir = await tempDir(t, 'vibe-codex-cancel-');
+  let started: () => void = () => undefined;
+  const began = new Promise<void>(resolve => {
+    started = resolve;
+  });
+  let child: ReturnType<typeof spawn> | undefined;
+  const provider = createCodexProvider({
+    home: dir,
+    env: { VIBE_CODEX_BINARY: process.execPath },
+    spawnProcess: (_binary, _args, options) => {
+      const owned = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        ...options,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+      child = owned;
+      owned.once('spawn', started);
+      return owned;
+    }
+  });
+  const controller = new AbortController();
+  const result = provider.fetch(account({ providerId: 'codex', configDir: dir }), {
+    signal: controller.signal,
+    deadline: Date.now() + 5000
+  });
+  await began;
+  controller.abort();
+  await assert.rejects(result, /request_timeout/);
+  assert.ok(child && (child.exitCode !== null || child.signalCode !== null), 'the child is gone before the adapter finishes');
+});

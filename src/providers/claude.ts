@@ -1,7 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { ProviderError } from '../core/errors.ts';
-import { asArray, isFile, isObject, readJson, samePath, type JsonObject } from '../core/files.ts';
+import { asArray, isObject, readJson, samePath, type JsonObject } from '../core/files.ts';
 import { normalizeWindow, safeEmail, safePlan, safeText } from '../core/model.ts';
 import { accountId, DEFAULT_ACCOUNT_KEY, durationLabel, MINUTES, PROFILE_DIRS, type PeriodLabel } from '../shared/catalog.ts';
 import type { Account, QuotaWindow } from '../shared/types.ts';
@@ -11,13 +11,14 @@ import {
   isExpired,
   QUOTA_ENDPOINTS,
   readCredentialFile,
+  remainingTimeout,
   USER_AGENT,
   type Clock,
   type GetJson,
   type RunProcess
 } from './common.ts';
 import { defaultProfileDir, isRegularFile, profileAccountId, profileFolders, profileLabel, shortHash } from './profiles.ts';
-import type { DiscoveredAccount, ParsedQuota, ProviderAdapter } from './types.ts';
+import { type Discovery, type DiscoveredAccount, type ParsedQuota, type ProviderAdapter, type RefreshContext } from './types.ts';
 
 // Required by the OAuth usage endpoint.
 const OAUTH_BETA = 'oauth-2025-04-20';
@@ -49,6 +50,7 @@ function limitScope(record: JsonObject): { scope: string; modelId: unknown } {
 export function parseClaudeUsage(usage: unknown): ParsedQuota {
   if (!isObject(usage)) throw new ProviderError('invalid_response');
   const windows: QuotaWindow[] = [];
+  const removedWindowIds: string[] = [];
   const limits = asArray(usage.limits).filter(isObject);
   const listed = new Set(limits.map(record => CANONICAL_LIMIT_KINDS[safeText(record.kind)]).filter(Boolean));
   for (const [id, spec] of Object.entries(USAGE_WINDOWS)) {
@@ -57,6 +59,7 @@ export function parseClaudeUsage(usage: unknown): ParsedQuota {
     // Reported as null and absent from the limits too: the plan has no such limit (no weekly one,
     // say), which is not a limit of unknown size.
     const none = value === null && limits.length > 0 && !listed.has(id);
+    if (none || (!spec.required && value === null)) removedWindowIds.push(id);
     if ((!spec.required && !reported) || none) continue;
     windows.push(
       normalizeWindow({
@@ -88,7 +91,10 @@ export function parseClaudeUsage(usage: unknown): ParsedQuota {
     else if (canonical.usedPercent === null && window.usedPercent !== null) Object.assign(canonical, window);
     else if (typeof record.is_active === 'boolean') canonical.active = record.is_active;
   }
-  return { windows };
+  const complete =
+    (usage.limits === undefined || (Array.isArray(usage.limits) && usage.limits.every(isObject))) &&
+    Object.entries(USAGE_WINDOWS).every(([id, spec]) => !spec.required || isObject(usage[id]) || usage[id] === null);
+  return { windows, completeness: complete ? 'complete' : 'partial', removedWindowIds };
 }
 
 const SECONDARY_PROFILE_DIR = `${PROFILE_DIRS.claude}-secondary`;
@@ -152,23 +158,30 @@ export function claudeProfile(configDir: string, home: string): DiscoveredAccoun
 // A profile counts when it holds a signed-in credentials file. On macOS credentials live in
 // the Keychain, so a configured profile (settings.json present) counts as well.
 export async function isSignedInProfile(root: string, platform: NodeJS.Platform = process.platform): Promise<boolean> {
-  if (platform === 'darwin' && (await isFile(path.join(root, CLAUDE_FILES.settings)))) return true;
+  if (platform === 'darwin' && (await isRegularFile(path.join(root, CLAUDE_FILES.settings)))) return true;
   const file = path.join(root, CLAUDE_FILES.credentials);
   if (!(await isRegularFile(file))) return false;
-  return oauthCredentials(await readCredentialFile(file).catch(() => null)) !== null;
+  return oauthCredentials(await readCredentialFile(file)) !== null;
 }
 
 // Default first, then the secondary profile, then the rest by id.
 const PROFILE_RANK: Readonly<Record<string, number>> = { [DEFAULT_ACCOUNT_ID]: 0, [SECONDARY_ACCOUNT_ID]: 1 };
 const rank = (account: DiscoveredAccount): number => PROFILE_RANK[account.id] ?? 2;
 
-export async function discoverClaudeAccounts({
+// One profile that cannot be read (a half-written or locked credentials file) must not hide the
+// others, and must not count as absent either: the discovery is then reported as unknown.
+export async function discoverClaudeProfiles({
   home = os.homedir(),
   platform = process.platform
-}: { home?: string; platform?: NodeJS.Platform } = {}): Promise<DiscoveredAccount[]> {
+}: { home?: string; platform?: NodeJS.Platform } = {}): Promise<Discovery> {
   const accounts: DiscoveredAccount[] = [];
+  let complete = true;
   for (const root of await profileFolders('claude', home)) {
-    if (await isSignedInProfile(root, platform)) accounts.push(claudeProfile(root, home));
+    try {
+      if (await isSignedInProfile(root, platform)) accounts.push(claudeProfile(root, home));
+    } catch {
+      complete = false;
+    }
   }
   // The default profile always exists on macOS (its Keychain entry may hold the sign-in),
   // and is the fallback everywhere when nothing was found.
@@ -177,7 +190,11 @@ export async function discoverClaudeAccounts({
   accounts.sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id));
   const [first] = accounts;
   if (first && !accounts.some(a => a.primary)) first.primary = true;
-  return accounts;
+  return { kind: complete ? 'complete' : 'unknown', accounts };
+}
+
+export async function discoverClaudeAccounts(options: { home?: string; platform?: NodeJS.Platform } = {}): Promise<DiscoveredAccount[]> {
+  return (await discoverClaudeProfiles(options)).accounts;
 }
 
 export interface ClaudeProviderOptions {
@@ -186,10 +203,14 @@ export interface ClaudeProviderOptions {
   clock?: Clock;
   getJson?: GetJson;
   runProcess?: RunProcess;
-  readCredentials?: (account: Account) => Promise<unknown>;
+  readCredentials?: (account: Account, context?: RefreshContext) => Promise<unknown>;
 }
 
-export async function readClaudeCredentials(account: Account, options: ClaudeProviderOptions): Promise<JsonObject> {
+export async function readClaudeCredentials(
+  account: Account,
+  options: ClaudeProviderOptions,
+  context?: RefreshContext
+): Promise<JsonObject> {
   const { platform = process.platform, home = os.homedir() } = options;
   const configDir = account.configDir ?? defaultProfileDir('claude', home);
   if (platform === 'darwin') {
@@ -198,13 +219,14 @@ export async function readClaudeCredentials(account: Account, options: ClaudePro
       configDir,
       configDirExplicit,
       platform,
+      ...context,
       ...(options.runProcess ? { runProcess: options.runProcess } : {})
     }).catch(() => null);
     // Without a usable token in the Keychain, the credentials file is the documented fallback.
     if (stored && oauthCredentials(stored)) return stored;
   }
   try {
-    return await readCredentialFile(path.join(configDir, CLAUDE_FILES.credentials));
+    return await readCredentialFile(path.join(configDir, CLAUDE_FILES.credentials), context);
   } catch (error) {
     if (platform !== 'darwin' || !(error instanceof ProviderError) || error.code !== 'auth_missing') throw error;
     const isDefaultDir = samePath(configDir, defaultProfileDir('claude', home));
@@ -225,15 +247,20 @@ async function readSignedInEmail(account: Account, { home = os.homedir() }: Clau
 
 export function createClaudeProvider(options: ClaudeProviderOptions = {}): ProviderAdapter {
   const getJson = options.getJson ?? defaultGetJson;
-  const readCredentials = options.readCredentials ?? ((account: Account) => readClaudeCredentials(account, options));
+  const readCredentials =
+    options.readCredentials ?? ((account: Account, context?: RefreshContext) => readClaudeCredentials(account, options, context));
   return {
     id: 'claude',
-    discover: () => discoverClaudeAccounts(options),
-    async fetch(account) {
-      const oauth = oauthCredentials(await readCredentials(account));
+    // Keychain (8s), then HTTPS (15s), plus bounded local work, share this budget.
+    fetchTimeoutMs: 25000,
+    discover: () => discoverClaudeProfiles(options).catch((): Discovery => ({ kind: 'unknown', accounts: [] })),
+    async fetch(account, context) {
+      remainingTimeout(25000, context);
+      const oauth = oauthCredentials(await readCredentials(account, context));
       if (!oauth) throw new ProviderError('auth_missing');
       if (isExpired(oauth.expiresAt, options.clock)) throw new ProviderError('auth_expired');
       const usage = await getJson(QUOTA_ENDPOINTS.claude, {
+        ...context,
         headers: {
           Authorization: `Bearer ${oauth.accessToken}`,
           'anthropic-beta': OAUTH_BETA,
@@ -244,6 +271,7 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
       const result = parseClaudeUsage(usage);
       const plan = safePlan(oauth.subscriptionType);
       const signedInAs = await readSignedInEmail(account, options);
+      remainingTimeout(25000, context);
       return { ...result, ...(plan ? { plan } : {}), ...(signedInAs ? { signedInAs } : {}) };
     }
   };

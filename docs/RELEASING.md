@@ -11,9 +11,31 @@ no longer holds; fix the app before releasing.
 ## 1. Publish the packages
 
 1. Raise `version` in `package.json` and commit.
-2. Tag the commit `v<version>` and push the tag. The **Build desktop** workflow builds the Windows installer and
-   zips and the macOS dmg/zip with the update metadata (section 3), then publishes them as a GitHub release (it
-   checks that the tag matches the version).
+2. Tag the commit `v<version>` and push the tag. The **Build desktop** workflow builds and tests the Windows and macOS
+   packages with update metadata (signed when requested, see section 4). It uploads them to a draft GitHub release,
+   checks every asset's name, size and server-reported SHA-256 against the local build, and only then makes the release
+   public. In parallel, a separate job publishes the CLI tarball to npm and verifies the registry's exact version,
+   SHA-512 integrity and matching `latest` tag.
+
+The desktop release never waits for npm: a missing npm binding fails only the npm job. A draft release can be resumed;
+an already public release is verified against the artifacts and left unchanged. A full rebuild of signed binaries may
+produce different bytes, so it is not interchangeable with retrying publication of the same artifacts. The npm step
+accepts an existing immutable version only if its tarball integrity and `latest` tag match this build; different
+content requires a new version, never an overwrite. A network or authentication failure is not treated as a missing
+npm package.
+
+### npm trusted publisher prerequisite
+
+An owner of `vibe-usage-cli` must configure its [npm trusted publisher](https://docs.npmjs.com/trusted-publishers/):
+GitHub Actions, owner `mustafacagri`, repository `vibe-usage`, workflow filename `build.yml`. Keep the filename exact;
+if an npm environment is configured, the workflow job must use that same protected GitHub environment. The current
+workflow does not name an environment. Node 24 supplies an npm version supporting OIDC; provenance is also requested
+explicitly. No long-lived npm token is added to this repository.
+
+An E404/ENEEDAUTH publish failure requires checking package ownership and that binding; repeated tags or changing
+the package name do not repair the trust relationship. The workflow cannot create npm account settings or signing
+certificates. Verify the first configured publish and a signed upgrade on both operating systems before calling the
+release process validated.
 
 Packages are named `Vibe-Usage-<version>-<os>-<arch>.<ext>`, the installer `Vibe-Usage-<version>-win-setup.exe` (no
 spaces, so their download URLs are predictable). The app checks the latest release once a day (Settings → General) and

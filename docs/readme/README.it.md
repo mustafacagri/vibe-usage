@@ -77,10 +77,7 @@ indovinare.
 
 ### Trasferisci
 
-Scegli una sessione di Claude Code, Codex, Cursor Agent o Antigravity. Vibe Usage la riassume in `VIBE_HANDOVER.md`
-nella cartella del progetto: l'obiettivo, gli ultimi scambi, i file modificati e lo stato di git. Poi avvia lo
-strumento di destinazione con l'istruzione di leggere quel riepilogo. Sono elencate solo le sessioni avviate nella
-cartella scelta.
+Scegli una sessione Claude Code, Codex, Cursor Agent o Antigravity. `VIBE_HANDOVER.md` contiene obiettivo, ultima richiesta, conversazione recente, riferimenti ai file e metadati di ramo/HEAD Git; l’albero di lavoro non viene analizzato. L’anteprima fissa sorgente fisica, account e versione. Se la sorgente cambia serve una nuova anteprima. Le sessioni spostate in un worktree appaiono nel progetto corretto.
 
 </td>
 <td valign="top">
@@ -149,22 +146,17 @@ dei modelli di Codex e `cursor-agent --list-models` (in cache per 24 ore).
 
 ## Privacy e sicurezza
 
-- **Sola lettura.** Usa le sessioni già esistenti. Non chiede mai una password, non salva mai un token, non
-  ti disconnette mai e non tocca mai il lavoro in corso.
-- **Accesso scaduto.** Quando il lavoro può passare da solo da un account all'altro, è Claude Code stesso a rinnovare un accesso scaduto: con una richiesta minima a Haiku (una parola, nessuno strumento, niente salvato), al massimo ogni 30 minuti per account. L'app non legge né usa mai il token di aggiornamento.
-- **Due endpoint.** Le richieste di quota vanno solo agli endpoint di utilizzo di Anthropic e Cursor, con la verifica
-  TLS attiva. Codex e Antigravity vengono letti in locale.
-- **Niente di segreto su disco.** Le impostazioni sono in `%APPDATA%\Vibe Usage\settings.json` (Windows) o
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). Le quote restano solo in memoria.
-- **Un'app blindata.** La finestra gira in una sandbox con una CSP rigorosa, non può navigare né aprire altre finestre
-  e risponde solo alla propria pagina. I fuse di Electron disattivano `runAsNode`, `NODE_OPTIONS` e l'inspector e
-  impongono l'integrità ASAR.
+Le credenziali esistenti vengono lette in memoria; i documenti possono contenere token di accesso e aggiornamento. L’app verifica la presenza del token di aggiornamento, senza salvarlo nei propri dati. Il rinnovo viene eseguito da Claude Code.
+
+Impostazioni, etichette degli account, percorsi, cronologia delle quote e ultime misurazioni restano sul disco locale. Continuare su un altro account copia l’intera conversazione. `VIBE_HANDOVER.md` contiene contesto ripulito, ma non è possibile riconoscere ogni formato di segreto. Controlla l’anteprima prima del trasferimento. Un file già tracciato da Git o un’esclusione fallita bloccano il trasferimento. Cursor conserva le proprie richieste di fiducia.
+
+Le quote usano gli endpoint del fornitore e le versioni vengono controllate su GitHub. Download e installazione sono azioni separate dell’utente. Vedi [Privacy e dati locali](../PRIVACY.md).
 
 ## Installazione
 
 ### Windows
 
-Scarica `Vibe-Usage-<versione>-win-setup.exe` dall’[ultima versione](https://github.com/mustafacagri/vibe-usage/releases/latest) ed eseguilo: si installa solo per il tuo utente, senza diritti di amministratore. Oppure usa il portatile `Vibe-Usage-<versione>-win-x64.zip` (o `-arm64`), estrailo ed esegui `Vibe Usage.exe`. L’app installata si tiene aggiornata: la nuova versione si scarica in background e si installa con **Riavvia per aggiornare**. La copia portatile rimanda a ogni nuova versione. L’app vive nell’area di notifica.
+Scarica `Vibe-Usage-<versione>-win-setup.exe` dall’[ultima versione](https://github.com/mustafacagri/vibe-usage/releases/latest) ed eseguilo: si installa solo per il tuo utente, senza diritti di amministratore. Oppure usa il portatile `Vibe-Usage-<versione>-win-x64.zip` (o `-arm64`), estrailo ed esegui `Vibe Usage.exe`. Un’installazione firmata supportata scarica l’aggiornamento quando premi **Scarica** e lo installa con **Riavvia per aggiornare**. La copia portatile rimanda a ogni nuova versione. L’app vive nell’area di notifica.
 
 L'app non è firmata, quindi al primo avvio Windows SmartScreen può mostrare **PC protetto da Windows**. Fai clic su **Ulteriori informazioni** e poi su **Esegui comunque**.
 

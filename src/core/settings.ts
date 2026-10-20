@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +27,7 @@ import type { Account, ProjectPreference, QuietHours, Settings, SettingsNotice, 
 import { AppError, InvalidSettingsError, systemErrorCode } from './errors.ts';
 import { isObject, parseJson, pathKey, samePath, writeFileAtomic, type JsonObject } from './files.ts';
 import { hasControlChars, normalizeEmail } from './model.ts';
+import { withSettingsLock } from './settings-lock.ts';
 
 const SETTINGS_SCHEMA_VERSION = 1;
 const SETTINGS_FILE = 'settings.json';
@@ -401,6 +403,8 @@ export async function loadSettings(file: string): Promise<Settings | null> {
 export interface LoadedSettings {
   settings: Settings;
   notice?: SettingsNotice;
+  // Content revision, including the recovery copy. It is metadata, never a user setting.
+  revision: string;
 }
 
 // The settings to start with. A damaged or unreadable file falls back to the backup, else to
@@ -408,16 +412,47 @@ export interface LoadedSettings {
 // the evidence stays as it is.
 export async function loadSettingsWithRecovery(file: string): Promise<LoadedSettings> {
   const text = await readStored(file);
-  if (text === null) return { settings: defaultSettings() };
-  if (text !== UNREADABLE) {
-    if (isFutureDocument(attemptParse(text))) return { settings: defaultSettings(), notice: 'future' };
-    const settings = attemptValidate(text);
-    if (settings) return { settings };
-  }
   const backup = await readStored(backupPath(file));
-  if (typeof backup === 'string' && isFutureDocument(attemptParse(backup))) return { settings: defaultSettings(), notice: 'future' };
+  const revision = crypto
+    .createHash('sha256')
+    .update(JSON.stringify([text, backup].map(value => (value === UNREADABLE ? { unreadable: true } : value))))
+    .digest('hex');
+  if (text === null) return { settings: defaultSettings(), revision };
+  if (text !== UNREADABLE) {
+    if (isFutureDocument(attemptParse(text))) return { settings: defaultSettings(), notice: 'future', revision };
+    const settings = attemptValidate(text);
+    if (settings) return { settings, revision };
+  }
+  if (typeof backup === 'string' && isFutureDocument(attemptParse(backup)))
+    return { settings: defaultSettings(), notice: 'future', revision };
   const restored = typeof backup === 'string' ? attemptValidate(backup) : null;
-  return restored ? { settings: restored, notice: 'recovered' } : { settings: defaultSettings(), notice: 'unrecoverable' };
+  return restored
+    ? { settings: restored, notice: 'recovered', revision }
+    : { settings: defaultSettings(), notice: 'unrecoverable', revision };
+}
+
+export interface SettingsTransaction extends LoadedSettings {
+  save(input: unknown): Promise<LoadedSettings>;
+}
+
+// Every writer reloads under the same OS lock. Callers apply a narrow change to these
+// current settings, never replace them with a snapshot held by another process.
+export function transactSettings<T>(file: string, task: (transaction: SettingsTransaction) => Promise<T>): Promise<T> {
+  return withSettingsLock(file, async () => {
+    const loaded = await loadSettingsWithRecovery(file);
+    let revision = loaded.revision;
+    return task({
+      ...loaded,
+      async save(input) {
+        // Detect an older app/editor which did not participate in the locking protocol.
+        if ((await loadSettingsWithRecovery(file)).revision !== revision) throw new AppError('settings_locked');
+        await writeSettings(file, input);
+        const written = await loadSettingsWithRecovery(file);
+        revision = written.revision;
+        return written;
+      }
+    });
+  });
 }
 
 function attemptParse(text: string): unknown {
@@ -439,14 +474,31 @@ function attemptValidate(text: string): Settings | null {
 // Validates and writes atomically: a crash mid-write never leaves a truncated file. The
 // document it replaces becomes the backup when it was valid, or is kept aside when it was
 // not; a newer version's document is never replaced.
-export async function saveSettings(file: string, input: unknown): Promise<Settings> {
+async function writeSettings(file: string, input: unknown): Promise<Settings> {
   const settings = validateSettings(input);
   const previous = await readStored(file);
   if (typeof previous === 'string' && isFutureDocument(attemptParse(previous))) throw new AppError('settings_locked');
+  let damaged: string | undefined;
   if (typeof previous === 'string' && attemptValidate(previous)) await keepBackup(file, previous);
-  else if (previous !== null) await fsp.rename(file, `${file}${DAMAGED_SUFFIX}${new Date().toISOString().replace(/[:.]/g, '-')}`);
-  await writeFileAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+  else if (previous !== null) {
+    damaged = `${file}${DAMAGED_SUFFIX}${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    await fsp.rename(file, damaged);
+  }
+  try {
+    await writeFileAtomic(file, `${JSON.stringify(settings, null, 2)}\n`);
+  } catch (error) {
+    // A failed explicit repair must not turn a damaged document into a missing one on the
+    // next load. Its original bytes (or directory) still exist even if restoration fails.
+    if (damaged) await fsp.rename(damaged, file).catch(() => undefined);
+    throw error;
+  }
   return settings;
+}
+
+export function saveSettings(file: string, input: unknown): Promise<Settings> {
+  // A complete replacement is explicit (import/reset or callers of this low-level API).
+  // Service edits use transactSettings and merge their patch into its current document.
+  return transactSettings(file, async transaction => (await transaction.save(input)).settings);
 }
 
 // A newer version's backup is its last good document: it is kept rather than replaced.

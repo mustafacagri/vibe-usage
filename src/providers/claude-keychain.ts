@@ -2,6 +2,7 @@ import { ProviderError } from '../core/errors.ts';
 import { isObject, type JsonObject } from '../core/files.ts';
 import { hasControlChars } from '../core/model.ts';
 import { MAX_RESPONSE_BYTES, runProcess as defaultRunProcess, sha256Prefix, type RunProcess } from './common.ts';
+import type { RefreshContext } from './types.ts';
 
 const DEFAULT_SERVICE = 'Claude Code-credentials';
 const SELECTOR_MAX_LENGTH = 1024;
@@ -30,7 +31,7 @@ export function resolveClaudeKeychainService({
   return `${DEFAULT_SERVICE}-${suffix}`;
 }
 
-export interface KeychainOptions extends KeychainSelector {
+export interface KeychainOptions extends KeychainSelector, Partial<RefreshContext> {
   platform?: NodeJS.Platform;
   runProcess?: RunProcess;
 }
@@ -40,6 +41,8 @@ export interface KeychainOptions extends KeychainSelector {
 export async function readClaudeKeychain({
   platform = process.platform,
   runProcess = defaultRunProcess,
+  deadline,
+  signal,
   ...selector
 }: KeychainOptions = {}): Promise<JsonObject> {
   if (platform !== 'darwin') throw new ProviderError('unsupported_platform');
@@ -48,7 +51,9 @@ export async function readClaudeKeychain({
   try {
     const output = await runProcess('/usr/bin/security', ['find-generic-password', '-s', service, '-w'], {
       timeoutMs: KEYCHAIN_TIMEOUT_MS,
-      maxBytes: MAX_RESPONSE_BYTES
+      maxBytes: MAX_RESPONSE_BYTES,
+      ...(deadline === undefined ? {} : { deadline }),
+      ...(signal ? { signal } : {})
     });
     credentials = JSON.parse(output);
   } catch (error) {

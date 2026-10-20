@@ -6,7 +6,14 @@ import { createClaudeProvider } from '../providers/claude.ts';
 import { createCodexProvider } from '../providers/codex.ts';
 import type { Clock } from '../providers/common.ts';
 import { createCursorProvider } from '../providers/cursor.ts';
-import type { DiscoveredAccount, FetchResult, ProviderAdapter } from '../providers/types.ts';
+import {
+  providerReading,
+  type DiscoveredAccount,
+  type FetchResult,
+  type ProviderAdapter,
+  type ProviderReading,
+  type RefreshContext
+} from '../providers/types.ts';
 import { HEALTHY_STATUSES } from '../shared/account-state.ts';
 import {
   ACCOUNT_ID_PATTERN,
@@ -23,7 +30,8 @@ import type { SettingsPatch } from '../shared/ipc.ts';
 import { isObject, pathKey, type JsonObject } from './files.ts';
 import { loadMeasurements, measurementOf, saveMeasurements, type SavedMeasurement } from './measurements.ts';
 import { normalizeWindow } from './model.ts';
-import { defaultSettings, loadSettingsWithRecovery, saveSettings, validateSettings } from './settings.ts';
+import { defaultSettings, loadSettingsWithRecovery, transactSettings, validateSettings, type SettingsTransaction } from './settings.ts';
+import { accountSourceKey, sameAccountSource } from './account-source.ts';
 
 const ADAPTER_FACTORIES: Readonly<Record<ProviderId, () => ProviderAdapter>> = {
   claude: () => createClaudeProvider(),
@@ -33,6 +41,9 @@ const ADAPTER_FACTORIES: Readonly<Record<ProviderId, () => ProviderAdapter>> = {
 };
 
 const FETCH_TIMEOUT_MS = 12000;
+// Cancellation stops transports immediately; allow an owned child to report close before
+// another refresh starts. A broken adapter must still not keep the service waiting forever.
+const READ_CLEANUP_MS = 2000;
 const DISCOVERY_INTERVAL_MS = DURATION_MS.MINUTE;
 // A discovered account disappears only after this many clean discovery passes without it,
 // so a transient read failure never deletes it.
@@ -50,19 +61,6 @@ export const SIGN_IN_WINDOW_MS = 10 * DURATION_MS.MINUTE;
 // back to the main account, or opening it again after a restart. Such an account is read first.
 const movesWorkOnItsOwn = (settings: Settings): boolean =>
   settings.autoContinue !== 'off' || settings.returnToPrimary === 'auto' || settings.reopenAfterRestart === 'auto';
-
-// Rejects with request_timeout if `promise` has not settled within `ms`.
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new ProviderError('request_timeout'));
-    }, ms);
-  });
-  return Promise.race([promise, timeout]).finally(() => {
-    clearTimeout(timer);
-  });
-}
 
 // Any user edit (name, primary, enabled, position) makes an account user-managed, except a
 // pending one: it waits for its sign-in whatever the user changed, and discovery makes it the
@@ -98,6 +96,31 @@ function mergeAccountEdits(current: readonly Account[], edited: readonly Account
   return [...merged, ...addedSince];
 }
 
+// An account list is a patch relative to the caller's view. Keep unrelated changes made by
+// another process while the edit waited for the lock, including additions and removals.
+function rebaseAccountEdits(base: readonly Account[], current: readonly Account[], edited: readonly Account[]): Account[] {
+  const result: Account[] = [];
+  for (const account of edited) {
+    const before = base.find(a => a.id === account.id);
+    const latest = current.find(a => a.id === account.id);
+    if (before && !latest) continue;
+    if (!before || !latest) {
+      result.push(account);
+      continue;
+    }
+    const beforeFields: JsonObject = { ...before };
+    const editedFields: JsonObject = { ...account };
+    const changes = Object.fromEntries(
+      Object.keys({ ...before, ...account })
+        .filter(key => JSON.stringify(beforeFields[key]) !== JSON.stringify(editedFields[key]))
+        .map(key => [key, editedFields[key]])
+    );
+    result.push({ ...latest, ...changes });
+  }
+  result.push(...current.filter(a => !base.some(b => b.id === a.id) && !result.some(b => b.id === a.id)));
+  return result;
+}
+
 export interface ServiceOptions {
   settingsPath: string;
   // Where each account's last good reading is kept across restarts; none without it.
@@ -119,6 +142,10 @@ export interface RefreshOptions {
 
 export interface Service {
   snapshot(): Snapshot;
+  // Re-read settings written by another process before making settings-driven decisions.
+  syncSettings(): Promise<Snapshot>;
+  // Cancels quota transports during application shutdown.
+  dispose(): void;
   // A read already under way is joined; with `fresh`, one begun after the call is waited for
   // (a sign-in just written must not be answered by a read that started before it).
   refresh(providerId?: ProviderId, options?: RefreshOptions): Promise<Snapshot>;
@@ -145,7 +172,7 @@ export interface Service {
   reconcileDiscovery(): Promise<void>;
 }
 
-type DiscoveryResult = { adapter: ProviderAdapter; found: DiscoveredAccount[] } | null;
+type DiscoveryResult = { adapter: ProviderAdapter; found: DiscoveredAccount[]; complete: boolean } | null;
 
 export async function createService({
   settingsPath,
@@ -160,6 +187,8 @@ export async function createService({
   const loaded = await loadSettingsWithRecovery(settingsPath);
   let settings = loaded.settings;
   let notice: SettingsNotice | undefined = loaded.notice;
+  let revision = loaded.revision;
+  let transaction: SettingsTransaction | undefined;
   // Unreadable or newer settings are not overwritten by ordinary changes: the app runs on
   // defaults in memory until the user resets or imports.
   const locked = (): boolean => notice === 'unrecoverable' || notice === 'future';
@@ -175,6 +204,8 @@ export async function createService({
   const consecutiveMisses = new Map<string, number>();
   const providerGenerations = new Map<ProviderId, number>();
   const accountGenerations = new Map<string, number>();
+  const activeReads = new Map<AbortController, readonly Account[]>();
+  let disposed = false;
   let lastDiscovery = clock();
   let discoveryRunning: Promise<void> | null = null;
   const stamp = (): string => new Date(clock()).toISOString();
@@ -182,23 +213,59 @@ export async function createService({
   // Settings writes run one at a time, each on the result of the previous one; a failed write
   // does not block the next.
   function serialized<T>(task: () => Promise<T>): Promise<T> {
-    const run = pendingSave.catch(() => undefined).then(task);
+    const run = pendingSave
+      .catch(() => undefined)
+      .then(() =>
+        transactSettings(settingsPath, async current => {
+          if (current.revision !== revision) {
+            settings = current.settings;
+            notice = current.notice;
+            revision = current.revision;
+            rebuild();
+            keepMeasurements();
+            onChange?.();
+          }
+          transaction = current;
+          try {
+            return await task();
+          } finally {
+            transaction = undefined;
+          }
+        })
+      );
     pendingSave = run;
     return run;
   }
 
   function rebuild(): void {
+    for (const [controller, targets] of activeReads) {
+      if (targets.some(target => !settings.accounts.some(a => a.id === target.id && a.enabled && sameAccountSource(a, target))))
+        controller.abort();
+    }
+    const previousAccounts = providers.flatMap(provider => provider.accounts);
+    for (const account of settings.accounts) {
+      const previous = previousAccounts.find(a => a.id === account.id);
+      if (previous && !sameAccountSource(previous, account)) {
+        accountGenerations.delete(account.id);
+        cooldownUntil.delete(account.id);
+        lastRenewal.delete(account.id);
+      }
+    }
+    for (const [id, reading] of saved) {
+      const account = settings.accounts.find(a => a.id === id);
+      if (!account || reading.sourceKey !== accountSourceKey(account)) saved.delete(id);
+    }
     for (const provider of providers) {
       const previous = provider.accounts;
       provider.accounts = settings.accounts
         .filter(a => a.providerId === provider.id && a.enabled)
         .map((account): MeasuredAccount => {
           const measured = previous.find(b => b.id === account.id);
-          if (measured && measured.configDir === account.configDir) return { ...measured, ...account };
+          if (measured && sameAccountSource(measured, account)) return { ...measured, ...account };
           // Not read yet in this run: the last good reading, as stale. It shows the quota last
           // known; nothing acts on it, as only a fresh, ok reading counts as quota.
           const last = saved.get(account.id);
-          return last?.configDir === (account.configDir ?? null)
+          return last?.sourceKey === accountSourceKey(account)
             ? {
                 ...account,
                 status: 'stale',
@@ -208,6 +275,10 @@ export async function createService({
               }
             : { ...account, status: 'pending', windows: [] };
         });
+      if (previous.some(before => !provider.accounts.some(after => before.id === after.id && sameAccountSource(before, after)))) {
+        provider.status = provider.accounts.some(a => a.fetchedAt) ? 'stale' : 'pending';
+        if (!provider.accounts.some(a => a.fetchedAt)) delete provider.fetchedAt;
+      }
       if (provider.status === 'pending' && provider.accounts.some(a => a.status === 'stale')) provider.status = 'stale';
     }
   }
@@ -215,9 +286,11 @@ export async function createService({
   // Each account's latest good reading is written after every read, one write at a time.
   function keepMeasurements(): void {
     if (!measurementsPath) return;
+    for (const id of saved.keys()) if (!settings.accounts.some(account => account.id === id)) saved.delete(id);
     for (const account of providers.flatMap(p => p.accounts)) {
       const reading = measurementOf(account);
       if (reading) saved.set(account.id, reading);
+      else if (account.status === 'no_limits_reported') saved.delete(account.id);
     }
     savingMeasurements = savingMeasurements.then(() => saveMeasurements(measurementsPath, saved)).catch(() => undefined);
   }
@@ -229,17 +302,28 @@ export async function createService({
   // Discovery still shows the accounts it finds while the settings are locked, in memory only.
   async function commit(next: unknown, { discovered = false } = {}): Promise<Snapshot> {
     if (locked() && !discovered) throw new AppError('settings_locked');
-    settings = locked() ? validateSettings(next) : await saveSettings(settingsPath, next);
+    if (locked()) settings = validateSettings(next);
+    else {
+      if (!transaction) throw new AppError('settings_locked');
+      const written = await transaction.save(next);
+      settings = written.settings;
+      revision = written.revision;
+    }
     rebuild();
+    keepMeasurements();
     return snapshot();
   }
 
   // An explicit replacement may write over an unreadable file (which is kept aside).
   async function replace(next: unknown): Promise<Snapshot> {
     if (notice === 'future') throw new AppError('settings_locked');
-    settings = await saveSettings(settingsPath, next);
+    if (!transaction) throw new AppError('settings_locked');
+    const written = await transaction.save(next);
+    settings = written.settings;
+    revision = written.revision;
     notice = undefined;
     rebuild();
+    keepMeasurements();
     return snapshot();
   }
 
@@ -256,7 +340,7 @@ export async function createService({
   }
 
   // Merges one adapter's discovery, made from `seenAt`, into `next`; true when anything changed.
-  function reconcile(next: Settings, { adapter, found }: NonNullable<DiscoveryResult>, seenAt: number): boolean {
+  function reconcile(next: Settings, { adapter, found, complete }: NonNullable<DiscoveryResult>, seenAt: number): boolean {
     let modified = false;
     const dismissed = new Set(next.dismissedAccountIds);
     const foundIds = new Set(found.map(a => a.id));
@@ -275,6 +359,7 @@ export async function createService({
       next.accounts.push({ ...account, origin: 'discovered', primary: account.primary && !hasPrimary });
       modified = true;
     }
+    if (!complete) return modified;
     // Only untouched discovered accounts are removed; anything the user disabled or customized
     // stays until the user removes it.
     const vanished = next.accounts.filter(
@@ -289,8 +374,7 @@ export async function createService({
       const misses = (consecutiveMisses.get(account.id) ?? 0) + 1;
       consecutiveMisses.set(account.id, misses);
       if (misses < MISSES_BEFORE_REMOVAL) continue;
-      next.accounts = next.accounts.filter(a => a !== account);
-      consecutiveMisses.delete(account.id);
+      removeAccount(next, account.id);
       modified = true;
     }
     // A pending account not found by a look made after its sign-in closed never held a sign-in;
@@ -308,7 +392,10 @@ export async function createService({
     const results: DiscoveryResult[] = await Promise.all(
       adapters.map(adapter =>
         adapter.discover().then(
-          found => ({ adapter, found }),
+          discovery =>
+            Array.isArray(discovery)
+              ? { adapter, found: discovery, complete: true }
+              : { adapter, found: discovery.accounts, complete: discovery.kind === 'complete' },
           () => null
         )
       )
@@ -334,11 +421,11 @@ export async function createService({
   // The account as configured now, or null when it was removed, disabled or re-pointed while
   // a read was in flight, or a newer read already reported.
   function currentTarget(provider: ProviderState, account: MeasuredAccount, generation: number): MeasuredAccount | null {
+    const configured = settings.accounts.find(a => a.id === account.id);
+    if (!configured || !configured.enabled || !sameAccountSource(configured, account)) return null;
     if ((accountGenerations.get(account.id) ?? 0) > generation) return null;
     accountGenerations.set(account.id, generation);
-    const configured = settings.accounts.find(a => a.id === account.id);
-    if (!configured || configured.configDir !== account.configDir || !configured.enabled) return null;
-    return provider.accounts.find(a => a.id === account.id) ?? account;
+    return provider.accounts.find(a => a.id === account.id && sameAccountSource(a, account)) ?? null;
   }
 
   function applyResult(target: MeasuredAccount, result: FetchResult, fetchedAt: string): void {
@@ -353,11 +440,13 @@ export async function createService({
     }
     // A window missing from this response keeps its last value, marked stale.
     // One that never had a value has nothing to keep.
-    for (const prior of target.windows) {
-      if (!windows.some(w => w.id === prior.id) && prior.remainingPercent !== null)
+    for (const prior of result.completeness === 'complete' ? [] : target.windows) {
+      if (!result.removedWindowIds?.includes(prior.id) && !windows.some(w => w.id === prior.id) && prior.remainingPercent !== null)
         windows.push({ ...prior, stale: true, detailKey: 'staleWindowDetail' });
     }
-    Object.assign(target, { windows, status: 'ok', fetchedAt });
+    // An explicitly incomplete response cannot establish that all binding limits are known,
+    // including on a first read or after a restart with no previous window to carry forward.
+    Object.assign(target, { windows, status: result.completeness === 'partial' ? 'stale' : 'ok', fetchedAt });
     delete target.messageCode;
   }
 
@@ -394,6 +483,65 @@ export async function createService({
       .finally(() => renewing.delete(account.id));
   }
 
+  async function readWithinBudget<T>(
+    adapter: ProviderAdapter,
+    accounts: readonly Account[],
+    read: (context: RefreshContext) => Promise<T>
+  ): Promise<T> {
+    if (disposed) throw new ProviderError('request_timeout');
+    const controller = new AbortController();
+    activeReads.set(controller, accounts);
+    const timeoutMs = adapter.fetchTimeoutMs ?? FETCH_TIMEOUT_MS;
+    const context = { deadline: Date.now() + timeoutMs, signal: controller.signal };
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => {
+        reject(new ProviderError('request_timeout'));
+      };
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+    const pending = Promise.resolve().then(() => read(context));
+    try {
+      return await Promise.race([pending, aborted]);
+    } finally {
+      clearTimeout(timer);
+      if (onAbort) controller.signal.removeEventListener('abort', onAbort);
+      if (controller.signal.aborted) {
+        let cleanupTimer: NodeJS.Timeout | undefined;
+        await Promise.race([
+          pending.catch(() => undefined),
+          new Promise<void>(resolve => {
+            cleanupTimer = setTimeout(resolve, READ_CLEANUP_MS);
+          })
+        ]);
+        clearTimeout(cleanupTimer);
+      }
+      activeReads.delete(controller);
+    }
+  }
+
+  function applyReading(
+    adapter: ProviderAdapter,
+    provider: ProviderState,
+    account: MeasuredAccount,
+    generation: number,
+    reading: ProviderReading,
+    attemptedAt: number
+  ): void {
+    const target = currentTarget(provider, account, generation);
+    if (!target) return;
+    try {
+      if (reading.kind === 'failed') throw reading.error;
+      applyResult(target, reading.result, stamp());
+    } catch (error) {
+      applyFailure(target, error, attemptedAt);
+      renewInBackground(adapter, target, error);
+    }
+  }
+
   async function refreshAccount(
     adapter: ProviderAdapter,
     provider: ProviderState,
@@ -402,19 +550,11 @@ export async function createService({
   ): Promise<void> {
     const attemptedAt = clock();
     if ((cooldownUntil.get(account.id) ?? 0) > attemptedAt) return;
-    const outcome = await withTimeout(adapter.fetch(account), adapter.fetchTimeoutMs ?? FETCH_TIMEOUT_MS).then(
-      result => ({ result }),
-      (error: unknown) => ({ error })
+    const reading = await readWithinBudget(adapter, [account], context => adapter.fetch(account, context)).then(
+      providerReading,
+      (error: unknown): ProviderReading => ({ kind: 'failed', error })
     );
-    const target = currentTarget(provider, account, generation);
-    if (!target) return;
-    try {
-      if ('error' in outcome) throw outcome.error;
-      applyResult(target, outcome.result, stamp());
-    } catch (error) {
-      applyFailure(target, error, attemptedAt);
-      renewInBackground(adapter, target, error);
-    }
+    applyReading(adapter, provider, account, generation, reading, attemptedAt);
   }
 
   const isHealthy = (account: MeasuredAccount): boolean => HEALTHY_STATUSES.has(account.status);
@@ -424,7 +564,20 @@ export async function createService({
     if (!provider) return;
     const generation = (providerGenerations.get(adapter.id) ?? 0) + 1;
     providerGenerations.set(adapter.id, generation);
-    await Promise.all(provider.accounts.map(account => refreshAccount(adapter, provider, account, generation)));
+    const fetchAll = adapter.fetchAll?.bind(adapter);
+    if (fetchAll) {
+      const attemptedAt = clock();
+      const accounts = provider.accounts.filter(a => (cooldownUntil.get(a.id) ?? 0) <= attemptedAt);
+      if (accounts.length) {
+        const readings = await readWithinBudget(adapter, accounts, context => fetchAll(accounts, context)).catch(
+          (error: unknown) => new Map(accounts.map(a => [a.id, { kind: 'failed' as const, error }]))
+        );
+        for (const account of accounts) {
+          const reading = readings.get(account.id) ?? { kind: 'failed', error: new ProviderError('invalid_response') };
+          applyReading(adapter, provider, account, generation, reading, attemptedAt);
+        }
+      }
+    } else await Promise.all(provider.accounts.map(account => refreshAccount(adapter, provider, account, generation)));
 
     const { accounts } = provider;
     const allHealthy = accounts.length > 0 && accounts.every(isHealthy);
@@ -439,10 +592,14 @@ export async function createService({
     // Callers wanting a fresh read share the one that starts after the running one.
     if (running && fresh) return running.catch(() => undefined).then(() => startRefresh(adapter));
     if (running) return running;
-    const promise = refreshProvider(adapter).finally(() => {
-      if (inFlight.get(adapter.id) === promise) inFlight.delete(adapter.id);
-      keepMeasurements();
-    });
+    // Reserve this refresh immediately, before settings I/O, so concurrent callers join it
+    // and a requested fresh read still starts after the reserved read finishes.
+    const promise = serialized(() => Promise.resolve())
+      .then(() => refreshProvider(adapter))
+      .finally(() => {
+        if (inFlight.get(adapter.id) === promise) inFlight.delete(adapter.id);
+        keepMeasurements();
+      });
     inFlight.set(adapter.id, promise);
     return promise;
   }
@@ -456,6 +613,8 @@ export async function createService({
     }
     // Every provider is started and awaited, also those a narrower refresh already started.
     await Promise.allSettled(targets.map(adapter => startRefresh(adapter, fresh)));
+    // A CLI command may have changed settings while the network request was in flight.
+    await serialized(() => Promise.resolve());
     // The readings just taken are on disk before the refresh counts as done.
     await savingMeasurements;
     return snapshot();
@@ -504,9 +663,11 @@ export async function createService({
 
   // Typed or not, every change takes this one validated path.
   function applySettings(patch: JsonObject | SettingsPatch): Promise<Snapshot> {
+    const base = structuredClone(settings.accounts);
     return serialized(() => {
       const next = validateSettings({ ...settings, ...patch });
-      return commit({ ...next, accounts: mergeAccountEdits(settings.accounts, next.accounts) });
+      const accounts = 'accounts' in patch ? rebaseAccountEdits(base, settings.accounts, next.accounts) : next.accounts;
+      return commit({ ...next, accounts: mergeAccountEdits(settings.accounts, accounts) });
     });
   }
 
@@ -534,7 +695,7 @@ export async function createService({
     // settings and hooks. Discovery adds back each local account it finds.
     const local = new Set((await Promise.all(PROFILE_PROVIDER_IDS.map(id => profileFolders(id, home)))).flat().map(dir => pathKey(dir)));
     next.accounts = next.accounts.filter(a => a.configDir === undefined || local.has(pathKey(a.configDir)));
-    await serialized(() => replace(next));
+    await serialized(() => replace({ ...next, ...(settings.window ? { window: settings.window } : {}) }));
     await reconcileDiscovery();
     return snapshot();
   }
@@ -557,6 +718,11 @@ export async function createService({
 
   return {
     snapshot,
+    syncSettings: () => serialized(() => Promise.resolve(snapshot())),
+    dispose: () => {
+      disposed = true;
+      for (const controller of activeReads.keys()) controller.abort();
+    },
     refresh,
     updateSettings,
     updateSettingsFrom,

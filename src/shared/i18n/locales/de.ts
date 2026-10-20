@@ -118,7 +118,7 @@ export const de: Messages = {
   restoreAccountsBtn: 'Konten wiederherstellen ({n})',
   settingsHelp: 'Erstmalige Anmeldung für jedes Konto in separatem Profil. Priorität 1 steuert den Smart-Start.',
   confirmRemoveAccount: 'Möchten Sie das Konto "{label}" wirklich entfernen?',
-  handoverDesc: 'Überträgt Sitzungs-Logs, Git-Status und Dateien an das ausgewählte KI-Tool.',
+  handoverDesc: 'Prüfe Gespräch, Dateiverweise und Git-Branch/HEAD vor der Übergabe. Der Arbeitsbaum wird nicht untersucht.',
   sourceProvider: 'Quell-Anbieter',
   autoDetectSession: 'Alle Tools',
   targetProvider: 'Ziel-Anbieter',
@@ -241,6 +241,11 @@ export const de: Messages = {
   error_invalid_path: 'Der Ordnerpfad ist ungültig.',
   error_invalid_settings: 'Diese Einstellungen sind ungültig.',
   error_session_not_found: 'Die gewählte Sitzung wurde nicht gefunden.',
+  error_handover_file_tracked: 'Git verfolgt VIBE_HANDOVER.md bereits. Entferne die Datei vor der Übergabe aus dem Index.',
+  error_handover_exclusion_failed:
+    'Die Übergabedatei konnte nicht von Git ausgeschlossen werden. Prüfe die Berechtigungen des Repositorys und versuche es erneut.',
+  error_handover_sensitive_context:
+    'Das Gespräch enthält sensible Inhalte, die nicht sicher geschwärzt werden konnten. Prüfe und entferne sie vor der Übergabe.',
   error_suggestion_expired: 'Dieser Vorschlag ist nicht mehr verfügbar.',
   error_session_newer_elsewhere:
     'Diese Sitzung ging im anderen Konto weiter, nachdem diese Kopie entstand; sie wurde daher nicht über die neuere zurückverschoben.',

@@ -43,6 +43,7 @@ import {
   type MessageKey,
   type Params
 } from '../shared/i18n/index.ts';
+import { createPreviewState } from '../shared/preview-state.ts';
 import type {
   ContinueOutcome,
   HandoverPreview,
@@ -234,9 +235,11 @@ let state: Snapshot | null = null;
 let models: ModelCatalog | null = null;
 let handoverProjectDir = '';
 // What the user last previewed; execution hands over exactly that, and any change clears it.
-let handoverPreview: { request: HandoverRequest; preview: HandoverPreview } | null = null;
+const handoverPreview = createPreviewState<HandoverRequest, HandoverPreview>(request => JSON.stringify(request));
+const handoverSources = new Map<string, SessionSummary>();
 // Only the latest session request may fill the list; slower earlier answers are dropped.
 let sessionRequest = 0;
+let modelRequest = 0;
 const selectedAccount = new Map<ProviderId, string>();
 // The last history read, so a rebuilt card draws its charts at once and then updates them.
 let history: Awaited<ReturnType<VibeApi['history']>> | null = null;
@@ -460,8 +463,13 @@ function signInButton(
 }
 
 // Claude Code in a terminal, signed in as `account`.
-function launchButton(provider: Provider, account: MeasuredAccount, label = t('launchClaudeBtn')): HTMLButtonElement {
+function launchButton(
+  provider: Provider,
+  account: MeasuredAccount,
+  label = t('launchAccountBtn', { name: accountName(account) })
+): HTMLButtonElement {
   const button = element('button', 'launch-button', label);
+  button.title = `${t('launchClaudeBtn')}\n${accountName(account)}`;
   onClick(button, async () => {
     const result = await vibe.launchClaude(account.id);
     if (result.status === 'launched') toast(t('launchedTerminal', { tool: provider.name }));
@@ -540,7 +548,6 @@ function compareActions(provider: Provider, account: MeasuredAccount): HTMLEleme
   if (message) column.append(element('div', 'empty', message));
   if (canLaunch(provider, account)) {
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
-    launch.title = `${t('launchClaudeBtn')}\n${name}`;
     column.append(launch);
   }
   if (needsSignIn(account)) column.append(signInButton(provider, account, t('signInAccountBtn', { name })));
@@ -1491,7 +1498,9 @@ const showReopenAfterRestart = radioGroup(ui.reopenAfterRestart, AUTOMATION_MODE
 
 function sessionLabel(session: SessionSummary, showProvider: boolean): string {
   const size = new Intl.NumberFormat(language, { style: 'unit', unit: 'megabyte', maximumFractionDigits: 1 });
+  const sourceAccount = current().settings.accounts.find(account => account.id === session.source.accountId);
   const parts = [
+    sourceAccount ? accountName(sourceAccount) : '',
     formatAge(session.updatedAt, format()),
     session.turnCount ? t('turnsCount', { n: session.turnCount }) : '',
     session.model,
@@ -1505,6 +1514,7 @@ const selectedProvider = (select: HTMLSelectElement): ProviderId | undefined => 
 
 async function refreshHandoverSessions(): Promise<void> {
   const request = ++sessionRequest;
+  handoverSources.clear();
   const fromProvider = selectedProvider(ui.handoverFrom) ?? AUTO;
   const mostRecent = option(AUTO, t('mostRecentSession'));
   if (!handoverProjectDir) {
@@ -1514,7 +1524,13 @@ async function refreshHandoverSessions(): Promise<void> {
   const loading = option('', t('reading'));
   loading.disabled = true;
   ui.handoverSession.replaceChildren(mostRecent, loading);
-  const sessions = await vibe.listSessions({ providerId: fromProvider, projectDir: handoverProjectDir });
+  let sessions: SessionSummary[];
+  try {
+    sessions = await vibe.listSessions({ providerId: fromProvider, projectDir: handoverProjectDir });
+  } catch (error) {
+    if (request === sessionRequest) throw error;
+    return;
+  }
   if (request !== sessionRequest) return;
   loading.remove();
   if (!sessions.length) {
@@ -1525,7 +1541,8 @@ async function refreshHandoverSessions(): Promise<void> {
   }
   ui.handoverSession.append(
     ...sessions.map(session => {
-      const node = option(session.id, sessionLabel(session, fromProvider === AUTO));
+      handoverSources.set(session.source.id, session);
+      const node = option(session.source.id, sessionLabel(session, fromProvider === AUTO));
       node.dataset.provider = session.providerId;
       return node;
     })
@@ -1533,6 +1550,7 @@ async function refreshHandoverSessions(): Promise<void> {
 }
 
 async function refreshHandoverModels(): Promise<void> {
+  const request = ++modelRequest;
   const target = selectedProvider(ui.handoverTo);
   const accepts = target !== undefined && providerById(target).acceptsModel;
   ui.handoverModelField.hidden = !accepts;
@@ -1540,7 +1558,16 @@ async function refreshHandoverModels(): Promise<void> {
   // The tool's default holds the place until the models are in.
   if (!models) fillSelect(ui.handoverModel, [['', t('toolDefault')]]);
   const saved = current().settings.preferredModels[target];
-  fillSelect(ui.handoverModel, modelChoices((await getModels())[target], saved), saved ?? '');
+  let catalog: ModelCatalog;
+  try {
+    catalog = await getModels();
+  } catch (error) {
+    if (request === modelRequest) throw error;
+    return;
+  }
+  if (request !== modelRequest || target !== selectedProvider(ui.handoverTo)) return;
+  clearHandoverPreview();
+  fillSelect(ui.handoverModel, modelChoices(catalog[target], saved), saved ?? '');
 }
 
 // A task is handed to a different tool: the source (the chosen tool, else the provider of the
@@ -1557,16 +1584,15 @@ function setHandoverProject(dir: string): void {
 }
 
 function clearHandoverPreview(): void {
-  handoverPreview = null;
+  handoverPreview.clear();
   ui.handoverPreviewBox.hidden = true;
   ui.handoverPreview.textContent = '';
   ui.handoverExecute.disabled = true;
 }
 
 function handoverRequest(): HandoverRequest {
-  const session = ui.handoverSession.selectedOptions[0];
-  const sessionId = session?.value || AUTO;
-  const sessionProvider = PROVIDER_IDS.find(id => id === session?.dataset.provider);
+  const session = handoverSources.get(ui.handoverSession.value);
+  const sessionId = session?.id ?? AUTO;
   const targetModel = ui.handoverModelField.hidden ? '' : ui.handoverModel.value;
   return {
     projectDir: handoverProjectDir,
@@ -1574,7 +1600,7 @@ function handoverRequest(): HandoverRequest {
     toProvider: selectedProvider(ui.handoverTo) ?? AUTO,
     sessionId,
     ...(targetModel ? { targetModel } : {}),
-    ...(sessionId !== AUTO && sessionProvider ? { sessionProvider } : {})
+    ...(session ? { sessionProvider: session.providerId, sessionSource: session.source } : {})
   };
 }
 
@@ -1600,8 +1626,9 @@ onClick(ui.handoverBrowse, async () => {
 onChange(ui.handoverFrom, async () => {
   clearHandoverPreview();
   syncHandoverTarget();
-  await refreshHandoverModels();
-  await refreshHandoverSessions();
+  // These reads are independent. Start both under this form's generation so a late
+  // model reply cannot start a new session read after the dialog was closed.
+  await Promise.all([refreshHandoverModels(), refreshHandoverSessions()]);
 });
 onChange(ui.handoverSession, async () => {
   clearHandoverPreview();
@@ -1618,8 +1645,9 @@ onChange(ui.handoverModel, async () => {
 });
 onClick(ui.handoverPreviewButton, async () => {
   const request = handoverRequest();
-  const preview = await vibe.previewHandover(request);
-  handoverPreview = { request, preview };
+  clearHandoverPreview();
+  const preview = await handoverPreview.load(request, request => vibe.previewHandover(request), handoverRequest);
+  if (!preview || !ui.handoverDialog.open) return;
   const from = preview.from ? providerById(preview.from).name : t('autoDetectSession');
   ui.handoverPreviewSummary.textContent = t('previewSummary', { from, to: toolLabel(preview.to, preview.model) });
   ui.handoverPreview.textContent = preview.brief;
@@ -1627,18 +1655,28 @@ onClick(ui.handoverPreviewButton, async () => {
   ui.handoverExecute.disabled = false;
 });
 ui.handoverCancel.addEventListener('click', () => {
+  clearHandoverPreview();
   ui.handoverDialog.close();
+});
+ui.handoverDialog.addEventListener('cancel', clearHandoverPreview);
+ui.handoverDialog.addEventListener('close', () => {
+  clearHandoverPreview();
+  sessionRequest++;
+  modelRequest++;
 });
 // The previewed session is handed over as shown: an automatic session choice is pinned to what
 // the preview resolved, so a newer session cannot slip in.
 onClick(ui.handoverExecute, async () => {
-  if (!handoverPreview) return;
-  const { request, preview } = handoverPreview;
+  const reviewed = handoverPreview.read(handoverRequest());
+  if (!reviewed || !ui.handoverDialog.open) return;
+  const { request, preview } = reviewed;
+  clearHandoverPreview();
   ui.handoverDialog.close();
   // An automatic target is decided again from the quota at execution time.
   const result = await vibe.executeHandover({
     ...request,
-    ...(preview.sessionId && preview.sessionProvider ? { sessionId: preview.sessionId, sessionProvider: preview.sessionProvider } : {})
+    ...(preview.sessionId && preview.sessionProvider ? { sessionId: preview.sessionId, sessionProvider: preview.sessionProvider } : {}),
+    sessionSource: preview.sessionSource ?? null
   });
   toast(t(LAUNCH_MESSAGES[result.mode], { tool: toolLabel(result.to, result.model) }));
 });

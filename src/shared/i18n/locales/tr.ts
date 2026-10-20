@@ -117,7 +117,8 @@ export const tr: Messages = {
   settingsHelp: 'Her hesabın ilk girişi ayrı profilde yapılır. Akıllı başlatmayı 1. öncelikli araç yönetir.',
   confirmRemoveAccount:
     '"{label}" hesabını widget\'tan kaldırmak istediğinize emin misiniz? (Ayarlardan istediğiniz zaman geri alabilirsiniz)',
-  handoverDesc: 'Mevcut oturumun terminal/proje loglarını, git durumunu ve değiştirilen dosyalarını derleyip seçilen AI aracına devreder.',
+  handoverDesc:
+    'Yakın konuşmaları, dosya referanslarını ve Git dalı/HEAD bilgisini seçilen araçla paylaşmadan önce incele. Çalışma ağacı taranmaz.',
   sourceProvider: 'Kaynak Sağlayıcı',
   autoDetectSession: 'Tüm araçlar',
   targetProvider: 'Hedef Sağlayıcı',
@@ -235,6 +236,9 @@ export const tr: Messages = {
   error_invalid_path: 'Klasör yolu geçersiz.',
   error_invalid_settings: 'Bu ayarlar geçerli değil.',
   error_session_not_found: 'Seçilen oturum bulunamadı.',
+  error_handover_file_tracked: 'Git, VIBE_HANDOVER.md dosyasını zaten izliyor. Devretmeden önce dosyayı Git indeksinden çıkar.',
+  error_handover_exclusion_failed: 'Devir dosyası Git dışında tutulamadı. Depo izinlerini kontrol edip tekrar dene.',
+  error_handover_sensitive_context: 'Konuşmada güvenle temizlenemeyen hassas içerik var. Devretmeden önce bu içeriği inceleyip kaldır.',
   error_suggestion_expired: 'Bu öneri artık geçerli değil.',
   error_session_newer_elsewhere: 'Bu kopya alındıktan sonra oturum diğer hesapta devam etti, bu yüzden daha yeni olanın üzerine taşınmadı.',
   error_session_still_running: 'Oturumun önceki işlemi durdurulamadı, bu yüzden ikinci kez başlatılmadı. Orada kapatıp yeniden deneyin.',

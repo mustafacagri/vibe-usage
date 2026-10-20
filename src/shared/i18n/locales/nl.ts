@@ -114,11 +114,11 @@ export const nl: Messages = {
   secondaryAccount: 'Secundair account',
   removeAccount: '✕ Verwijderen',
   accountLabelPlaceholder: 'Accountlabel',
-  addAccountBtn: '+ {tool}-account toevoegen',
+  addAccountBtn: '+ {tool}-account',
   restoreAccountsBtn: 'Accounts herstellen ({n})',
   settingsHelp: 'Eerste login gebeurt in een apart profiel. Prioriteit 1 beheert de slimme start.',
   confirmRemoveAccount: 'Weet u zeker dat u account "{label}" wilt verwijderen?',
-  handoverDesc: 'Draagt sessielogs, git-status en gewijzigde bestanden over aan de gekozen AI.',
+  handoverDesc: 'Bekijk gesprek, bestandsverwijzingen en Git-branch/HEAD vóór het delen. De werkboom wordt niet gescand.',
   sourceProvider: 'Bronaanbieder',
   autoDetectSession: 'Alle tools',
   targetProvider: 'Doelaanbieder',
@@ -241,6 +241,11 @@ export const nl: Messages = {
   error_invalid_path: 'Het mappad is ongeldig.',
   error_invalid_settings: 'Deze instellingen zijn ongeldig.',
   error_session_not_found: 'De gekozen sessie is niet gevonden.',
+  error_handover_file_tracked: 'Git volgt VIBE_HANDOVER.md al. Verwijder het bestand uit de index voordat je de sessie overdraagt.',
+  error_handover_exclusion_failed:
+    'Het overdrachtsbestand kon niet van Git worden uitgesloten. Controleer de rechten van de repository en probeer opnieuw.',
+  error_handover_sensitive_context:
+    'Het gesprek bevat gevoelige informatie die niet veilig kon worden afgeschermd. Controleer en verwijder die vóór de overdracht.',
   error_suggestion_expired: 'Dit voorstel is niet meer beschikbaar.',
   error_session_newer_elsewhere:
     'De sessie ging na deze kopie verder in het andere account, dus is ze niet over de nieuwere heen teruggezet.',
@@ -281,7 +286,7 @@ export const nl: Messages = {
   projectAnyTool: 'Elke tool',
   projectAnyAccount: 'Elk account',
   projectMissingAccount: 'Verwijderd account',
-  projectAutoInherit: 'Zoals de algemene instelling',
+  projectAutoInherit: 'Algemene instelling',
   maintenanceTitle: 'Geschiedenis, diagnose en back-up',
   transitionsTitle: 'Overdrachtsgeschiedenis',
   transitionsDesc:

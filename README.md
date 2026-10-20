@@ -90,11 +90,12 @@ in the project folder you choose. If no tool can be verified, it says so instead
 ### Handover
 
 Choose a session from Claude Code, Codex, Cursor Agent or Antigravity. Vibe Usage summarizes it into
-`VIBE_HANDOVER.md` in the project folder: the goal, the latest request, the recent conversation, the files touched and
-the git status. **Preview brief** shows it before anything is written or started; recognizable secrets are redacted and
+`VIBE_HANDOVER.md` in the project folder: the goal, the latest request, the recent conversation, file references and
+Git branch/HEAD metadata. Working-tree changes are not scanned. **Preview brief** shows it before anything is written or started; recognizable secrets are redacted and
 the brief is marked as unverified context. Handing over then uses exactly the previewed session and starts the target
-tool with a prompt to read the brief. Only sessions started in the chosen folder are listed, and a file of your own
-named `VIBE_HANDOVER.md` is never overwritten.
+tool with a prompt to read the brief. The physical source, account and version stay pinned to the preview, including
+sessions relocated into a worktree. A file of your own named `VIBE_HANDOVER.md` is never overwritten; tracked files
+or a failed Git exclusion stop the handover. Cursor keeps its own project-trust prompt.
 
 </td>
 <td valign="top">
@@ -178,7 +179,8 @@ Model lists come from each tool's own data: Claude Code aliases and the models y
 ## Privacy and safety
 
 - **Your sign-ins stay as they are.** It uses the sessions that already exist. It never asks for a password, never
-  reads or stores a refresh token, never signs you out, and never touches running work. When work may move between
+  stores refresh tokens in its own data, never signs you out, and never interrupts busy work. Existing credential
+  documents are read in memory; the renewal check inspects whether a refresh token exists. When work may move between
   accounts on its own, an expired Claude Code sign-in is renewed by Claude Code itself: one minimal Haiku request (one
   word, no tools, nothing saved), at most every 30 minutes per account. Continuing a Claude Code session on
   another account copies its transcript into that account's profile folder; the original is left as it is.
@@ -188,26 +190,29 @@ Model lists come from each tool's own data: Claude Code aliases and the models y
   turns this off). An installed Windows copy then downloads a new version itself, only from this repository's
   releases, checks it against the release's SHA-512 checksums (and, for a signed release, its publisher), and installs
   it only when you click **Restart to update**.
-- **Nothing secret on disk.** Settings live in `%APPDATA%\Vibe Usage\settings.json` (Windows) or
+- **Local data, no saved credentials.** Settings live in `%APPDATA%\Vibe Usage\settings.json` (Windows) or
   `~/Library/Application Support/Vibe Usage/settings.json` (macOS), with `settings.json.bak` (the previous good copy)
   and, if the file was ever damaged, `settings.json.damaged-<time>`. Next to them, `history.json` keeps a week of quota
   percentages for the chart and the forecast (numbers only), `measurements.json` each account's last good reading (its
   limits, percentages, reset times and plan, shown as stale after a restart until a fresh read), and `continuity.json`
   the handover history: project folders, tool and account ids, session ids and outcomes, never conversation text,
-  tokens or e-mails.
+  tokens or e-mails. Settings can include account email labels and local paths. The local
+  `settings.json.lock.sqlite` coordinates writes from the desktop app and CLI. A handover brief contains redacted
+  conversation text; review it because unknown secret formats cannot be guaranteed to be removed.
 - **A locked-down app.** The window is sandboxed with a strict CSP, cannot navigate or open other windows, and only
   answers its own page. Electron fuses disable `runAsNode`, `NODE_OPTIONS` and the inspector, and enforce ASAR
   integrity.
 
-Found a security issue? Please report it privately as described in [SECURITY.md](SECURITY.md).
+See [Privacy and local data](docs/PRIVACY.md) for storage, sharing and redaction limits. Found a security issue?
+Please report it privately as described in [SECURITY.md](SECURITY.md).
 
 ## Install
 
 ### Windows
 
 Download `Vibe-Usage-<version>-win-setup.exe` from the [latest release](https://github.com/mustafacagri/vibe-usage/releases/latest) and
-run it: it installs for your user only (no administrator rights) and keeps itself up to date. A new version downloads
-in the background, and the app tells you when **Restart to update** installs it. Or take the portable
+run it: it installs for your user only (no administrator rights). A supported signed installation downloads an update
+when you click **Download**, then installs it only when you choose **Restart to update**. Or take the portable
 `Vibe-Usage-<version>-win-x64.zip` (or `-arm64`), unzip it and run `Vibe Usage.exe`; a portable copy links to the
 release page when there is a new version. Either way it lives in the system tray.
 

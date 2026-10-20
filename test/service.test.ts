@@ -4,10 +4,12 @@ import path from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ProviderError } from '../src/core/errors.ts';
 import { createService, SIGN_IN_WINDOW_MS, type Service } from '../src/core/service.ts';
+import { defaultSettings, saveSettings, transactSettings } from '../src/core/settings.ts';
+import { isAccountEligible } from '../src/core/selection.ts';
 import { antigravityAccountId, createAntigravityProvider, type LanguageServer } from '../src/providers/antigravity.ts';
 import { createClaudeProvider } from '../src/providers/claude.ts';
 import type { Clock } from '../src/providers/common.ts';
-import type { DiscoveredAccount, FetchResult, ProviderAdapter } from '../src/providers/types.ts';
+import type { DiscoveredAccount, FetchResult, ProviderAdapter, RefreshContext } from '../src/providers/types.ts';
 import type { ProviderId } from '../src/shared/catalog.ts';
 import type { Account, MeasuredAccount } from '../src/shared/types.ts';
 import { account, tempDir } from './helpers/fixtures.ts';
@@ -432,7 +434,9 @@ test('e-mail addresses with plus signs and long addresses are accepted', async t
     discoverAntigravityServers: () => Promise.resolve(servers),
     requestLocalJson: target => Promise.resolve({ userStatus: { email: emails[target.pid] } })
   });
-  const discovered = await provider.discover();
+  const discovery = await provider.discover();
+  assert.ok(!Array.isArray(discovery) && discovery.kind === 'complete');
+  const discovered = discovery.accounts;
   assert.deepEqual(
     discovered.map(a => a.id),
     [antigravityAccountId(plusEmail), antigravityAccountId(longEmail)]
@@ -677,6 +681,116 @@ test('window settings saved during refresh do not detach accounts from results',
   response.resolve({ windows: [window('five_hour', { usedPercent: 20 })] });
   await refresh;
   assert.deepEqual([measured(service, 'claude').status, measured(service, 'claude').windows[0]?.remainingPercent], ['ok', 80]);
+});
+
+test('changing an account e-mail by import invalidates its live and persisted quota without dropping display-only edits', async t => {
+  const dir = await tempDir(t, 'vibe-service-source-');
+  const configDir = path.join(dir, '.claude');
+  await fs.mkdir(configDir);
+  const settingsPath = path.join(dir, 'settings.json');
+  const measurementsPath = path.join(dir, 'measurements.json');
+  const a = account({ configDir, configDirExplicit: false, email: 'first@example.com', origin: 'user' });
+  const b = account({ id: 'claude:b', configDir, email: 'spare@example.com', primary: false, origin: 'user' });
+  await saveSettings(settingsPath, { ...defaultSettings(), accounts: [a, b] });
+  const provider = adapter(
+    'claude',
+    () => [],
+    () => Promise.resolve({ windows: [{ id: 'five', remainingPercent: 91 }] })
+  );
+  const service = await createService({ settingsPath, measurementsPath, providers: [provider], home: dir });
+  await service.refresh();
+  const before = measured(service, 'claude');
+  await service.updateSettings({
+    accounts: [
+      { ...b, primary: true },
+      { ...a, label: 'Renamed', primary: false, email: ' FIRST@EXAMPLE.COM ' }
+    ]
+  });
+  const renamed = service.snapshot().providers[0]?.accounts.find(entry => entry.id === a.id);
+  assert.ok(renamed);
+  assert.deepEqual([renamed.status, renamed.fetchedAt, renamed.windows], [before.status, before.fetchedAt, before.windows]);
+  assert.equal(isAccountEligible(renamed), true, 'label, order, primary and canonical-equivalent email keep the reading');
+  const exported = service.exportSettings();
+  await service.importSettings({
+    ...exported,
+    accounts: exported.accounts.map(entry => (entry.id === a.id ? { ...entry, email: 'second@example.com' } : entry))
+  });
+  const changed = service.snapshot().providers[0]?.accounts.find(entry => entry.id === a.id);
+  assert.ok(changed);
+  assert.deepEqual([changed.status, changed.windows, changed.fetchedAt], ['pending', [], undefined]);
+  assert.equal(isAccountEligible(changed), false);
+  const restarted = await createService({ settingsPath, measurementsPath, providers: [provider], home: dir });
+  const restored = restarted.snapshot().providers[0]?.accounts.find(entry => entry.id === a.id);
+  assert.deepEqual(restored?.windows, [], 'the previous source cannot be restored from the measurement cache');
+});
+
+test('an external e-mail change aborts the old read and never applies its late success or failure to the new source', async t => {
+  const dir = await tempDir(t, 'vibe-service-source-flight-');
+  const settingsPath = path.join(dir, 'settings.json');
+  const measurementsPath = path.join(dir, 'measurements.json');
+  await saveSettings(settingsPath, { ...defaultSettings(), accounts: [account({ email: 'first@example.com', origin: 'user' })] });
+  const began = Promise.withResolvers<undefined>();
+  const response = Promise.withResolvers<FetchResult>();
+  let delayed = false;
+  let oldContext: RefreshContext | undefined;
+  const provider: ProviderAdapter = {
+    id: 'claude',
+    discover: () => Promise.resolve([]),
+    fetch: (target, context) => {
+      if (delayed && target.email === 'first@example.com') {
+        oldContext = context;
+        began.resolve(undefined);
+        return response.promise;
+      }
+      return Promise.resolve({ windows: [{ id: 'five', remainingPercent: target.email === 'first@example.com' ? 91 : 31 }] });
+    }
+  };
+  const service = await createService({ settingsPath, measurementsPath, providers: [provider] });
+  await service.refresh();
+  delayed = true;
+  const pending = service.refresh();
+  await began.promise;
+  await transactSettings(settingsPath, async transaction => {
+    await transaction.save({
+      ...transaction.settings,
+      accounts: transaction.settings.accounts.map(entry => ({ ...entry, email: 'second@example.com' }))
+    });
+  });
+  await service.syncSettings();
+  assert.ok(oldContext?.signal.aborted);
+  response.resolve({ windows: [{ id: 'five', remainingPercent: 99 }] });
+  await pending;
+  assert.deepEqual([measured(service, 'claude').status, measured(service, 'claude').windows], ['pending', []]);
+  await service.refresh();
+  assert.deepEqual([measured(service, 'claude').status, measured(service, 'claude').windows[0]?.remainingPercent], ['ok', 31]);
+});
+
+test('provider and credential selector changes invalidate the source and reset its generation', async t => {
+  const dir = await tempDir(t, 'vibe-service-selector-');
+  const settingsPath = path.join(dir, 'settings.json');
+  await saveSettings(settingsPath, { ...defaultSettings(), accounts: [account({ configDirExplicit: false, origin: 'user' })] });
+  const providers = [adapter('claude', () => []), adapter('codex', () => [])];
+  const service = await createService({ settingsPath, providers });
+  for (let i = 0; i < 3; i++) await service.refresh('claude');
+  await transactSettings(settingsPath, async transaction => {
+    await transaction.save({
+      ...transaction.settings,
+      accounts: transaction.settings.accounts.map(entry => ({ ...entry, configDirExplicit: true }))
+    });
+  });
+  await service.syncSettings();
+  assert.deepEqual([measured(service, 'claude').status, measured(service, 'claude').windows], ['pending', []]);
+  await service.refresh('claude');
+  await transactSettings(settingsPath, async transaction => {
+    await transaction.save({
+      ...transaction.settings,
+      accounts: transaction.settings.accounts.map(entry => ({ ...entry, providerId: 'codex' }))
+    });
+  });
+  await service.syncSettings();
+  assert.deepEqual([measured(service, 'codex').status, measured(service, 'codex').windows], ['pending', []]);
+  await service.refresh('codex');
+  assert.equal(measured(service, 'codex').status, 'ok', 'the old provider generation does not suppress the new provider reading');
 });
 
 test('the service isolates accounts, deduplicates refresh, keeps the last good reading and hides raw errors', async t => {

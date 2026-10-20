@@ -18,6 +18,9 @@ const result = spawnSync(
       ? [
           '--experimental-test-coverage',
           '--test-coverage-include=src/**',
+          // Static translations are validated for key/placeholder parity, not counted as
+          // executable behavior. Renderer/startup behavior has a separate Electron UI gate.
+          '--test-coverage-exclude=src/shared/i18n/locales/**',
           '--test-coverage-lines=95',
           '--test-coverage-branches=85',
           '--test-coverage-functions=90'

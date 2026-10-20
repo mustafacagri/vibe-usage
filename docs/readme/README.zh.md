@@ -66,7 +66,7 @@ Vibe Usage 读取你电脑上已经登录的会话，把所有额度并排展示
 
 ### 移交任务
 
-从 Claude Code、Codex、Cursor Agent 或 Antigravity 中选择一个会话。Vibe Usage 会在项目文件夹中把它总结为 `VIBE_HANDOVER.md`：目标、最近的对话、改动过的文件以及 git 状态。随后它启动目标工具，并提示其阅读这份摘要。列表中只显示在所选文件夹中启动的会话。
+选择 Claude Code、Codex、Cursor Agent 或 Antigravity 会话。`VIBE_HANDOVER.md` 包含目标、最近请求、近期对话、文件引用和 Git 分支/HEAD 元数据，不扫描工作树。预览会固定实际来源、账号和版本；来源变化后必须重新预览。移入 worktree 的会话会显示在正确的项目下。
 
 </td>
 <td valign="top">
@@ -129,17 +129,17 @@ Claude 和 Codex 每个配置文件文件夹保存一个登录。**添加账户*
 
 ## 隐私与安全
 
-- **只读。** 它使用已有的会话。从不索要密码，从不保存令牌，从不让你退出登录，也从不触碰进行中的工作。
-- **登录过期。** 当工作可以自动在账号之间转移时，过期的 Claude Code 登录由 Claude Code 自己续期：一次最小的 Haiku 请求（一个词、不使用工具、不保存任何内容），每个账号最多每 30 分钟一次。应用从不读取或使用刷新令牌。
-- **只有两个接口。** 额度请求只发往 Anthropic 和 Cursor 的用量接口，并开启 TLS 验证。Codex 和 Antigravity 在本地读取。
-- **磁盘上没有机密。** 设置保存在 `%APPDATA%\Vibe Usage\settings.json`（Windows）或 `~/Library/Application Support/Vibe Usage/settings.json`（macOS）。额度只保存在内存中。
-- **加固的应用。** 窗口在严格 CSP 的沙盒中运行，无法跳转或打开其他窗口，只响应自己的页面。Electron fuse 禁用了 `runAsNode`、`NODE_OPTIONS` 和检查器，并强制校验 ASAR 完整性。
+现有凭据会在内存中读取，文档可能同时包含访问令牌和刷新令牌。应用检查刷新令牌是否存在，但不会将其保存到自身数据中。续期由 Claude Code 完成。
+
+设置、账号标签、路径、额度历史和最近测量结果保存在本地磁盘。使用另一账号继续时会复制完整对话。`VIBE_HANDOVER.md` 包含经过遮盖的对话上下文，但无法保证识别所有秘密格式。移交前请检查预览。Git 已跟踪的文件或 Git 排除失败会阻止移交。Cursor 保留自身的信任确认。
+
+额度请求使用提供商端点，版本检查使用 GitHub。下载和安装更新是两次独立的用户操作。详情见[隐私与本地数据](../PRIVACY.md)。
 
 ## 安装
 
 ### Windows
 
-从[最新版本](https://github.com/mustafacagri/vibe-usage/releases/latest)下载 `Vibe-Usage-<版本>-win-setup.exe` 并运行：只为当前用户安装，无需管理员权限。也可以下载便携版 `Vibe-Usage-<版本>-win-x64.zip`（或 `-arm64`），解压后运行 `Vibe Usage.exe`。安装版会自动保持最新：新版本在后台下载，点按 **重启以更新** 即可安装。便携版会给出新版本的链接。应用常驻在系统托盘中。
+从[最新版本](https://github.com/mustafacagri/vibe-usage/releases/latest)下载 `Vibe-Usage-<版本>-win-setup.exe` 并运行：只为当前用户安装，无需管理员权限。也可以下载便携版 `Vibe-Usage-<版本>-win-x64.zip`（或 `-arm64`），解压后运行 `Vibe Usage.exe`。受支持的签名安装版会在点按 **下载** 后获取更新，再点按 **重启以更新** 才会安装。便携版会给出新版本的链接。应用常驻在系统托盘中。
 
 由于应用未经代码签名，首次启动时 Windows SmartScreen 可能会显示“**Windows 已保护你的电脑**”。点击**更多信息**，然后点击**仍要运行**。
 

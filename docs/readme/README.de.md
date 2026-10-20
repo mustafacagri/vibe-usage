@@ -77,10 +77,7 @@ einem neuen Terminal im gewählten Projektordner. Lässt sich kein Tool verifizi
 
 ### Übergabe
 
-Wähle eine Sitzung aus Claude Code, Codex, Cursor Agent oder Antigravity. Vibe Usage fasst sie im Projektordner als
-`VIBE_HANDOVER.md` zusammen: Ziel, letzte Gesprächsrunden, berührte Dateien und Git-Status. Dann startet es das Zieltool
-mit der Anweisung, diese Zusammenfassung zu lesen. Es werden nur Sitzungen aufgeführt, die im gewählten Ordner gestartet
-wurden.
+Wähle eine Sitzung aus Claude Code, Codex, Cursor Agent oder Antigravity. `VIBE_HANDOVER.md` enthält Ziel, letzte Anfrage, jüngsten Gesprächsverlauf, Dateiverweise und Git-Branch/HEAD-Metadaten; der Arbeitsbaum wird nicht untersucht. Die Vorschau bindet die physische Quelle, das Konto und die Version. Eine geänderte Quelle braucht eine neue Vorschau; in einen Worktree verlagerte Sitzungen erscheinen beim richtigen Projekt.
 
 </td>
 <td valign="top">
@@ -149,22 +146,17 @@ Codex-Modellcache und `cursor-agent --list-models` (24 Stunden zwischengespeiche
 
 ## Datenschutz und Sicherheit
 
-- **Nur lesend.** Es nutzt die vorhandenen Sitzungen. Es fragt nie nach einem Passwort, speichert nie ein
-  Token, meldet dich nie ab und greift nie in laufende Arbeit ein.
-- **Abgelaufene Anmeldung.** Wenn Arbeit von selbst zwischen Konten wechseln darf, erneuert Claude Code selbst eine abgelaufene Anmeldung: mit einer minimalen Haiku-Anfrage (ein Wort, keine Tools, nichts gespeichert), höchstens alle 30 Minuten pro Konto. Die App liest oder nutzt das Refresh-Token nie.
-- **Zwei Endpunkte.** Kontingentanfragen gehen nur an die Nutzungsendpunkte von Anthropic und Cursor, mit aktiver
-  TLS-Prüfung. Codex und Antigravity werden lokal gelesen.
-- **Nichts Geheimes auf der Festplatte.** Einstellungen liegen in `%APPDATA%\Vibe Usage\settings.json` (Windows) oder
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). Kontingente werden nur im Speicher gehalten.
-- **Abgeschottete App.** Das Fenster läuft in einer Sandbox mit strikter CSP, kann nicht navigieren oder andere Fenster
-  öffnen und antwortet nur seiner eigenen Seite. Electron-Fuses deaktivieren `runAsNode`, `NODE_OPTIONS` und den
-  Inspector und erzwingen die ASAR-Integrität.
+Vorhandene Anmeldedaten werden im Speicher gelesen; die Dokumente können Zugriffs- und Refresh-Tokens enthalten. Die App prüft, ob ein Refresh-Token vorhanden ist, speichert es aber nicht in ihren eigenen Daten. Die Erneuerung übernimmt Claude Code.
+
+Einstellungen, Kontobezeichnungen, Pfade, Kontingentverlauf und letzte Messungen bleiben lokal auf der Festplatte. Beim Kontowechsel wird das vollständige Gespräch kopiert. `VIBE_HANDOVER.md` enthält bereinigten Gesprächskontext; unbekannte Geheimnisformate können unerkannt bleiben. Prüfe die Vorschau vor der Übergabe. Bereits von Git verfolgte Dateien oder ein fehlgeschlagener Git-Ausschluss stoppen die Übergabe. Cursor behält seine Vertrauensabfragen.
+
+Kontingentabfragen nutzen die Anbieter-Endpunkte, Versionsprüfungen GitHub. Download und Installation eines Updates sind getrennte Benutzeraktionen. Einzelheiten stehen unter [Datenschutz und lokale Daten](../PRIVACY.md).
 
 ## Installation
 
 ### Windows
 
-Lade `Vibe-Usage-<version>-win-setup.exe` aus dem [neuesten Release](https://github.com/mustafacagri/vibe-usage/releases/latest) herunter und starte es: Es installiert nur für deinen Benutzer, ohne Administratorrechte. Oder nimm die portable `Vibe-Usage-<version>-win-x64.zip` (oder `-arm64`), entpacke sie und starte `Vibe Usage.exe`. Die installierte App hält sich selbst aktuell: Eine neue Version wird im Hintergrund geladen und mit **Neu starten und aktualisieren** installiert. Die portable Kopie verlinkt eine neue Version. Die App sitzt im Infobereich.
+Lade `Vibe-Usage-<version>-win-setup.exe` aus dem [neuesten Release](https://github.com/mustafacagri/vibe-usage/releases/latest) herunter und starte es: Es installiert nur für deinen Benutzer, ohne Administratorrechte. Oder nimm die portable `Vibe-Usage-<version>-win-x64.zip` (oder `-arm64`), entpacke sie und starte `Vibe Usage.exe`. Eine unterstützte signierte Installation lädt Updates erst nach Klick auf **Herunterladen** und installiert sie mit **Neu starten und aktualisieren**. Die portable Kopie verlinkt eine neue Version. Die App sitzt im Infobereich.
 
 Die App ist nicht codesigniert, daher meldet Windows SmartScreen beim ersten Start eventuell **Der Computer wurde durch Windows geschützt**. Klicke auf **Weitere Informationen** und dann auf **Trotzdem ausführen**.
 

@@ -358,6 +358,69 @@ test('handover and smart launch reject missing folders and stop when the dialog 
   assert.equal(log.hidden, 1);
 });
 
+test('handover IPC preserves the reviewed physical session and source account and rejects forged or changed sources', async t => {
+  const { context, log, home } = await harness(t);
+  const main = account({ id: 'claude:main', configDir: path.join(home, '.claude') });
+  const spare = account({ id: 'claude:spare', configDir: path.join(home, '.claude-spare'), primary: false });
+  await context.service.updateSettings({ accounts: [main, spare] });
+  const files: string[] = [];
+  for (const [index, profile] of [main, spare].entries()) {
+    const file = path.join(profile.configDir ?? '', 'projects', home.replace(/[/\\:]/g, '-'), 'copied.jsonl');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(
+      file,
+      JSON.stringify({ type: 'user', cwd: home, message: { content: index ? 'Spare profile task' : 'Main profile task' } })
+    );
+    files.push(file);
+  }
+  const handlers = createHandlers(context);
+  const selected = (await handlers.listSessions({ providerId: 'claude', projectDir: home })).find(
+    entry => entry.source.accountId === spare.id
+  );
+  assert.ok(selected);
+  const request = {
+    projectDir: home,
+    fromProvider: 'auto',
+    toProvider: 'codex',
+    sessionProvider: 'claude',
+    sessionId: selected.id,
+    sourceAccountId: spare.id,
+    sessionSource: selected.source
+  };
+  const preview = await handlers.previewHandover(request);
+  assert.ok(preview.brief.includes('Spare profile task'));
+  assert.ok(!preview.brief.includes('Main profile task'));
+  assert.deepEqual(preview.sessionSource, selected.source);
+  const byAccount = await handlers.previewHandover({ ...request, sessionSource: undefined });
+  assert.ok(byAccount.brief.includes('Spare profile task'), 'sourceAccountId is not dropped at the IPC boundary');
+  await assert.rejects(handlers.previewHandover({ ...request, sourceAccountId: main.id }), /invalid_argument/);
+  await assert.rejects(handlers.previewHandover({ ...request, sessionSource: { ...selected.source, id: files[0] } }), /invalid_argument/);
+  await assert.rejects(
+    handlers.previewHandover({ ...request, sessionSource: { ...selected.source, id: '0'.repeat(64) } }),
+    /session_not_found/
+  );
+  const file = files[1];
+  assert.ok(file);
+  await fs.appendFile(file, `\n${JSON.stringify({ type: 'user', cwd: home, message: { content: 'New task after preview' } })}`);
+  await assert.rejects(handlers.executeHandover({ ...request, sessionSource: preview.sessionSource }), /session_not_found/);
+  assert.equal(log.spawned.length, 0, 'a stale preview cannot dispatch or silently switch profiles');
+});
+
+test('handover IPC preserves an explicit empty preview pin until execution', async t => {
+  const { context, log, home } = await harness(t);
+  const main = account({ id: 'claude:main', configDir: path.join(home, '.claude') });
+  await context.service.updateSettings({ accounts: [main] });
+  const handlers = createHandlers(context);
+  const request = { projectDir: home, fromProvider: 'claude', toProvider: 'codex', sessionId: 'auto', sessionSource: null };
+  const empty = await handlers.previewHandover(request);
+  assert.equal(empty.sessionId, null, 'null is a valid absence pin at the renderer boundary');
+  const file = path.join(main.configDir ?? '', 'projects', home.replace(/[/\\:]/g, '-'), 'first.jsonl');
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ type: 'user', cwd: home, message: { content: 'A new task never shown in the preview' } }));
+  await assert.rejects(handlers.executeHandover(request), /session_not_found/);
+  assert.equal(log.spawned.length, 0, 'dropping null would silently discover the new session');
+});
+
 test('dismissing and restoring accounts publish the new state', async t => {
   const { context, log } = await harness(t);
   const handlers = createHandlers(context);
@@ -407,6 +470,24 @@ test('continuing a session that is still being written asks first; declining sta
   const confirmed = await harness(t);
   assert.equal((await createHandlers(confirmed.context).continueWork('running:claude:default')).status, 'continued');
   assert.deepEqual(confirmed.log.accepted, ['running:claude:default']);
+});
+
+test('continuation uses settings changed by another process while its confirmation was open', async t => {
+  const { context, dataDir } = await harness(t);
+  await context.service.updateSettings({ autoContinue: 'accounts' });
+  const otherProcess = await createService({ settingsPath: path.join(dataDir, 'settings.json'), providers: [] });
+  context.confirmWarnings = async () => {
+    await otherProcess.updateSettings({ autoContinue: 'off' });
+    return true;
+  };
+  let acceptedWith: string | undefined;
+  context.continuity.accept = (_id, current) => {
+    acceptedWith = current.settings.autoContinue;
+    return Promise.resolve({ to: 'claude', accountId: null, resumed: true, mode: 'terminal' });
+  };
+  const result = await createHandlers(context).continueWork('running:claude:default');
+  assert.equal(result.status, 'continued');
+  assert.equal(acceptedWith, 'off', 'the post-dialog action sees the latest durable settings');
 });
 
 test('Smart Launch refreshes quota after the folder dialog before choosing a provider', async t => {

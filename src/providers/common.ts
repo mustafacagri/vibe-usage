@@ -14,8 +14,15 @@ import { isFile, isObject, type JsonObject } from '../core/files.ts';
 import { hasControlChars } from '../core/model.ts';
 import { APP_SLUG, DURATION_MS, type ProviderId } from '../shared/catalog.ts';
 import { getQuotaAgent } from './tls-trust.ts';
+import type { RefreshContext } from './types.ts';
 
 export type Clock = () => number;
+
+export function remainingTimeout(timeoutMs: number, context?: Partial<RefreshContext>): number {
+  const remaining = context?.deadline === undefined ? timeoutMs : Math.min(timeoutMs, context.deadline - Date.now());
+  if (context?.signal?.aborted || remaining <= 0) throw new ProviderError('request_timeout');
+  return remaining;
+}
 
 const packageJson: unknown = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 export const APP_VERSION = isObject(packageJson) && typeof packageJson.version === 'string' ? packageJson.version : '0.0.0';
@@ -70,13 +77,16 @@ export function jwtClaims(token: unknown): JsonObject {
 }
 
 // A credentials document written by a provider's own tool.
-export async function readCredentialFile(file: string): Promise<JsonObject> {
+export async function readCredentialFile(file: string, context?: RefreshContext): Promise<JsonObject> {
   let document: unknown;
   try {
+    remainingTimeout(DEFAULT_PROCESS_TIMEOUT_MS, context);
     const stat = await fsp.stat(file);
     if (stat.size > MAX_RESPONSE_BYTES) throw new ProviderError('invalid_response');
-    document = JSON.parse(await fsp.readFile(file, 'utf8'));
+    document = JSON.parse(await fsp.readFile(file, { encoding: 'utf8', ...(context ? { signal: context.signal } : {}) }));
+    remainingTimeout(DEFAULT_PROCESS_TIMEOUT_MS, context);
   } catch (error) {
+    if (context?.signal.aborted) throw new ProviderError('request_timeout');
     if (error instanceof ProviderError) throw error;
     throw new ProviderError(systemErrorCode(error) === 'ENOENT' ? 'auth_missing' : 'auth_invalid', { cause: error });
   }
@@ -110,7 +120,12 @@ export interface Settle<T> {
 
 // One-shot settlement shared by the HTTP clients: the first outcome wins, the deadline is
 // cleared, and a failure destroys every attached stream.
-export function settleOnce<T>(resolve: (value: T) => void, reject: (error: ProviderError) => void, timeoutMs: number): Settle<T> {
+export function settleOnce<T>(
+  resolve: (value: T) => void,
+  reject: (error: ProviderError) => void,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Settle<T> {
   let settled = false;
   const streams: Destroyable[] = [];
   const deadline = setTimeout(() => {
@@ -120,6 +135,7 @@ export function settleOnce<T>(resolve: (value: T) => void, reject: (error: Provi
     if (settled) return false;
     settled = true;
     clearTimeout(deadline);
+    signal?.removeEventListener('abort', abort);
     return true;
   };
   function fail(error: ProviderError): void {
@@ -127,13 +143,19 @@ export function settleOnce<T>(resolve: (value: T) => void, reject: (error: Provi
     for (const stream of streams) stream.destroy();
     reject(error);
   }
+  const abort = (): void => {
+    fail(new ProviderError('request_timeout'));
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   return {
     succeed: value => {
       if (settle()) resolve(value);
     },
     fail,
     attach: stream => {
-      streams.push(stream);
+      if (settled) stream.destroy();
+      else streams.push(stream);
       return stream;
     }
   };
@@ -174,7 +196,7 @@ export function readJsonResponse(response: IncomingMessage, settle: Settle<unkno
 export type QuotaEndpoint = (typeof QUOTA_ENDPOINTS)[keyof typeof QUOTA_ENDPOINTS];
 type HttpsGet = (url: URL, options: https.RequestOptions, callback: (response: IncomingMessage) => void) => ClientRequest;
 
-export interface GetJsonOptions {
+export interface GetJsonOptions extends Partial<RefreshContext> {
   headers?: Readonly<Record<string, string>>;
   timeoutMs?: number;
   requestImpl?: HttpsGet;
@@ -182,13 +204,22 @@ export interface GetJsonOptions {
 
 export type GetJson = (endpoint: QuotaEndpoint, options?: GetJsonOptions) => Promise<unknown>;
 
-export const getJson: GetJson = (endpoint, { headers = {}, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, requestImpl = https.get } = {}) =>
+export const getJson: GetJson = (
+  endpoint,
+  { headers = {}, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, requestImpl = https.get, ...context } = {}
+) =>
   new Promise((resolve, reject) => {
     if (!ALLOWED_ENDPOINTS.has(endpoint)) {
       reject(new ProviderError('endpoint_not_allowed'));
       return;
     }
-    const settle = settleOnce<unknown>(resolve, reject, timeoutMs);
+    try {
+      timeoutMs = remainingTimeout(timeoutMs, context);
+    } catch (error) {
+      reject(error instanceof Error ? error : new ProviderError('request_timeout'));
+      return;
+    }
+    const settle = settleOnce<unknown>(resolve, reject, timeoutMs, context.signal);
     try {
       const request = settle.attach(
         requestImpl(new URL(endpoint), { headers, timeout: timeoutMs, agent: getQuotaAgent(), rejectUnauthorized: true }, response => {
@@ -295,7 +326,7 @@ export async function findBinary(
   throw new ProviderError('binary_missing');
 }
 
-export interface RunOptions {
+export interface RunOptions extends Partial<RefreshContext> {
   env?: Record<string, string>;
   platform?: NodeJS.Platform;
   timeoutMs?: number;
@@ -309,11 +340,17 @@ export type RunProcess = (binary: string, args: readonly string[], options?: Run
 export const runProcess: RunProcess = (
   binary,
   args,
-  { env, platform = process.platform, timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS, maxBytes = MAX_RESPONSE_BYTES } = {}
+  { env, platform = process.platform, timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS, maxBytes = MAX_RESPONSE_BYTES, ...context } = {}
 ) =>
   new Promise((resolve, reject) => {
     if (!isValidBinary(binary, platform) || args.some(arg => arg.includes('\0'))) {
       reject(new ProviderError('invalid_binary'));
+      return;
+    }
+    try {
+      timeoutMs = remainingTimeout(timeoutMs, context);
+    } catch (error) {
+      reject(error instanceof Error ? error : new ProviderError('request_timeout'));
       return;
     }
     const child = spawn(binary, args, {
@@ -325,6 +362,12 @@ export const runProcess: RunProcess = (
     let output = '';
     let bytes = 0;
     let failure: ProviderError | null = null;
+    const abort = (): void => {
+      failure = new ProviderError('request_timeout');
+      child.kill('SIGKILL');
+    };
+    context.signal?.addEventListener('abort', abort, { once: true });
+    if (context.signal?.aborted) abort();
     const timer = setTimeout(() => {
       failure = new ProviderError('process_timeout');
       child.kill('SIGKILL');
@@ -339,10 +382,12 @@ export const runProcess: RunProcess = (
     });
     child.on('error', () => {
       clearTimeout(timer);
+      context.signal?.removeEventListener('abort', abort);
       reject(new ProviderError('process_failed'));
     });
     child.on('close', code => {
       clearTimeout(timer);
+      context.signal?.removeEventListener('abort', abort);
       if (failure) reject(failure);
       else if (code !== 0) reject(new ProviderError('process_failed'));
       else resolve(output);

@@ -78,9 +78,7 @@ zgadywać.
 
 ### Przekaż zadanie
 
-Wybierz sesję z Claude Code, Codex, Cursor Agent lub Antigravity. Vibe Usage podsumowuje ją w pliku `VIBE_HANDOVER.md`
-w folderze projektu: cel, ostatnie wymiany, zmienione pliki i stan gita. Następnie uruchamia narzędzie docelowe z
-poleceniem przeczytania tego podsumowania. Wyświetlane są tylko sesje rozpoczęte w wybranym folderze.
+Wybierz sesję Claude Code, Codex, Cursor Agent lub Antigravity. `VIBE_HANDOVER.md` zawiera cel, ostatnie żądanie, ostatnie rozmowy, odwołania do plików i metadane gałęzi/HEAD Git; drzewo robocze nie jest skanowane. Podgląd przypina fizyczne źródło, konto i wersję. Zmiana źródła wymaga nowego podglądu. Sesje przeniesione do worktree pojawiają się przy właściwym projekcie.
 
 </td>
 <td valign="top">
@@ -149,22 +147,17 @@ modeli Codex oraz `cursor-agent --list-models` (przechowywane przez 24 godziny).
 
 ## Prywatność i bezpieczeństwo
 
-- **Tylko odczyt.** Korzysta z istniejących sesji. Nigdy nie prosi o hasło, nie zapisuje tokenów, nie
-  wylogowuje Cię i nie ingeruje w trwającą pracę.
-- **Wygasłe logowanie.** Gdy praca może sama przechodzić między kontami, wygasłe logowanie Claude Code odnawia sam Claude Code: jednym minimalnym zapytaniem do Haiku (jedno słowo, bez narzędzi, nic nie jest zapisywane), najwyżej raz na 30 minut na konto. Aplikacja nigdy nie czyta ani nie używa tokenu odświeżania.
-- **Dwa punkty końcowe.** Zapytania o limity trafiają tylko do punktów końcowych użycia Anthropic i Cursor, z włączoną
-  weryfikacją TLS. Codex i Antigravity są odczytywane lokalnie.
-- **Żadnych sekretów na dysku.** Ustawienia są w `%APPDATA%\Vibe Usage\settings.json` (Windows) lub
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). Limity są trzymane wyłącznie w pamięci.
-- **Zabezpieczona aplikacja.** Okno działa w piaskownicy ze ścisłą CSP, nie może nawigować ani otwierać innych okien i
-  odpowiada tylko własnej stronie. Fuse'y Electrona wyłączają `runAsNode`, `NODE_OPTIONS` i inspektor oraz wymuszają
-  integralność ASAR.
+Istniejące dane logowania są odczytywane w pamięci; dokumenty mogą zawierać tokeny dostępu i odświeżania. Aplikacja sprawdza obecność tokenu odświeżania, ale nie zapisuje go we własnych danych. Odnowienie wykonuje Claude Code.
+
+Ustawienia, etykiety kont, ścieżki, historia limitów i ostatnie pomiary pozostają na lokalnym dysku. Kontynuacja na innym koncie kopiuje całą rozmowę. `VIBE_HANDOVER.md` zawiera oczyszczony kontekst rozmowy; nie da się zagwarantować rozpoznania wszystkich formatów sekretów. Sprawdź podgląd przed przekazaniem. Plik już śledzony przez Git lub błąd wykluczenia z Git wstrzymuje przekazanie. Cursor zachowuje własne pytania o zaufanie.
+
+Limity są pobierane z usług dostawców, a wersje sprawdzane w GitHub. Pobranie i instalacja aktualizacji to osobne działania użytkownika. Zobacz [Prywatność i dane lokalne](../PRIVACY.md).
 
 ## Instalacja
 
 ### Windows
 
-Pobierz `Vibe-Usage-<wersja>-win-setup.exe` z [najnowszego wydania](https://github.com/mustafacagri/vibe-usage/releases/latest) i uruchom: instaluje się tylko dla Twojego użytkownika, bez uprawnień administratora. Albo weź przenośny `Vibe-Usage-<wersja>-win-x64.zip` (lub `-arm64`), rozpakuj i uruchom `Vibe Usage.exe`. Zainstalowana aplikacja sama się aktualizuje: nowa wersja pobiera się w tle i instaluje po kliknięciu **Uruchom ponownie, aby zaktualizować**. Wersja przenośna wskazuje każdą nową wersję. Aplikacja działa w zasobniku systemowym.
+Pobierz `Vibe-Usage-<wersja>-win-setup.exe` z [najnowszego wydania](https://github.com/mustafacagri/vibe-usage/releases/latest) i uruchom: instaluje się tylko dla Twojego użytkownika, bez uprawnień administratora. Albo weź przenośny `Vibe-Usage-<wersja>-win-x64.zip` (lub `-arm64`), rozpakuj i uruchom `Vibe Usage.exe`. Obsługiwana podpisana instalacja pobiera aktualizację po kliknięciu **Pobierz**, a instaluje ją po wybraniu **Uruchom ponownie, aby zaktualizować**. Wersja przenośna wskazuje każdą nową wersję. Aplikacja działa w zasobniku systemowym.
 
 Aplikacja nie jest podpisana, więc przy pierwszym uruchomieniu Windows SmartScreen może wyświetlić **System Windows ochronił ten komputer**. Kliknij **Więcej informacji**, a potem **Uruchom mimo to**.
 

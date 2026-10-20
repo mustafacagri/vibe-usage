@@ -76,9 +76,7 @@ terminal na pasta de projeto escolhida. Se nenhuma ferramenta puder ser verifica
 
 ### Transferir
 
-Escolha uma sessão do Claude Code, Codex, Cursor Agent ou Antigravity. O Vibe Usage a resume em `VIBE_HANDOVER.md` na
-pasta do projeto: o objetivo, as últimas interações, os arquivos alterados e o status do git. Depois abre a ferramenta
-de destino com uma instrução para ler esse resumo. Só aparecem as sessões iniciadas na pasta escolhida.
+Escolha uma sessão do Claude Code, Codex, Cursor Agent ou Antigravity. `VIBE_HANDOVER.md` contém objetivo, último pedido, conversa recente, referências a arquivos e metadados de branch/HEAD do Git; a árvore de trabalho não é examinada. A prévia fixa a fonte física, a conta e a versão. Uma fonte alterada exige nova prévia. Sessões movidas para um worktree aparecem no projeto correto.
 
 </td>
 <td valign="top">
@@ -147,22 +145,17 @@ de modelos do Codex e `cursor-agent --list-models` (em cache por 24 horas).
 
 ## Privacidade e segurança
 
-- **Somente leitura.** Usa as sessões que já existem. Nunca pede senha, nunca armazena um token, nunca
-  desconecta você e nunca mexe no trabalho em andamento.
-- **Login expirado.** Quando o trabalho pode passar sozinho de uma conta para outra, o próprio Claude Code renova um login expirado: com uma requisição mínima ao Haiku (uma palavra, sem ferramentas, nada salvo), no máximo a cada 30 minutos por conta. O app nunca lê nem usa o token de atualização.
-- **Dois endpoints.** As consultas de cota vão apenas para os endpoints de uso da Anthropic e do Cursor, com verificação
-  TLS ativada. Codex e Antigravity são lidos localmente.
-- **Nada secreto no disco.** As configurações ficam em `%APPDATA%\Vibe Usage\settings.json` (Windows) ou
-  `~/Library/Application Support/Vibe Usage/settings.json` (macOS). As cotas ficam só na memória.
-- **Um app blindado.** A janela roda em sandbox com uma CSP rígida, não pode navegar nem abrir outras janelas e só
-  responde à própria página. Os fuses do Electron desativam `runAsNode`, `NODE_OPTIONS` e o inspector, e exigem a
-  integridade do ASAR.
+As credenciais existentes são lidas na memória; os documentos podem conter tokens de acesso e atualização. O app verifica se existe um token de atualização, mas não o salva nos próprios dados. A renovação é feita pelo Claude Code.
+
+Configurações, nomes de contas, caminhos, histórico de cotas e últimas medições ficam no disco local. Continuar em outra conta copia a conversa inteira. `VIBE_HANDOVER.md` contém contexto com informações sensíveis ocultadas, mas não é possível garantir a detecção de todos os formatos de segredos. Confira a prévia antes da transferência. Um arquivo já rastreado pelo Git ou uma falha de exclusão do Git impede a transferência. O Cursor mantém suas próprias perguntas de confiança.
+
+As cotas usam os endpoints dos provedores e a verificação de versões usa o GitHub. Baixar e instalar uma atualização são ações separadas do usuário. Veja [Privacidade e dados locais](../PRIVACY.md).
 
 ## Instalação
 
 ### Windows
 
-Baixe `Vibe-Usage-<versão>-win-setup.exe` da [versão mais recente](https://github.com/mustafacagri/vibe-usage/releases/latest) e execute: instala só para o seu usuário, sem direitos de administrador. Ou use o portátil `Vibe-Usage-<versão>-win-x64.zip` (ou `-arm64`), descompacte e execute `Vibe Usage.exe`. O app instalado se mantém atualizado: a nova versão é baixada em segundo plano e instalada com **Reiniciar para atualizar**. A cópia portátil indica cada nova versão. O app fica na bandeja do sistema.
+Baixe `Vibe-Usage-<versão>-win-setup.exe` da [versão mais recente](https://github.com/mustafacagri/vibe-usage/releases/latest) e execute: instala só para o seu usuário, sem direitos de administrador. Ou use o portátil `Vibe-Usage-<versão>-win-x64.zip` (ou `-arm64`), descompacte e execute `Vibe Usage.exe`. Uma instalação assinada compatível baixa a atualização ao clicar em **Baixar** e a instala com **Reiniciar para atualizar**. A cópia portátil indica cada nova versão. O app fica na bandeja do sistema.
 
 O app não é assinado, então na primeira abertura o Windows SmartScreen pode mostrar **O Windows protegeu o computador**. Clique em **Mais informações** e depois em **Executar assim mesmo**.
 
