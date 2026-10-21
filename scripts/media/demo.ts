@@ -75,6 +75,7 @@ export function snapshot(
       lowQuotaPercent: 20,
       quietHours: { start: '23:00', end: '08:00' },
       providerOrder: [...PROVIDER_IDS],
+      hiddenProviders: [],
       preferredModels: { claude: 'opus', codex: 'gpt-6-luna' },
       dismissedAccountIds: [],
       accounts: ACCOUNTS

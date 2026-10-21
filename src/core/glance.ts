@@ -1,7 +1,7 @@
 // What the tray tells without the window being opened: each tool's best limit in the tooltip,
 // and a notification when an account's tightest limit runs low or becomes available again.
 import path from 'node:path';
-import { APP_NAME, displayOrder, providerById, type ProviderId } from '../shared/catalog.ts';
+import { APP_NAME, providerById, visibleProviders, type ProviderId } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
 import {
   describeCode,
@@ -30,14 +30,14 @@ function bestWindow(snapshot: Snapshot, providerId: ProviderId): KnownWindow | n
 
 // The tool the tray icon shows: the first one in the window's order that has accounts.
 export function trayTool(snapshot: Snapshot): { providerId: ProviderId; percent: number | null } | null {
-  const providerId = displayOrder(snapshot.settings).find(id => snapshot.providers.some(p => p.id === id && p.accounts.length));
+  const providerId = visibleProviders(snapshot.settings).find(id => snapshot.providers.some(p => p.id === id && p.accounts.length));
   return providerId ? { providerId, percent: bestWindow(snapshot, providerId)?.remainingPercent ?? null } : null;
 }
 
 // One line per tool with accounts: the most headroom any of its accounts has, and when that
 // account's tightest limit resets.
 export function trayTooltip(snapshot: Snapshot, { locale, now = Date.now() }: FormatContext): string {
-  const lines = displayOrder(snapshot.settings).flatMap(providerId => {
+  const lines = visibleProviders(snapshot.settings).flatMap(providerId => {
     const accounts = snapshot.providers.find(p => p.id === providerId)?.accounts ?? [];
     if (!accounts.length) return [];
     const best = bestWindow(snapshot, providerId);
@@ -64,18 +64,20 @@ export function createQuotaWatch(threshold?: number): (snapshot: Snapshot) => Qu
   const lastHeadroom = new Map<string, number>();
   return snapshot => {
     const line = threshold ?? snapshot.settings.lowQuotaPercent;
-    return snapshot.providers.flatMap(provider =>
-      provider.accounts.filter(isMeasured).flatMap((account): QuotaAlert[] => {
-        const window = tightestWindow(account);
-        if (!window) return [];
-        const before = lastHeadroom.get(account.id);
-        lastHeadroom.set(account.id, window.remainingPercent);
-        if (before === undefined) return [];
-        const isLow = window.remainingPercent <= line;
-        if (isLow === before <= line) return [];
-        return [{ kind: isLow ? 'low' : 'available', providerId: provider.id, account, window }];
-      })
-    );
+    return snapshot.providers
+      .filter(provider => !snapshot.settings.hiddenProviders.includes(provider.id))
+      .flatMap(provider =>
+        provider.accounts.filter(isMeasured).flatMap((account): QuotaAlert[] => {
+          const window = tightestWindow(account);
+          if (!window) return [];
+          const before = lastHeadroom.get(account.id);
+          lastHeadroom.set(account.id, window.remainingPercent);
+          if (before === undefined) return [];
+          const isLow = window.remainingPercent <= line;
+          if (isLow === before <= line) return [];
+          return [{ kind: isLow ? 'low' : 'available', providerId: provider.id, account, window }];
+        })
+      );
   };
 }
 

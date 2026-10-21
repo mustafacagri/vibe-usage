@@ -145,6 +145,8 @@ A sign-in not finished within ten minutes takes the account off again, and the n
   open again where they left off.
 - **Home order and fallback priority** are separate: one is how tools are listed in the window and the tray, the other
   which tool takes over next. **Preferred models** set the model Smart Launch and handover start each tool with.
+  The eye beside each tool in Home order hides it: it leaves the window and the tray, its quota is no longer read and it
+  raises no alerts. Handover and the command line still use it. One tool always stays visible.
 - **Project preferences** (Settings): give a folder its own tool, model, account and automatic continuation. They narrow
   what Smart Launch and continuation pick, never replace the verified-quota check, and a project set to *off* stays off
   even when continuation is on globally.

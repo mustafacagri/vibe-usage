@@ -903,3 +903,25 @@ test('a window that never had a value is not kept when a reading leaves it out',
     ['five_hour']
   );
 });
+
+test('a refresh of every tool leaves out the hidden ones only when asked to; one asked for by name is read', async t => {
+  const fetched: ProviderId[] = [];
+  const reading = (id: ProviderId) => (): Promise<FetchResult> => {
+    fetched.push(id);
+    return healthy();
+  };
+  const { service } = await start(t, {
+    stored: { accounts: [], hiddenProviders: ['codex'] },
+    providers: [
+      adapter('claude', () => [found('claude:default', { primary: true })], reading('claude')),
+      adapter('codex', () => [found('codex:default', { providerId: 'codex', primary: true })], reading('codex'))
+    ]
+  });
+  await service.refresh(undefined, { skipHidden: true });
+  assert.deepEqual(fetched, ['claude'], 'a hidden tool is not read');
+  await service.refresh();
+  assert.deepEqual(fetched.sort(), ['claude', 'claude', 'codex'], 'the command line and handover still read every tool');
+  fetched.length = 0;
+  await service.refresh('codex');
+  assert.deepEqual(fetched, ['codex'], 'a tool named on its own is read, hidden or not');
+});

@@ -101,6 +101,8 @@ export const de: Messages = {
   homeOrderSubtitle: 'Reihenfolge der Tools im Hauptfenster und im Tray. Unabhängig von der Fallback-Priorität unten.',
   moveUp: '{name} nach oben',
   moveDown: '{name} nach unten',
+  hideTool: '{name} ausblenden: Das Kontingent wird nicht gelesen und es gibt keine Hinweise',
+  showTool: '{name} wieder anzeigen',
   fallbackPriorityTitle: 'Fallback-Priorität',
   fallbackPrioritySubtitle: 'Dienste, die der Reihe nach übernehmen, wenn das primäre Kontingent erschöpft ist:',
   slotLabel: '{n}. Konto / KI',

@@ -100,6 +100,8 @@ export const ko: Messages = {
   homeOrderSubtitle: '메인 창과 트레이에 도구가 표시되는 순서입니다. 아래 대체 우선순위와는 별개입니다.',
   moveUp: '{name} 위로 이동',
   moveDown: '{name} 아래로 이동',
+  hideTool: '{name} 숨기기: 할당량을 읽지 않고 알림도 보내지 않습니다',
+  showTool: '{name} 다시 표시',
   fallbackPriorityTitle: '대체 전환 순위 (Fallback)',
   fallbackPrioritySubtitle: '기본 한도 소진 시 순서대로 이어받을 도구:',
   slotLabel: '{n}. 계정 / AI',

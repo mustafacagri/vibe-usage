@@ -146,6 +146,13 @@ export function normalizeProviderOrder(order: unknown): ProviderId[] {
 export const displayOrder = (settings: { homeOrder?: unknown; providerOrder: unknown }): ProviderId[] =>
   normalizeProviderOrder(settings.homeOrder ?? settings.providerOrder);
 
+// The tools the window and the tray show, in display order.
+export const visibleProviders = (settings: {
+  homeOrder?: unknown;
+  providerOrder: unknown;
+  hiddenProviders?: readonly ProviderId[];
+}): ProviderId[] => displayOrder(settings).filter(id => !settings.hiddenProviders?.includes(id));
+
 export interface PeriodLabel {
   labelKey: MessageKey;
   labelParams?: { n: number };

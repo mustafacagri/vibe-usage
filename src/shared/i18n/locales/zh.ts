@@ -99,6 +99,8 @@ export const zh: Messages = {
   homeOrderSubtitle: '工具在主窗口和托盘中的显示顺序，与下方的备用优先级相互独立。',
   moveUp: '上移 {name}',
   moveDown: '下移 {name}',
+  hideTool: '隐藏 {name}：不读取其配额，也不会提醒',
+  showTool: '重新显示 {name}',
   fallbackPriorityTitle: '备选切换优先级 (Fallback)',
   fallbackPrioritySubtitle: '当首选工具配额耗尽时依次接管的 AI 工具：',
   slotLabel: '第 {n} 顺位账号 / AI',

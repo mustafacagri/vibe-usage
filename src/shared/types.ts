@@ -184,6 +184,9 @@ export interface Settings {
   providerOrder: ProviderId[];
   // The order the window and the tray list tools in; without one, `providerOrder`.
   homeOrder?: ProviderId[];
+  // Tools the window and the tray leave out: their quota is not read and they raise no alerts.
+  // At least one tool stays visible.
+  hiddenProviders: ProviderId[];
   preferredModels: Partial<Record<ProviderId, string>>;
   language: Language;
   // Notify when an account's tightest limit runs low or becomes available again.

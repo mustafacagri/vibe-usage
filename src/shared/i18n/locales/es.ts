@@ -101,6 +101,8 @@ export const es: Messages = {
   homeOrderSubtitle: 'El orden de las herramientas en la ventana principal y en la bandeja. Es independiente de la prioridad de respaldo.',
   moveUp: 'Subir {name}',
   moveDown: 'Bajar {name}',
+  hideTool: 'Ocultar {name}: no se lee su cuota ni genera avisos',
+  showTool: 'Mostrar {name} de nuevo',
   fallbackPriorityTitle: 'Prioridad de Reserva (Fallback)',
   fallbackPrioritySubtitle: 'Proveedores que asumen el relevo cuando se agota la cuota primaria:',
   slotLabel: '{n}. Cuenta / IA',

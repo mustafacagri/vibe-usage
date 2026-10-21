@@ -101,6 +101,8 @@ export const it: Messages = {
   homeOrderSubtitle: 'L’ordine degli strumenti nella finestra principale e nell’area di notifica. Indipendente dalla priorità di riserva.',
   moveUp: 'Sposta su {name}',
   moveDown: 'Sposta giù {name}',
+  hideTool: 'Nascondi {name}: la quota non viene letta e non genera avvisi',
+  showTool: 'Mostra di nuovo {name}',
   fallbackPriorityTitle: 'Priorità di Riserva (Fallback)',
   fallbackPrioritySubtitle: 'Strumenti che subentrano quando la quota primaria è esaurita:',
   slotLabel: '{n}. Account / IA',

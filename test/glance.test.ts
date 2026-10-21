@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Attempt } from '../src/core/continuity.ts';
-import { createQuotaWatch, describeAlert, describeNotice, trayTooltip } from '../src/core/glance.ts';
+import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip } from '../src/core/glance.ts';
 import { defaultSettings } from '../src/core/settings.ts';
 import { PROVIDER_IDS, type ProviderId } from '../src/shared/catalog.ts';
 import { translator } from '../src/shared/i18n/index.ts';
@@ -132,4 +132,23 @@ test('a failed return is told apart from a failed move: the home account has quo
     body: "Has quota again, but the work could not be brought back: The session's previous process could not be stopped, so it was not started a second time. Close it there, then try again."
   });
   assert.match(failed('session_still_running').body, /^Ran out, but the work could not be moved: /, 'told, never guessed from the code');
+});
+
+test('a hidden tool is left out of the tray icon, the tooltip and the alerts', () => {
+  const state = snapshot([reading('claude:work', 'claude', 80), reading('cursor:default', 'cursor', 90)], ['cursor', 'claude']);
+  assert.equal(trayTool(state)?.providerId, 'cursor');
+  state.settings.hiddenProviders = ['cursor'];
+  assert.equal(trayTool(state)?.providerId, 'claude');
+  assert.doesNotMatch(trayTooltip(state, context), /Cursor/);
+  const watch = createQuotaWatch();
+  const at = (cursor: number) =>
+    watch({ ...state, providers: snapshot([reading('claude:work', 'claude', 80), reading('cursor:default', 'cursor', cursor)]).providers });
+  at(90);
+  assert.deepEqual(at(5), [], 'its quota running low raises nothing');
+  state.settings.hiddenProviders = [];
+  assert.deepEqual(at(5), [], 'shown again, its first reading is only a baseline');
+  assert.deepEqual(
+    at(90).map(alert => alert.kind),
+    ['available']
+  );
 });

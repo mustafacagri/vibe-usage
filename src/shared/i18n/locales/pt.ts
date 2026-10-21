@@ -101,6 +101,8 @@ export const pt: Messages = {
   homeOrderSubtitle: 'A ordem das ferramentas na janela principal e na bandeja. Independe da prioridade de reserva abaixo.',
   moveUp: 'Mover {name} para cima',
   moveDown: 'Mover {name} para baixo',
+  hideTool: 'Ocultar {name}: a cota não é lida e não há alertas',
+  showTool: 'Mostrar {name} novamente',
   fallbackPriorityTitle: 'Prioridade de Reserva (Fallback)',
   fallbackPrioritySubtitle: 'Provedores que assumem quando a cota principal se esgota:',
   slotLabel: '{n}. Conta / IA',

@@ -100,6 +100,8 @@ export const ja: Messages = {
   homeOrderSubtitle: 'メインウィンドウとトレイでのツールの表示順。下の予備の優先順位とは別です。',
   moveUp: '{name} を上へ',
   moveDown: '{name} を下へ',
+  hideTool: '{name} を非表示にする：クォータは取得されず、通知も出ません',
+  showTool: '{name} を再表示する',
   fallbackPriorityTitle: '切り替え優先順位 (Fallback)',
   fallbackPrioritySubtitle: 'メイン枠が上限に達した際に順次引き継ぐAIツール：',
   slotLabel: '{n}. アカウント / AI',

@@ -103,6 +103,8 @@ export const ru: Messages = {
   homeOrderSubtitle: 'Порядок инструментов в главном окне и в трее. Не зависит от резервного приоритета ниже.',
   moveUp: 'Переместить {name} вверх',
   moveDown: 'Переместить {name} вниз',
+  hideTool: 'Скрыть {name}: квота не читается, уведомлений не будет',
+  showTool: 'Показать {name} снова',
   fallbackPriorityTitle: 'Приоритет Переключения (Fallback)',
   fallbackPrioritySubtitle: 'Инструменты, перехватывающие задачу при исчерпании лимита:',
   slotLabel: '{n}. Аккаунт / ИИ',

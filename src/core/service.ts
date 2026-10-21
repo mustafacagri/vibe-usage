@@ -138,6 +138,8 @@ export interface ServiceOptions {
 
 export interface RefreshOptions {
   fresh?: boolean;
+  // A refresh of every tool leaves out the ones the user hid.
+  skipHidden?: boolean;
 }
 
 export interface Service {
@@ -604,8 +606,11 @@ export async function createService({
     return promise;
   }
 
-  async function refresh(providerId?: ProviderId, { fresh = false }: RefreshOptions = {}): Promise<Snapshot> {
-    const targets = providerId === undefined ? adapters : adapters.filter(a => a.id === providerId);
+  async function refresh(providerId?: ProviderId, { fresh = false, skipHidden = false }: RefreshOptions = {}): Promise<Snapshot> {
+    const targets =
+      providerId === undefined
+        ? adapters.filter(a => !(skipHidden && settings.hiddenProviders.includes(a.id)))
+        : adapters.filter(a => a.id === providerId);
     if (!targets.length) throw new AppError('invalid_provider');
     if (clock() - lastDiscovery > DISCOVERY_INTERVAL_MS) {
       lastDiscovery = clock();

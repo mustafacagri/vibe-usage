@@ -61,6 +61,7 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
       lowQuotaPercent: 15,
       quietHours: { start: '22:30', end: '07:00' },
       providerOrder: ['codex', 'claude', 'cursor', 'antigravity'],
+      hiddenProviders: [],
       preferredModels: {},
       dismissedAccountIds: ['claude:old'],
       accounts: ACCOUNTS

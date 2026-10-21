@@ -100,6 +100,8 @@ export const tr: Messages = {
   homeOrderSubtitle: 'Araçların ana pencerede ve tepside görünme sırası. Aşağıdaki yedekleme sırasından bağımsızdır.',
   moveUp: '{name} yukarı taşı',
   moveDown: '{name} aşağı taşı',
+  hideTool: '{name} gizle: kotası okunmaz ve uyarı vermez',
+  showTool: '{name} tekrar göster',
   fallbackPriorityTitle: 'Yedekleme Geçiş Sırası (Fallback Priority)',
   fallbackPrioritySubtitle: 'Ana araç dolduğunda sırayla devreye girecek sağlayıcılar (Claude dahil tüm araçlar):',
   slotLabel: '{n}. Hesap',

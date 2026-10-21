@@ -50,6 +50,7 @@ const SETTINGS_KEYS = [
   'dismissedAccountIds',
   'providerOrder',
   'homeOrder',
+  'hiddenProviders',
   'preferredModels',
   'language',
   'notifications',
@@ -88,6 +89,7 @@ export function defaultSettings(): Settings {
     accounts: [],
     dismissedAccountIds: [],
     providerOrder: [...PROVIDER_IDS],
+    hiddenProviders: [],
     preferredModels: {},
     language: DEFAULT_LANGUAGE,
     notifications: false,
@@ -190,6 +192,12 @@ function validateProviderOrder(value: unknown): ProviderId[] {
     'invalid_provider_order'
   );
   return value;
+}
+
+function validateHiddenProviders(value: unknown): ProviderId[] {
+  const hidden = validateProviderOrder(value);
+  check(hidden.length < PROVIDER_IDS.length, 'invalid_hidden_providers');
+  return hidden;
 }
 
 function validatePreferredModels(value: unknown): Settings['preferredModels'] {
@@ -334,6 +342,7 @@ export function validateSettings(document: unknown): Settings {
     dismissedAccountIds:
       input.dismissedAccountIds === undefined ? defaults.dismissedAccountIds : validateDismissed(input.dismissedAccountIds),
     providerOrder: input.providerOrder === undefined ? defaults.providerOrder : validateProviderOrder(input.providerOrder),
+    hiddenProviders: input.hiddenProviders === undefined ? defaults.hiddenProviders : validateHiddenProviders(input.hiddenProviders),
     preferredModels: input.preferredModels === undefined ? defaults.preferredModels : validatePreferredModels(input.preferredModels),
     language: language ?? defaults.language,
     notifications: notifications ?? defaults.notifications,

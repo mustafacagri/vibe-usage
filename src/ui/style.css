@@ -2045,3 +2045,9 @@ button.compact-note:hover {
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
+
+/* A tool left out of the window and the tray */
+.home-order-row.hidden-tool .home-order-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}

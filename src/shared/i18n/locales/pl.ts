@@ -103,6 +103,8 @@ export const pl: Messages = {
   homeOrderSubtitle: 'Kolejność narzędzi w oknie głównym i w zasobniku. Niezależna od priorytetu zapasowego poniżej.',
   moveUp: 'Przesuń {name} w górę',
   moveDown: 'Przesuń {name} w dół',
+  hideTool: 'Ukryj {name}: limit nie jest odczytywany i nie ma powiadomień',
+  showTool: 'Pokaż {name} ponownie',
   fallbackPriorityTitle: 'Priorytet Zapasowy (Fallback)',
   fallbackPrioritySubtitle: 'Dostawcy przejmujący zadanie po wyczerpaniu limitu głównego:',
   slotLabel: '{n}. Konto / AI',

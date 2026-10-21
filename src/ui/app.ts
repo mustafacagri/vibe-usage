@@ -14,7 +14,8 @@ import {
   REFRESH_INTERVAL_SECONDS,
   type ProfileProviderId,
   type Provider,
-  type ProviderId
+  type ProviderId,
+  visibleProviders
 } from '../shared/catalog.ts';
 import { compactLines, isLowQuota, needsSignIn, type CompactLine, type CompactNote, type KnownWindow } from '../shared/account-state.ts';
 import {
@@ -965,8 +966,8 @@ function render(snapshot: Snapshot, focused: Element | null = document.activeEle
   document.documentElement.lang = language;
   applyStaticText();
 
-  const order = displayOrder(snapshot.settings);
-  const providers = [...snapshot.providers].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  const order = visibleProviders(snapshot.settings);
+  const providers = snapshot.providers.filter(p => order.includes(p.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   const { compact } = snapshot.settings;
   document.body.classList.toggle('compact', compact);
   renderCards(providers, compact, focused);
@@ -979,7 +980,7 @@ function render(snapshot: Snapshot, focused: Element | null = document.activeEle
   ui.updateBanner.hidden = !snapshot.update || snapshot.update.version === (dismissedThisRun ?? dismissedUpdate());
   ui.updateText.textContent = snapshot.update ? t('updateAvailable', { version: snapshot.update.version }) : '';
   renderUpdateInstall(snapshot.updateInstall, snapshot.update);
-  ui.overallStatus.textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: snapshot.providers.length });
+  ui.overallStatus.textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: providers.length });
   ui.refresh.disabled = snapshot.refreshing;
   ui.pin.setAttribute('aria-pressed', String(snapshot.settings.pinned));
   ui.compactButton.setAttribute('aria-pressed', String(compact));
@@ -1066,7 +1067,23 @@ function renderHomeOrder(): void {
         });
         return button;
       };
-      row.append(element('span', 'home-order-name', providerLabel(providerId)), move(-1, '↑', 'moveUp'), move(1, '↓', 'moveDown'));
+      const { hiddenProviders } = current().settings;
+      const hidden = hiddenProviders.includes(providerId);
+      const toggle = element('button', 'order-button', hidden ? '🚫' : '👁');
+      toggle.type = 'button';
+      toggle.title = t(hidden ? 'showTool' : 'hideTool', { name: providerById(providerId).name });
+      toggle.setAttribute('aria-label', toggle.title);
+      toggle.setAttribute('aria-pressed', String(hidden));
+      // One tool always stays: the window would have nothing to show.
+      toggle.disabled = !hidden && hiddenProviders.length >= order.length - 1;
+      onClick(toggle, async () => {
+        await saveSettings({
+          hiddenProviders: hidden ? hiddenProviders.filter(id => id !== providerId) : [...hiddenProviders, providerId]
+        });
+        renderHomeOrder();
+      });
+      row.classList.toggle('hidden-tool', hidden);
+      row.append(element('span', 'home-order-name', providerLabel(providerId)), move(-1, '↑', 'moveUp'), move(1, '↓', 'moveDown'), toggle);
       return row;
     })
   );

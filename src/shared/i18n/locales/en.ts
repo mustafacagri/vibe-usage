@@ -102,6 +102,8 @@ export const en = {
   homeOrderSubtitle: 'The order tools appear in on the main window and in the tray. Fallback priority below is separate.',
   moveUp: 'Move {name} up',
   moveDown: 'Move {name} down',
+  hideTool: 'Hide {name}: its quota is not read and it raises no alerts',
+  showTool: 'Show {name} again',
   fallbackPriorityTitle: 'Fallback Priority',
   fallbackPrioritySubtitle: 'Providers that take over sequentially when primary quota is exhausted (all 4 AI tools included):',
   slotLabel: '{n}. Account / Tool',

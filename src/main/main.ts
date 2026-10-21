@@ -427,7 +427,7 @@ async function start(): Promise<void> {
   let lastRefreshAt = 0;
   const refresh: MainContext['refresh'] = async (providerId, options) => {
     lastRefreshAt = Date.now();
-    const pending = service.refresh(providerId, options);
+    const pending = service.refresh(providerId, { skipHidden: true, ...options });
     publish();
     try {
       await pending;
@@ -529,6 +529,12 @@ async function start(): Promise<void> {
       if (after.pinned !== before.pinned) win.setAlwaysOnTop(after.pinned);
       if (after.language !== before.language) buildTrayMenu();
       if (after.intervalSeconds !== before.intervalSeconds) schedule();
+      // A tool shown again has had no fresh reading while it was hidden.
+      if (
+        after.hiddenProviders.some(id => !before.hiddenProviders.includes(id)) ||
+        before.hiddenProviders.some(id => !after.hiddenProviders.includes(id))
+      )
+        refreshInBackground();
       if (after.compact !== before.compact) applyCompact(after.compact);
       if (after.checkUpdates !== before.checkUpdates) checkUpdates();
     },

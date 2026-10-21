@@ -101,6 +101,8 @@ export const nl: Messages = {
   homeOrderSubtitle: 'De volgorde van tools in het hoofdvenster en het systeemvak. Los van de terugvalprioriteit hieronder.',
   moveUp: '{name} omhoog',
   moveDown: '{name} omlaag',
+  hideTool: '{name} verbergen: het tegoed wordt niet gelezen en er komen geen meldingen',
+  showTool: '{name} weer tonen',
   fallbackPriorityTitle: 'Fallback Prioriteit',
   fallbackPrioritySubtitle: 'Aanbieders die overnemen zodra het primaire quotum op is:',
   slotLabel: '{n}. Account / AI',

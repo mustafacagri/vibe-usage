@@ -101,6 +101,8 @@ export const fr: Messages = {
   homeOrderSubtitle: 'L’ordre des outils dans la fenêtre principale et la barre d’état. Indépendant de la priorité de repli ci-dessous.',
   moveUp: 'Monter {name}',
   moveDown: 'Descendre {name}',
+  hideTool: 'Masquer {name} : son quota n’est pas lu et il ne déclenche aucune alerte',
+  showTool: 'Afficher {name} de nouveau',
   fallbackPriorityTitle: 'Priorité de Secours (Fallback)',
   fallbackPrioritySubtitle: 'Outils prenant le relais quand le quota principal est épuisé :',
   slotLabel: '{n}. Compte / IA',
