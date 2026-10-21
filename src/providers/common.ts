@@ -271,11 +271,11 @@ export interface DesktopApp {
   windows: readonly string[];
 }
 
-// How each tool is installed: its command-line binaries in lookup order, and its desktop app.
-// Launches and diagnostics both look tools up here.
 // The GitHub CLI, which holds the sign-in Copilot's quota is read with.
 export const GITHUB_CLI = 'gh';
 
+// How each tool is installed: its command-line binaries in lookup order, and its desktop app.
+// Launches and diagnostics both look tools up here.
 export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly string[]; app?: DesktopApp }>> = {
   claude: { binaries: ['claude'] },
   codex: { binaries: ['codex'] },
