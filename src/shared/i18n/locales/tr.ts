@@ -93,7 +93,7 @@ export const tr: Messages = {
   suggestionReopenTitle: '{name}: bilgisayar kapanmadan önce açıktı',
   suggestionReopenBody: '{project} oturumunu {target} hesabında yeniden aç',
   checkUpdatesLabel: "GitHub'da yeni sürümleri denetle",
-  checkServiceStatusLabel: 'Araçların durum sayfalarına bakıp kesintileri göster',
+  checkServiceStatusLabel: 'Araçların durum sayfalarında kesintileri denetle',
   serviceIssue: 'Sağlayıcı bir sorun bildiriyor: hizmeti {state}.',
   serviceDegraded: 'yavaş çalışıyor',
   servicePartial: 'kısmen çalışmıyor',
