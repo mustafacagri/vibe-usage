@@ -206,14 +206,15 @@ test('Codex: calls before any turn names a model are kept under no model, and a 
   assert.deepEqual(tokens?.models, [{ model: '', tokens: { input: 450, output: 130, cacheRead: 0, cacheWrite: 0 } }]);
 });
 
-test('reads asked for together share one scan and agree', async t => {
+test('reads asked for together over a file that has grown count its new lines once', async t => {
   const { home, usage } = await setup(t);
-  await writeLines(path.join(home, '.claude', 'projects', 'app', 'session.jsonl'), [
-    claudeLine('one', NOW - HOUR, 'opus', { input_tokens: 3 })
-  ]);
+  const file = path.join(home, '.claude', 'projects', 'app', 'session.jsonl');
+  await writeLines(file, [claudeLine('one', NOW - HOUR, 'opus', { input_tokens: 3 })]);
+  await usage.read([claudeAccount()]);
+  await fs.appendFile(file, `${claudeLine('two', NOW - HOUR, 'opus', { input_tokens: 40 })}\n`);
   const [first, second] = await Promise.all([usage.read([claudeAccount()]), usage.read([claudeAccount()])]);
-  assert.deepEqual(first, second);
-  assert.equal(first[0]?.week.input, 3);
+  assert.equal(first[0]?.week.input, 43);
+  assert.equal(second[0]?.week.input, 43);
 });
 
 test('a log untouched for longer than the window, and what was kept of it, are left out', async t => {

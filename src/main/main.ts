@@ -59,7 +59,7 @@ const WINDOW = {
 // Tray icon sizes for 100%, 150% and 200% display scaling.
 const TRAY_ICON_SCALES = [1, 1.5, 2];
 const TRAY_ICON_SIZE = 16;
-const UPDATE_FIRST_CHECK_DELAY_MS = 15 * 1000;
+const UPDATE_FIRST_CHECK_DELAY_MS = 15 * DURATION_MS.SECOND;
 const UPDATE_CHECK_INTERVAL_MS = DURATION_MS.DAY;
 const STATUS_FIRST_CHECK_DELAY_MS = 10 * DURATION_MS.SECOND;
 const STATUS_CHECK_INTERVAL_MS = 5 * DURATION_MS.MINUTE;
@@ -74,7 +74,7 @@ const FOLDER_CHANGE_DEBOUNCE_MS = 1000;
 const RESUME_REFRESH_DELAY_MS = 5000;
 // Returning to the window (after a sign-in in the browser, say) reads quota again unless it
 // was read this recently.
-const FOCUS_REFRESH_MIN_AGE_MS = 30 * 1000;
+const FOCUS_REFRESH_MIN_AGE_MS = 30 * DURATION_MS.SECOND;
 // Marks a start by the login item, which opens the app to the tray only. Windows passes it
 // to the registered command; macOS reports such a start through `wasOpenedAtLogin`.
 const OPENED_AT_LOGIN_ARG = '--opened-at-login';
@@ -511,6 +511,9 @@ async function start(): Promise<void> {
     }, delayMs);
   };
 
+  // A status read is under way, and a change since it began asks for another when it ends.
+  let statusReading = false;
+  let statusAskedAgain = false;
   const checkStatus = (delayMs = STATUS_FIRST_CHECK_DELAY_MS): void => {
     clearTimeout(statusTimer);
     if (!service.snapshot().settings.checkServiceStatus) {
@@ -519,6 +522,7 @@ async function start(): Promise<void> {
       return;
     }
     statusTimer = setTimeout(() => {
+      statusReading = true;
       const shown = visibleProviders(service.snapshot().settings);
       checkServiceStatus(
         url => fetchJson(url, JSON_ACCEPT),
@@ -531,9 +535,16 @@ async function start(): Promise<void> {
         })
         .catch(() => undefined)
         .finally(() => {
-          checkStatus(STATUS_CHECK_INTERVAL_MS);
+          statusReading = false;
+          checkStatus(statusAskedAgain ? STATUS_FIRST_CHECK_DELAY_MS : STATUS_CHECK_INTERVAL_MS);
+          statusAskedAgain = false;
         });
     }, delayMs);
+  };
+  // Another read is asked for now, or right after the one under way: it covers the tools shown now.
+  const recheckStatus = (): void => {
+    if (statusReading) statusAskedAgain = true;
+    else checkStatus();
   };
 
   const handlers = createHandlers({
@@ -572,7 +583,7 @@ async function start(): Promise<void> {
       if (hiddenChanged) refreshInBackground();
       if (after.compact !== before.compact) applyCompact(after.compact);
       if (after.checkUpdates !== before.checkUpdates) checkUpdates();
-      if (after.checkServiceStatus !== before.checkServiceStatus || hiddenChanged) checkStatus();
+      if (after.checkServiceStatus !== before.checkServiceStatus || hiddenChanged) recheckStatus();
     },
     hideWindow: () => {
       win.hide();

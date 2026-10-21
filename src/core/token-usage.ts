@@ -10,6 +10,7 @@ import { CODEX_SESSIONS_DIR } from '../providers/codex.ts';
 import { defaultProfileDir } from '../providers/profiles.ts';
 import { DURATION_MS, isProfileProvider, type ProfileProviderId } from '../shared/catalog.ts';
 import type { Account, AccountTokens, TokenTotals } from '../shared/types.ts';
+import { systemErrorCode } from './errors.ts';
 import { attempt, isObject, JSON_LINES_EXTENSION, pathKey, readJson, writeFileAtomic, type JsonObject } from './files.ts';
 
 const CACHE_FILE = 'token-usage.json';
@@ -19,8 +20,9 @@ const SAVE_DELAY_MS = 30 * DURATION_MS.SECOND;
 const NEWLINE = 0x0a;
 const KEY_LENGTH = 12;
 
-// [time in ms, model, input, output, cache read, cache write, key]. The key names a Claude
-// response, which its files may repeat; Codex records have none.
+// A record's positions: its time in ms, the model, the four counts, and the key that names a Claude
+// response (its files may repeat one; Codex records have none).
+const RECORD = { time: 0, model: 1, input: 2, output: 3, cacheRead: 4, cacheWrite: 5, key: 6 } as const;
 type TokenRecord = readonly [number, string, number, number, number, number, string];
 
 interface FileState {
@@ -42,11 +44,12 @@ const emptyState = (): FileState => ({ size: 0, mtimeMs: 0, offset: 0, lastKey: 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
 const keyOf = (value: string): string => createHash('sha256').update(value).digest('base64url').slice(0, KEY_LENGTH);
 
-// The log formats were checked against this machine's real transcripts (2026-10-21): Claude writes a
-// response as several lines carrying one `message.id` and the same counts, and its `input_tokens`
-// leave out the cache; Codex's `total_tokens` is `input_tokens` plus `output_tokens` (the cached part is
-// inside `input_tokens`), and its running total moves with each call. How one tool writes what it spent. `read` takes a line of a transcript and returns the record
-// it holds, if any, keeping what the next line depends on in `state`.
+// How one tool writes what it spent. `read` takes a line of a transcript and returns the record
+// it holds, if any, keeping what the next line depends on in `state`. Both formats were checked
+// against this machine's real transcripts (2026-10-21): Claude writes a response as several lines
+// carrying one `message.id` and the same counts, and its `input_tokens` leave out the cache; Codex's
+// `total_tokens` is `input_tokens` plus `output_tokens` (the cached part is inside `input_tokens`),
+// and its running total moves with each call.
 interface LogFormat {
   folder: string;
   wants(line: string): boolean;
@@ -132,17 +135,17 @@ async function readFrom(file: string, state: FileState, format: LogFormat, since
     if (!format.wants(text)) continue;
     const line = parseLine(text);
     const record = line && format.read(line, state);
-    if (record && record[0] >= since) state.records.push(record);
+    if (record && record[RECORD.time] >= since) state.records.push(record);
   }
 }
 
 const isRecord = (value: unknown): value is TokenRecord =>
   Array.isArray(value) &&
-  value.length === 7 &&
-  typeof value[0] === 'number' &&
-  typeof value[1] === 'string' &&
-  value.slice(2, 6).every(n => typeof n === 'number') &&
-  typeof value[6] === 'string';
+  value.length === Object.keys(RECORD).length &&
+  typeof value[RECORD.time] === 'number' &&
+  typeof value[RECORD.model] === 'string' &&
+  value.slice(RECORD.input, RECORD.key).every(n => typeof n === 'number') &&
+  typeof value[RECORD.key] === 'string';
 
 const isFileState = (value: unknown): value is FileState =>
   isObject(value) &&
@@ -165,11 +168,11 @@ function parseCache(document: unknown): Map<string, FileState> {
 
 const emptyTotals = (): TokenTotals => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 
-function add(totals: TokenTotals, [, , input, output, cacheRead, cacheWrite]: TokenRecord): void {
-  totals.input += input;
-  totals.output += output;
-  totals.cacheRead += cacheRead;
-  totals.cacheWrite += cacheWrite;
+function add(totals: TokenTotals, record: TokenRecord): void {
+  totals.input += record[RECORD.input];
+  totals.output += record[RECORD.output];
+  totals.cacheRead += record[RECORD.cacheRead];
+  totals.cacheWrite += record[RECORD.cacheWrite];
 }
 
 const sum = (totals: TokenTotals): number => totals.input + totals.output + totals.cacheRead + totals.cacheWrite;
@@ -181,7 +184,9 @@ function summarize(accountId: string, records: readonly TokenRecord[], now: numb
   const byModel = new Map<string, TokenTotals>();
   const seen = new Set<string>();
   for (const record of records) {
-    const [time, model, , , , , key] = record;
+    const time = record[RECORD.time];
+    const model = record[RECORD.model];
+    const key = record[RECORD.key];
     if (time < weekStart) continue;
     // A response a profile's other file repeats (a resumed or moved session) is one response.
     if (key) {
@@ -198,6 +203,17 @@ function summarize(accountId: string, records: readonly TokenRecord[], now: numb
     .map(([model, tokens]) => ({ model, tokens }))
     .sort((a, b) => sum(b.tokens) - sum(a.tokens) || a.model.localeCompare(b.model));
   return result;
+}
+
+// A missing file or folder is the answer "nothing there"; every other failure (no permission, too many
+// open files) is not, and reaches the caller.
+async function orMissing<T>(task: () => Promise<T>): Promise<T | null> {
+  try {
+    return await task();
+  } catch (error) {
+    if (systemErrorCode(error) === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 // The profile folder an account's tool keeps its logs in.
@@ -243,11 +259,11 @@ export async function createTokenUsage({
   async function refreshProfile(providerId: ProfileProviderId, profile: string, since: number): Promise<string[]> {
     const format = LOG_FORMATS[providerId];
     const root = path.join(profile, format.folder);
-    const names = (await attempt(() => fsp.readdir(root, { recursive: true }))) ?? [];
+    const names = (await orMissing(() => fsp.readdir(root, { recursive: true }))) ?? [];
     const present: string[] = [];
     for (const name of names.filter(entry => entry.endsWith(JSON_LINES_EXTENSION)).sort()) {
       const file = path.join(root, name);
-      const stat = await attempt(() => fsp.stat(file));
+      const stat = await orMissing(() => fsp.stat(file));
       // A file untouched for longer than the window holds nothing in it.
       if (!stat?.isFile() || stat.mtimeMs < since) continue;
       present.push(file);
@@ -255,11 +271,15 @@ export async function createTokenUsage({
       if (state?.size === stat.size && state.mtimeMs === stat.mtimeMs) continue;
       // A file that shrank was replaced: it is read again from its start.
       if (!state || stat.size < state.offset) state = emptyState();
-      // A file that vanished or cannot be read now is left as it was, and tried again next time.
-      if ((await attempt(() => readFrom(file, state, format, since))) === null) continue;
+      // A file that vanished since it was listed is left as it was; any other failure is the caller's.
+      const read = await orMissing(async () => {
+        await readFrom(file, state, format, since);
+        return true;
+      });
+      if (!read) continue;
       state.size = stat.size;
       state.mtimeMs = stat.mtimeMs;
-      state.records = state.records.filter(([time]) => time >= since);
+      state.records = state.records.filter(record => record[RECORD.time] >= since);
       files.set(file, state);
       scheduleSave();
     }

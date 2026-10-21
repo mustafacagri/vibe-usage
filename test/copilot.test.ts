@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ProviderError } from '../src/core/errors.ts';
-import { QUOTA_ENDPOINTS, type GetJson, type GetJsonOptions, type RunProcess } from '../src/providers/common.ts';
+import { type GetJson, type GetJsonOptions, type RunProcess } from '../src/providers/common.ts';
 import { createCopilotProvider, type CopilotProviderOptions } from '../src/providers/copilot.ts';
 import { account } from './helpers/fixtures.ts';
 
@@ -96,7 +96,7 @@ test('the token goes to the Copilot endpoint only, the environment first and the
   await provider(FREE, {}, calls).fetch(copilotAccount);
   assert.deepEqual(
     calls.map(call => [call.endpoint, call.options.headers?.Authorization]),
-    [[QUOTA_ENDPOINTS.copilot, 'token token-from-env']]
+    [['https://api.github.com/copilot_internal/user', 'token token-from-env']]
   );
 
   const ran: string[][] = [];

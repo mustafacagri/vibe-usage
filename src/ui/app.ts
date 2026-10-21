@@ -88,7 +88,7 @@ declare global {
 const TOAST_MS = 5000;
 const SETTINGS_MESSAGE_MS = 4000;
 // Countdowns and ages are relative to now; re-render this often between snapshots.
-const CLOCK_TICK_MS = 30 * 1000;
+const CLOCK_TICK_MS = 30 * DURATION_MS.SECOND;
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 const SHORT_ID_LENGTH = 8;
 const SERVICE_STATUS_TEXT = {
@@ -746,6 +746,16 @@ async function fillHistory(details: HTMLDetailsElement, accounts: readonly Measu
 // The span whose chart the history section shows; it stays while the cards are rebuilt.
 let historySpan: HistorySpan = DAY_SPAN;
 
+// Where each key moves the selected tab to, among `count` tabs.
+const TAB_KEYS: Readonly<Record<string, (index: number, count: number) => number>> = {
+  ArrowRight: (index, count) => (index + 1) % count,
+  ArrowLeft: (index, count) => (index - 1 + count) % count,
+  Home: () => 0,
+  End: (_index, count) => count - 1
+};
+// Each history section gets ids of its own, which its tabs and its panel point to each other with.
+let historySections = 0;
+
 function drawHistory(details: HTMLDetailsElement, accounts: readonly MeasuredAccount[], read: NonNullable<typeof history>): void {
   const now = Date.now();
   const lines = new Map(
@@ -772,44 +782,46 @@ function drawHistory(details: HTMLDetailsElement, accounts: readonly MeasuredAcc
     details.replaceChildren(...head, element('div', 'empty', t('historyEmpty')));
     return;
   }
+  const sectionId = `history-${historySections++}`;
   const tablist = element('div', 'history-tabs');
   tablist.setAttribute('role', 'tablist');
   tablist.setAttribute('aria-label', t('historySection'));
   const panel = element('div', 'history-panel');
+  panel.id = `${sectionId}-panel`;
   panel.setAttribute('role', 'tabpanel');
-  const tabs = new Map(
-    HISTORY_SPANS.map(span => {
-      const tab = element('button', 'history-tab', t(span.title));
-      tab.type = 'button';
-      tab.setAttribute('role', 'tab');
-      return [span, tab] as const;
-    })
-  );
+  panel.tabIndex = 0;
+  const entries = HISTORY_SPANS.map((span, index) => {
+    const tab = element('button', 'history-tab', t(span.title));
+    tab.id = `${sectionId}-tab-${index}`;
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', panel.id);
+    return { span, tab };
+  });
   const select = (span: HistorySpan): void => {
     historySpan = span;
-    for (const [other, tab] of tabs) {
-      tab.setAttribute('aria-selected', String(other === span));
-      tab.tabIndex = other === span ? 0 : -1;
+    for (const entry of entries) {
+      const selected = entry.span === span;
+      entry.tab.setAttribute('aria-selected', String(selected));
+      entry.tab.tabIndex = selected ? 0 : -1;
+      if (selected) panel.setAttribute('aria-labelledby', entry.tab.id);
     }
-    panel.setAttribute('aria-label', t(span.title));
     const charts = chartsOf(span);
     panel.replaceChildren(...(charts.length ? charts : [element('div', 'empty', t('historyQuietPeriod'))]));
   };
-  HISTORY_SPANS.forEach((span, index) => {
-    const tab = tabs.get(span);
-    tab?.addEventListener('click', () => {
+  entries.forEach(({ span, tab }, index) => {
+    tab.addEventListener('click', () => {
       select(span);
     });
-    tab?.addEventListener('keydown', event => {
-      const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
-      const next = step ? HISTORY_SPANS[(index + step + HISTORY_SPANS.length) % HISTORY_SPANS.length] : undefined;
-      if (!next) return;
+    tab.addEventListener('keydown', event => {
+      const next = entries[TAB_KEYS[event.key]?.(index, entries.length) ?? index];
+      if (!next || next.span === span) return;
       event.preventDefault();
-      select(next);
-      tabs.get(next)?.focus();
+      select(next.span);
+      next.tab.focus();
     });
   });
-  tablist.append(...tabs.values());
+  tablist.append(...entries.map(entry => entry.tab));
   select(historySpan);
   details.replaceChildren(...head, tablist, panel);
 }
@@ -847,6 +859,7 @@ function tokenTable(heading: string, rows: readonly TokenRow[]): HTMLTableElemen
   for (const { name, tokens } of rows) {
     const row = element('tr');
     const label = element('th', 'name', name);
+    label.title = name;
     label.setAttribute('scope', 'row');
     row.append(label, ...TOKEN_COLUMNS.map(([field]) => element('td', 'number', numbers.format(tokens[field]))));
     table.append(row);
@@ -869,7 +882,7 @@ function drawTokens(details: HTMLDetailsElement, accounts: readonly MeasuredAcco
     const block = element('div', 'token-block');
     if (accounts.length > 1) block.append(element('div', 'token-caption', pickerName(account)));
     block.append(
-      tokenTable('', [
+      tokenTable(t('tokensTitle'), [
         { name: t('tokenToday'), tokens: tokens.today },
         { name: t('historyTitle'), tokens: tokens.week }
       ]),
@@ -1040,15 +1053,19 @@ function renderSuggestions(snapshot: Snapshot): void {
 }
 
 // What the tool's maker reports about its service: a slow or failing tool may not be the user's limit.
-function serviceIssueNote(providerId: ProviderId): HTMLElement[] {
-  return (current().serviceIssues ?? [])
-    .filter(issue => issue.providerId === providerId)
-    .map(issue => {
-      const note = element('div', `service-issue ${issue.status}`);
-      note.setAttribute('role', 'status');
-      note.append(element('span', '', t('serviceIssue', { state: t(SERVICE_STATUS_TEXT[issue.status]) })));
-      return note;
-    });
+function serviceIssueNote(issue: ServiceIssue): HTMLElement {
+  const note = element('div', `service-issue ${issue.status}`);
+  note.append(element('span', '', t('serviceIssue', { state: t(SERVICE_STATUS_TEXT[issue.status]) })));
+  return note;
+}
+
+function accountsInView(
+  accounts: readonly MeasuredAccount[],
+  compare: boolean,
+  shown: MeasuredAccount | undefined
+): readonly MeasuredAccount[] {
+  if (compare) return accounts;
+  return shown ? [shown] : [];
 }
 
 function providerCard(state: ProviderState): HTMLElement {
@@ -1060,11 +1077,13 @@ function providerCard(state: ProviderState): HTMLElement {
   const shown = compare
     ? undefined
     : (accounts.find(a => a.id === selectedAccount.get(provider.id)) ?? accounts.find(a => a.primary) ?? accounts[0]);
-  section.append(cardHeader(provider, compare ? [] : accounts, shown), ...serviceIssueNote(provider.id));
+  section.append(cardHeader(provider, compare ? [] : accounts, shown));
+  const issue = current().serviceIssues?.find(entry => entry.providerId === provider.id);
+  if (issue) section.append(serviceIssueNote(issue));
   if (compare) section.append(...compareBody(provider, accounts));
   else if (shown) section.append(...accountBody(provider, shown));
   else section.append(element('div', 'empty', statusMessage(state) || t('status_no_accounts')), signInButton(provider));
-  const inView = compare ? accounts : shown ? [shown] : [];
+  const inView = accountsInView(accounts, compare, shown);
   const charted = inView.filter(a => chartedWindows(a).length);
   if (charted.length) section.append(historySection(charted));
   if (isProfileProvider(provider.id) && inView.length) section.append(tokensSection(inView));
@@ -1257,8 +1276,9 @@ function renderHomeOrder(): void {
       toggle.title = t(hidden ? 'showTool' : 'hideTool', { name: providerById(providerId).name });
       toggle.setAttribute('aria-label', toggle.title);
       toggle.setAttribute('aria-pressed', String(hidden));
-      // One tool always stays: the window would have nothing to show.
-      toggle.disabled = !hidden && hiddenProviders.length >= order.length - 1;
+      // A tool that runs work always stays: the window would have nothing to show.
+      toggle.disabled =
+        !hidden && providerById(providerId).runsWork && WORK_PROVIDER_IDS.every(id => id === providerId || hiddenProviders.includes(id));
       onClick(toggle, async () => {
         await saveSettings({
           hiddenProviders: hidden ? hiddenProviders.filter(id => id !== providerId) : [...hiddenProviders, providerId]

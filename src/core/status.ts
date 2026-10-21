@@ -1,6 +1,6 @@
 // Whether a tool's service reports a problem, from the status page its maker runs. A tool that
 // answers slowly or not at all may be down for everyone, which no quota reading says.
-import { PROVIDER_IDS, SERVICE_STATUSES, type ProviderId } from '../shared/catalog.ts';
+import { isOneOf, PROVIDER_IDS, SERVICE_QUIET_STATUSES, SERVICE_STATUSES, type ProviderId } from '../shared/catalog.ts';
 import type { ServiceIssue } from '../shared/types.ts';
 import { isObject, type JsonObject } from './files.ts';
 
@@ -31,7 +31,8 @@ export interface ServiceStatusReading {
 }
 
 // The worst state among the tool's components, or null when they all work. A page that lists
-// none of the components is no sign of calm: its ids changed, so the read fails.
+// none of the components, or gives one a state the app does not know, is no sign of calm: its
+// contract changed, so the read fails.
 function parseSummary(providerId: StatusProviderId, document: unknown): ServiceIssue | null {
   if (!isObject(document) || !Array.isArray(document.components)) throw new TypeError('not a status summary');
   const watched: readonly string[] = STATUS_PAGES[providerId].components;
@@ -39,6 +40,8 @@ function parseSummary(providerId: StatusProviderId, document: unknown): ServiceI
     (entry): entry is JsonObject => isObject(entry) && typeof entry.id === 'string' && watched.includes(entry.id)
   );
   if (!components.length) throw new TypeError('none of the watched components is on the page');
+  if (components.some(({ status }) => !isOneOf(SERVICE_STATUSES, status) && !isOneOf(SERVICE_QUIET_STATUSES, status)))
+    throw new TypeError('a watched component has an unknown status');
   // SERVICE_STATUSES run from the mildest to the worst.
   const worst = Math.max(-1, ...components.map(({ status }) => SERVICE_STATUSES.findIndex(known => known === status)));
   const status = SERVICE_STATUSES[worst];
@@ -47,7 +50,7 @@ function parseSummary(providerId: StatusProviderId, document: unknown): ServiceI
 
 export async function checkServiceStatus(
   fetchJson: (url: string) => Promise<unknown>,
-  providerIds: readonly StatusProviderId[] = STATUS_PROVIDER_IDS
+  providerIds: readonly StatusProviderId[]
 ): Promise<ServiceStatusReading> {
   const readings = await Promise.allSettled(
     providerIds.map(async id => parseSummary(id, await fetchJson(`${STATUS_PAGES[id].url}${SUMMARY_PATH}`)))

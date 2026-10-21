@@ -14,7 +14,7 @@ const SAMPLE_INTERVAL_MS = 10 * DURATION_MS.MINUTE;
 const PACE_WINDOW_MS = DURATION_MS.HOUR;
 // ...and needs readings at least this far apart to mean anything.
 const PACE_MIN_SPAN_MS = 10 * DURATION_MS.MINUTE;
-const SAVE_DELAY_MS = 30 * 1000;
+const SAVE_DELAY_MS = 30 * DURATION_MS.SECOND;
 const PERCENT_MAX = 100;
 
 // [time in ms, used percent]

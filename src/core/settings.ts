@@ -207,7 +207,11 @@ function validateToolList(
 
 function validateHiddenProviders(value: unknown): ProviderId[] {
   const hidden = validateToolList(value, PROVIDER_IDS, 'invalid_hidden_providers');
-  check(hidden.length < PROVIDER_IDS.length, 'invalid_hidden_providers');
+  // The window needs a tool to show that is there without a sign-in to read: one that runs work.
+  check(
+    WORK_PROVIDER_IDS.some(id => !hidden.includes(id)),
+    'invalid_hidden_providers'
+  );
   return hidden;
 }
 

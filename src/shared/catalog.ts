@@ -77,6 +77,8 @@ export const AUTOMATION_MODES = ['off', 'ask', 'auto'] as const;
 // What a status page says of a component that is not working, from the mildest to the worst;
 // planned maintenance is none of them.
 export const SERVICE_STATUSES = ['degraded_performance', 'partial_outage', 'major_outage'] as const;
+// The states that need no alert: working, or down on purpose.
+export const SERVICE_QUIET_STATUSES = ['operational', 'under_maintenance'] as const;
 export const SUGGESTION_KINDS = ['low', 'return', 'reopen'] as const;
 export const TRANSITION_STATUSES = ['offered', 'dispatching', 'dispatched', 'failed', 'interrupted', 'dismissed'] as const;
 

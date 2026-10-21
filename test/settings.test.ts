@@ -119,10 +119,16 @@ test('atomic round trip persists only public settings', async t => {
   assert.equal(await loadSettings(path.join(dir, 'missing.json')), null);
 });
 
-test('hidden tools are a duplicate-free list of known tools that leaves at least one visible', () => {
+test('hidden tools are a duplicate-free list of known tools that leaves a tool that runs work visible', () => {
   assert.deepEqual(validateSettings(base).hiddenProviders, []);
   assert.deepEqual(validateSettings({ ...base, hiddenProviders: ['antigravity', 'cursor'] }).hiddenProviders, ['antigravity', 'cursor']);
-  for (const hiddenProviders of [['cursor', 'cursor'], ['nope'], 'cursor', ['claude', 'codex', 'cursor', 'antigravity', 'copilot']])
+  for (const hiddenProviders of [
+    ['cursor', 'cursor'],
+    ['nope'],
+    'cursor',
+    ['claude', 'codex', 'cursor', 'antigravity'],
+    ['claude', 'codex', 'cursor', 'antigravity', 'copilot']
+  ])
     assert.throws(() => validateSettings({ ...base, hiddenProviders }), /invalid_/, JSON.stringify(hiddenProviders));
 });
 

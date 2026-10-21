@@ -1,26 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkServiceStatus, mergeServiceIssues, STATUS_PAGES } from '../src/core/status.ts';
+import { checkServiceStatus, mergeServiceIssues } from '../src/core/status.ts';
 
-const CURSOR_PAGE = `${STATUS_PAGES.cursor.url}/api/v2/summary.json`;
-const [IDE, CLI] = STATUS_PAGES.cursor.components;
-const CLAUDE_PAGE = `${STATUS_PAGES.claude.url}/api/v2/summary.json`;
+// The ids the status pages gave these components on 2026-10-21.
+const CURSOR_PAGE = 'https://status.cursor.com/api/v2/summary.json';
+const CURSOR_IDE = 'rflc60xp5jp2';
+const CURSOR_CLI = 'vsny1qv7v86c';
+const CLAUDE_PAGE = 'https://status.claude.com/api/v2/summary.json';
+const CLAUDE_CODE = 'yyzkbfz2thpt';
 
 const summary = (components: object[]) => ({ components });
 const component = (id: string, status: string) => ({ id, name: `named ${id}`, status });
 
-// Every page answers all quiet unless the test gives it something else.
+// Only the pages a test gives answer; any other fails like an unreachable one.
 function pages(answers: Record<string, unknown>): (url: string) => Promise<unknown> {
   return url => {
-    const answer =
-      answers[url] ?? summary(Object.values(STATUS_PAGES).flatMap(page => page.components.map(id => component(id, 'operational'))));
+    const answer = answers[url] ?? new Error(`no page at ${url}`);
     return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
   };
 }
 
 test('the worst state among the tool’s own components is reported; other components of the page are not its business', async () => {
   const fetchJson = pages({
-    [CURSOR_PAGE]: summary([component(IDE, 'degraded_performance'), component(CLI, 'partial_outage'), component('other', 'major_outage')])
+    [CURSOR_PAGE]: summary([
+      component(CURSOR_IDE, 'degraded_performance'),
+      component(CURSOR_CLI, 'partial_outage'),
+      component('other', 'major_outage')
+    ])
   });
   assert.deepEqual(await checkServiceStatus(fetchJson, ['cursor']), {
     issues: [{ providerId: 'cursor', status: 'partial_outage' }],
@@ -28,37 +34,31 @@ test('the worst state among the tool’s own components is reported; other compo
   });
 });
 
-test('only a degradation counts: operational, planned maintenance and a state nobody knows are quiet', async () => {
-  for (const status of ['operational', 'under_maintenance', 'broken_by_someone'])
-    assert.deepEqual(
-      await checkServiceStatus(pages({ [CURSOR_PAGE]: summary([component(IDE, status), component(CLI, 'operational')]) }), ['cursor']),
-      {
-        issues: [],
-        failed: []
-      }
-    );
+test('components that work, or are down for planned maintenance, raise nothing', async () => {
+  const fetchJson = pages({ [CURSOR_PAGE]: summary([component(CURSOR_IDE, 'under_maintenance'), component(CURSOR_CLI, 'operational')]) });
+  assert.deepEqual(await checkServiceStatus(fetchJson, ['cursor']), { issues: [], failed: [] });
 });
 
-test('a page that lists none of the tool’s components is a failed read, not a quiet one', async () => {
-  const { issues, failed } = await checkServiceStatus(pages({ [CURSOR_PAGE]: summary([component('renamed', 'major_outage')]) }), [
-    'cursor'
-  ]);
-  assert.deepEqual([issues, failed], [[], ['cursor']]);
+test('a page whose contract changed is a failed read, not a quiet one: no watched component, or a state nobody knows', async () => {
+  const renamed = pages({ [CURSOR_PAGE]: summary([component('renamed', 'major_outage')]) });
+  const unknown = pages({ [CURSOR_PAGE]: summary([component(CURSOR_IDE, 'broken_by_someone')]) });
+  for (const fetchJson of [renamed, unknown])
+    assert.deepEqual(await checkServiceStatus(fetchJson, ['cursor']), { issues: [], failed: ['cursor'] });
 });
 
 test('a page that cannot be read is named as failed, not taken for quiet, and the others still answer', async () => {
   const fetchJson = pages({
     [CURSOR_PAGE]: new Error('offline'),
-    [CLAUDE_PAGE]: summary([component(STATUS_PAGES.claude.components[0], 'major_outage')])
+    [CLAUDE_PAGE]: summary([component(CLAUDE_CODE, 'major_outage')])
   });
-  const { issues, failed } = await checkServiceStatus(fetchJson, ['cursor', 'claude']);
-  assert.deepEqual(failed, ['cursor']);
-  assert.deepEqual(issues, [{ providerId: 'claude', status: 'major_outage' }]);
+  assert.deepEqual(await checkServiceStatus(fetchJson, ['cursor', 'claude']), {
+    issues: [{ providerId: 'claude', status: 'major_outage' }],
+    failed: ['cursor']
+  });
 });
 
 test('a document that is not a status summary is a failed read', async () => {
-  const { issues, failed } = await checkServiceStatus(pages({ [CURSOR_PAGE]: 'not json' }), ['cursor']);
-  assert.deepEqual([issues, failed], [[], ['cursor']]);
+  assert.deepEqual(await checkServiceStatus(pages({ [CURSOR_PAGE]: 'not json' }), ['cursor']), { issues: [], failed: ['cursor'] });
 });
 
 test('only the tools asked for are looked up', async () => {
@@ -66,7 +66,7 @@ test('only the tools asked for are looked up', async () => {
   await checkServiceStatus(
     url => {
       asked.push(url);
-      return Promise.resolve(summary([component(IDE, 'operational')]));
+      return Promise.resolve(summary([component(CURSOR_IDE, 'operational')]));
     },
     ['cursor']
   );
