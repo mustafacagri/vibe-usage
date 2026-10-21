@@ -147,3 +147,10 @@ test('the account exists when a sign-in can be found: the environment or the Git
     accounts: []
   });
 });
+
+test('a quota id that is a name every object has is still the service’s id, shown as it came', async () => {
+  const result = await provider({ ...PAID, quota_snapshots: { constructor: snapshot('constructor', { percent_remaining: 10 }) } }).fetch(
+    copilotAccount
+  );
+  assert.deepEqual(result.windows, [{ id: 'constructor', usedPercent: 90, remainingPercent: 10, resetsAt: RESET, label: 'constructor' }]);
+});

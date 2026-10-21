@@ -363,11 +363,12 @@ export async function openSignIn({ providerId, account, dataDir, cwd, platform =
     return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
   }
   const args = LOGIN_ARGS[providerId];
-  if (!args) return openDesktopApp({ providerId, platform, spawnProcess });
+  const [binaryName] = TOOL_INSTALLS[providerId].binaries;
+  if (!args || !binaryName) return openDesktopApp({ providerId, platform, spawnProcess });
   const env = account ? profileEnvironment(account) : {};
   return openInTerminal({
     cwd,
-    binary: await findBinary(TOOL_INSTALLS[providerId].binaries[0] ?? providerId),
+    binary: await findBinary(binaryName),
     args,
     env,
     dataDir,

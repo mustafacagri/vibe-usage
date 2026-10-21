@@ -36,7 +36,7 @@ import { ringIcon } from '../core/tray-icon.ts';
 import { createInstaller, updateSupport, type UpdaterBackend } from '../core/updater.ts';
 import { checkServiceStatus, mergeServiceIssues, STATUS_PROVIDER_IDS } from '../core/status.ts';
 import { checkForUpdate, isReleaseDownload, isReleasePage, manualInstallerSuffix } from '../core/updates.ts';
-import { APP_NAME, APP_REPOSITORY, DURATION_MS, visibleProviders } from '../shared/catalog.ts';
+import { APP_NAME, APP_REPOSITORY, DURATION_MS, MEDIA_TYPE, visibleProviders } from '../shared/catalog.ts';
 import { DEFAULT_LANGUAGE, translator, type Translate } from '../shared/i18n/index.ts';
 import { SUGGESTION_BUTTONS, type FormatContext } from '../shared/format.ts';
 import { IPC_PREFIX, SNAPSHOT_EVENT, type LoginItem } from '../shared/ipc.ts';
@@ -65,8 +65,6 @@ const STATUS_FIRST_CHECK_DELAY_MS = 10 * DURATION_MS.SECOND;
 const STATUS_CHECK_INTERVAL_MS = 5 * DURATION_MS.MINUTE;
 // A check that gets no answer ends, so that the next one is still scheduled.
 const CHECK_REQUEST_TIMEOUT_MS = 15 * DURATION_MS.SECOND;
-const JSON_ACCEPT = 'application/json';
-const GITHUB_JSON_ACCEPT = 'application/vnd.github+json';
 const BOUNDS_SAVE_DELAY_MS = 500;
 // A tool writes several files while signing in; it is read once they settle.
 const FOLDER_CHANGE_DEBOUNCE_MS = 1000;
@@ -497,7 +495,7 @@ async function start(): Promise<void> {
       return;
     }
     updateTimer = setTimeout(() => {
-      checkForUpdate(app.getVersion(), url => fetchJson(url, GITHUB_JSON_ACCEPT), manualInstallerSuffix(process.platform, process.arch))
+      checkForUpdate(app.getVersion(), url => fetchJson(url, MEDIA_TYPE.githubJson), manualInstallerSuffix(process.platform, process.arch))
         .then(found => {
           if (!service.snapshot().settings.checkUpdates) return;
           update = found ?? undefined;
@@ -525,7 +523,7 @@ async function start(): Promise<void> {
       statusReading = true;
       const shown = visibleProviders(service.snapshot().settings);
       checkServiceStatus(
-        url => fetchJson(url, JSON_ACCEPT),
+        url => fetchJson(url, MEDIA_TYPE.json),
         STATUS_PROVIDER_IDS.filter(id => shown.includes(id))
       )
         .then(reading => {

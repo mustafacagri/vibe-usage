@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ProviderError } from '../core/errors.ts';
 import { asArray, isObject, readJson, samePath, type JsonObject } from '../core/files.ts';
 import { normalizeWindow, safeEmail, safePlan, safeText } from '../core/model.ts';
-import { accountId, DEFAULT_ACCOUNT_KEY, durationLabel, MINUTES, PROFILE_DIRS, type PeriodLabel } from '../shared/catalog.ts';
+import { accountId, DEFAULT_ACCOUNT_KEY, durationLabel, MEDIA_TYPE, MINUTES, PROFILE_DIRS, type PeriodLabel } from '../shared/catalog.ts';
 import type { Account, QuotaWindow } from '../shared/types.ts';
 import { readClaudeKeychain } from './claude-keychain.ts';
 import {
@@ -265,7 +265,7 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
           Authorization: `Bearer ${oauth.accessToken}`,
           'anthropic-beta': OAUTH_BETA,
           'User-Agent': USER_AGENT,
-          Accept: 'application/json'
+          Accept: MEDIA_TYPE.json
         }
       });
       const result = parseClaudeUsage(usage);

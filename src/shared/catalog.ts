@@ -43,6 +43,9 @@ export const PROFILE_PROVIDER_IDS: readonly ProfileProviderId[] = PROVIDER_IDS.f
 // The variable that points each of those tools at a profile folder other than the default one.
 export const PROFILE_ENV = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' } as const satisfies Record<ProfileProviderId, string>;
 
+// The media types the app asks for and sends.
+export const MEDIA_TYPE = { json: 'application/json', githubJson: 'application/vnd.github+json' } as const;
+
 export const AUTO = 'auto';
 export type Auto = typeof AUTO;
 

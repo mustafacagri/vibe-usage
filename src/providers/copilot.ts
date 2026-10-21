@@ -5,14 +5,14 @@ import os from 'node:os';
 import { ProviderError } from '../core/errors.ts';
 import { isObject } from '../core/files.ts';
 import { normalizeWindow, safePlan, safeText, type WindowInput } from '../core/model.ts';
-import { accountId, DEFAULT_ACCOUNT_KEY, DURATION_MS } from '../shared/catalog.ts';
+import { accountId, DEFAULT_ACCOUNT_KEY, DURATION_MS, MEDIA_TYPE } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
 import {
   findBinary as defaultFindBinary,
   getJson as defaultGetJson,
   QUOTA_ENDPOINTS,
+  GITHUB_CLI,
   runProcess as defaultRunProcess,
-  TOOL_INSTALLS,
   USER_AGENT,
   type GetJson,
   type RunProcess
@@ -42,7 +42,8 @@ function parseWindows(snapshots: unknown, resetsAt: unknown): WindowInput[] {
     if (!isObject(quota)) throw new ProviderError('invalid_response');
     if (quota.unlimited === true || quota.has_quota === false) return [];
     const id = safeText(typeof quota.quota_id === 'string' ? quota.quota_id : key, key);
-    const labelKey = QUOTA_LABELS[id];
+    // The id is the service's: only the ids listed are names the app has.
+    const labelKey = Object.hasOwn(QUOTA_LABELS, id) ? QUOTA_LABELS[id] : undefined;
     return [{ id, remainingPercent: quota.percent_remaining, resetsAt, ...(labelKey ? { labelKey } : { label: id }) }];
   });
 }
@@ -81,7 +82,7 @@ export function createCopilotProvider(options: CopilotProviderOptions = {}): Pro
       const token = env[name]?.trim();
       if (token) return token;
     }
-    const binary = await findBinary(TOOL_INSTALLS.copilot.binaries[0] ?? 'gh');
+    const binary = await findBinary(GITHUB_CLI);
     // `gh` fails when nobody is signed in; the process error is that answer, not a fault.
     const token = await runProcess(binary, ['auth', 'token', '--hostname', GITHUB_HOST], {
       timeoutMs: TOKEN_TIMEOUT_MS,
@@ -122,7 +123,7 @@ export function createCopilotProvider(options: CopilotProviderOptions = {}): Pro
       const token = await readToken(context);
       const usage = await getJson(QUOTA_ENDPOINTS.copilot, {
         // The `token` scheme is the one GitHub's own clients use for this endpoint; `Bearer` is not used here.
-        headers: { Authorization: `token ${token}`, Accept: 'application/json', 'User-Agent': USER_AGENT },
+        headers: { Authorization: `token ${token}`, Accept: MEDIA_TYPE.json, 'User-Agent': USER_AGENT },
         timeoutMs: USAGE_TIMEOUT_MS,
         ...context
       });

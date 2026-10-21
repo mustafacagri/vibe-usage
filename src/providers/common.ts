@@ -273,6 +273,9 @@ export interface DesktopApp {
 
 // How each tool is installed: its command-line binaries in lookup order, and its desktop app.
 // Launches and diagnostics both look tools up here.
+// The GitHub CLI, which holds the sign-in Copilot's quota is read with.
+export const GITHUB_CLI = 'gh';
+
 export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly string[]; app?: DesktopApp }>> = {
   claude: { binaries: ['claude'] },
   codex: { binaries: ['codex'] },
@@ -280,7 +283,7 @@ export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly str
   cursor: { binaries: ['cursor-agent', 'agent'], app: { mac: 'Cursor', windows: ['cursor', 'Cursor.exe'] } },
   antigravity: { binaries: [], app: { mac: 'Antigravity', windows: ['Antigravity', 'Antigravity.exe'] } },
   // Copilot has no program of its own here: the GitHub CLI holds the sign-in its quota is read with.
-  copilot: { binaries: ['gh'] }
+  copilot: { binaries: [GITHUB_CLI] }
 };
 
 const localAppData = (env: Environment, home: string): string => env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
