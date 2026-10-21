@@ -531,7 +531,10 @@ async function start(): Promise<void> {
           serviceIssues = mergeServiceIssues(serviceIssues, reading);
           send(view());
         })
-        .catch(() => undefined)
+        // The read itself cannot fail (a page that does not answer is a result); this is the app's own fault, so it is told.
+        .catch((error: unknown) => {
+          console.error(error);
+        })
         .finally(() => {
           statusReading = false;
           checkStatus(statusAskedAgain ? STATUS_FIRST_CHECK_DELAY_MS : STATUS_CHECK_INTERVAL_MS);
