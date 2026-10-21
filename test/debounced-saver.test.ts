@@ -36,6 +36,8 @@ test('a flush writes at once and cancels the write that was waiting', async t =>
     writes.push('write');
     return 'text';
   });
+  // Two changes, so a second timer would be left behind if the saver kept one per change.
+  saver.schedule();
   saver.schedule();
   await saver.flush();
   t.mock.timers.tick(SAVE_DELAY_MS);
