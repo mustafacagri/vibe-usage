@@ -1717,13 +1717,15 @@ dialog header h2 {
 }
 
 /* History: used percent over the last week */
-.history {
+.history,
+.tokens {
   margin-top: 10px;
   border-top: 1px dashed rgba(255, 255, 255, 0.08);
   padding-top: 6px;
 }
 
-.history summary {
+.history summary,
+.tokens summary {
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -1732,8 +1734,35 @@ dialog header h2 {
   user-select: none;
 }
 
-.history[open] summary {
+.history[open] summary,
+.tokens[open] summary {
   color: var(--text-secondary);
+}
+
+.history-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.history-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.history-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.history-tab[aria-selected='true'] {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-hover);
+  color: var(--text);
 }
 
 .history-chart {

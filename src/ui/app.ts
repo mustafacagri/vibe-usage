@@ -602,10 +602,22 @@ interface HistorySpan {
   markFormat: Intl.DateTimeFormatOptions;
   nameBetween: boolean;
 }
-const HISTORY_SPANS: readonly HistorySpan[] = [
-  { durationMs: 7 * DURATION_MS.DAY, stepHours: 24, title: 'historyTitle', markFormat: { weekday: 'short' }, nameBetween: true },
-  { durationMs: DURATION_MS.DAY, stepHours: 4, title: 'historyDayTitle', markFormat: { hour: 'numeric' }, nameBetween: false }
-];
+const DAY_SPAN: HistorySpan = {
+  durationMs: DURATION_MS.DAY,
+  stepHours: 4,
+  title: 'historyDayTitle',
+  markFormat: { hour: 'numeric' },
+  nameBetween: false
+};
+const WEEK_SPAN: HistorySpan = {
+  durationMs: 7 * DURATION_MS.DAY,
+  stepHours: 24,
+  title: 'historyTitle',
+  markFormat: { weekday: 'short' },
+  nameBetween: true
+};
+// The day comes first and is the one shown until the user picks the week.
+const HISTORY_SPANS: readonly HistorySpan[] = [DAY_SPAN, WEEK_SPAN];
 // Readings further apart than this mean the app was not running: the line breaks there.
 const HISTORY_GAP_MS = 3 * DURATION_MS.HOUR;
 // Categorical slots 1–3 stepped for the dark surface, validated (CVD and contrast) against it.
@@ -731,24 +743,75 @@ async function fillHistory(details: HTMLDetailsElement, accounts: readonly Measu
   drawHistory(details, accounts, history);
 }
 
+// The span whose chart the history section shows; it stays while the cards are rebuilt.
+let historySpan: HistorySpan = DAY_SPAN;
+
 function drawHistory(details: HTMLDetailsElement, accounts: readonly MeasuredAccount[], read: NonNullable<typeof history>): void {
   const now = Date.now();
-  const charts = accounts.flatMap(account => {
-    const series = chartedWindows(account).flatMap((window, i) => {
-      const samples = read.find(s => s.accountId === account.id && s.windowId === window.id)?.samples ?? [];
-      return samples.length ? [{ label: describeWindow(window, format()).label, color: SERIES_COLORS[i] ?? '', samples }] : [];
-    });
-    return HISTORY_SPANS.flatMap(span => {
+  const lines = new Map(
+    accounts.map(account => [
+      account.id,
+      chartedWindows(account).flatMap((window, i) => {
+        const samples = read.find(s => s.accountId === account.id && s.windowId === window.id)?.samples ?? [];
+        return samples.length ? [{ label: describeWindow(window, format()).label, color: SERIES_COLORS[i] ?? '', samples }] : [];
+      })
+    ])
+  );
+  const chartsOf = (span: HistorySpan): HTMLElement[] =>
+    accounts.flatMap(account => {
       // A chart of the day needs a reading inside it: older lines would only be empty axes.
-      const shown = series.filter(line => line.samples.some(([time]) => time >= now - span.durationMs));
+      const shown = (lines.get(account.id) ?? []).filter(line => line.samples.some(([time]) => time >= now - span.durationMs));
       if (!shown.length) return [];
       const chart = historyChart(shown, now, span);
-      chart.prepend(element('figcaption', '', accounts.length > 1 ? `${pickerName(account)} · ${t(span.title)}` : t(span.title)));
+      if (accounts.length > 1) chart.prepend(element('figcaption', '', pickerName(account)));
       return [chart];
     });
-  });
   const summary = details.querySelector('summary');
-  details.replaceChildren(...(summary ? [summary] : []), ...(charts.length ? charts : [element('div', 'empty', t('historyEmpty'))]));
+  const head = summary ? [summary] : [];
+  if (![...lines.values()].some(line => line.length)) {
+    details.replaceChildren(...head, element('div', 'empty', t('historyEmpty')));
+    return;
+  }
+  const tablist = element('div', 'history-tabs');
+  tablist.setAttribute('role', 'tablist');
+  tablist.setAttribute('aria-label', t('historySection'));
+  const panel = element('div', 'history-panel');
+  panel.setAttribute('role', 'tabpanel');
+  const tabs = new Map(
+    HISTORY_SPANS.map(span => {
+      const tab = element('button', 'history-tab', t(span.title));
+      tab.type = 'button';
+      tab.setAttribute('role', 'tab');
+      return [span, tab] as const;
+    })
+  );
+  const select = (span: HistorySpan): void => {
+    historySpan = span;
+    for (const [other, tab] of tabs) {
+      tab.setAttribute('aria-selected', String(other === span));
+      tab.tabIndex = other === span ? 0 : -1;
+    }
+    panel.setAttribute('aria-label', t(span.title));
+    const charts = chartsOf(span);
+    panel.replaceChildren(...(charts.length ? charts : [element('div', 'empty', t('historyEmpty'))]));
+  };
+  HISTORY_SPANS.forEach((span, index) => {
+    const tab = tabs.get(span);
+    tab?.addEventListener('click', () => {
+      select(span);
+    });
+    tab?.addEventListener('keydown', event => {
+      const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+      const next = step ? HISTORY_SPANS[(index + step + HISTORY_SPANS.length) % HISTORY_SPANS.length] : undefined;
+      if (!next) return;
+      event.preventDefault();
+      select(next);
+      tabs.get(next)?.focus();
+    });
+  });
+  tablist.append(...tabs.values());
+  select(historySpan);
+  details.replaceChildren(...head, tablist, panel);
 }
 
 function historySection(accounts: readonly MeasuredAccount[]): HTMLDetailsElement {
