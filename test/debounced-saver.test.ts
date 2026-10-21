@@ -7,7 +7,7 @@ import { tempDir } from './helpers/fixtures.ts';
 
 const SAVE_DELAY_MS = 30_000;
 
-test('changes made in a burst are written once, a while after the first, with what is known by then', async t => {
+test('a burst of changes is written once, the delay after its first change, with what is known by then', async t => {
   const file = path.join(await tempDir(t, 'vibe-saver-'), 'kept.json');
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let text = 'one';
@@ -17,13 +17,14 @@ test('changes made in a burst are written once, a while after the first, with wh
     return text;
   });
   saver.schedule();
+  t.mock.timers.tick(SAVE_DELAY_MS - 1000);
   text = 'two';
+  // A later change does not push the write back: a steady stream of changes would never reach the disk.
   saver.schedule();
-  t.mock.timers.tick(SAVE_DELAY_MS - 1);
   assert.deepEqual(writes, [], 'nothing is written before the delay is over');
-  t.mock.timers.tick(1);
+  t.mock.timers.tick(1000);
+  assert.deepEqual(writes, ['two'], 'the delay after the first change was over');
   await saver.flush();
-  assert.deepEqual(writes, ['two', 'two'], 'the timer wrote once; the flush wrote what is there now');
   assert.equal(await fs.readFile(file, 'utf8'), 'two');
 });
 
