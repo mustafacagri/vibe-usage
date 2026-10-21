@@ -73,7 +73,11 @@ test('the macOS installer suffix matches how the packages are named', async () =
 test('copies that cannot update themselves download the file for their platform', async () => {
   const { readFile } = await import('node:fs/promises');
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { build: { artifactName: string } };
-  const name = pkg.build.artifactName.replace('', '0.3.0').replace('', 'win').replace('', 'x64').replace('', 'zip');
+  const name = pkg.build.artifactName
+    .replace('${version}', '0.3.0')
+    .replace('${os}', 'win')
+    .replace('${arch}', 'x64')
+    .replace('${ext}', 'zip');
   assert.ok(name.endsWith(manualInstallerSuffix('win32', 'x64') ?? '?'), name);
   assert.equal(manualInstallerSuffix('darwin', 'arm64'), '-mac-arm64.dmg');
   assert.equal(manualInstallerSuffix('linux', 'x64'), undefined);
