@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { publishVerified, type PublishedArtifact } from '../scripts/publish-cli.ts';
+import { publishVerified, VISIBLE_ATTEMPTS, type PublishedArtifact } from '../scripts/publish-cli.ts';
 
 const artifact = { name: 'fixture-cli', version: '1.2.3', filename: 'fixture-cli-1.2.3.tgz', integrity: 'sha512-fixture' };
 const published: PublishedArtifact = { name: artifact.name, version: artifact.version, dist: { integrity: artifact.integrity } };
@@ -21,7 +21,7 @@ test('an existing version on another dist-tag cannot leave npm latest behind the
     }),
     /npm latest does not point/
   );
-  assert.equal(reads, 6);
+  assert.equal(reads, VISIBLE_ATTEMPTS);
   let visible = false;
   assert.equal(
     await publishVerified(artifact, {
@@ -132,7 +132,7 @@ test('a missing or changed post-publication artifact blocks the desktop release'
     }),
     /must remain unpublished/
   );
-  assert.equal(reads, 7);
+  assert.equal(reads, VISIBLE_ATTEMPTS + 1);
   let first = true;
   await assert.rejects(
     publishVerified(artifact, {

@@ -16,6 +16,10 @@ export interface PublishedArtifact {
   dist: { integrity: string };
 }
 
+// npm can take minutes to serve a version it has accepted (the first publish with provenance took ten).
+export const VISIBLE_ATTEMPTS = 30;
+const VISIBLE_PAUSE_MS = 30_000;
+
 export async function publishVerified(
   artifact: PackageArtifact,
   io: {
@@ -30,13 +34,13 @@ export async function publishVerified(
       throw new Error(`npm already serves different content for ${artifact.name}@${artifact.version}; use a new version.`);
   };
   const verifyLatest = async (): Promise<void> => {
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < VISIBLE_ATTEMPTS; attempt++) {
       const latest = await io.readLatest();
       if (latest?.version === artifact.version) {
         matches(latest);
         return;
       }
-      if (attempt < 5) await io.pause();
+      if (attempt < VISIBLE_ATTEMPTS - 1) await io.pause();
     }
     throw new Error(
       `npm latest does not point to ${artifact.name}@${artifact.version}; inspect dist-tags before publishing the desktop release.`
@@ -51,14 +55,14 @@ export async function publishVerified(
   await io.publish();
   // Allow bounded registry propagation. Authentication, transport and malformed responses
   // fail immediately; only an explicit 404 is a version that is not visible yet.
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < VISIBLE_ATTEMPTS; attempt++) {
     const published = await io.read();
     if (published) {
       matches(published);
       await verifyLatest();
       return 'published';
     }
-    if (attempt < 5) await io.pause();
+    if (attempt < VISIBLE_ATTEMPTS - 1) await io.pause();
   }
   throw new Error(`npm did not confirm ${artifact.name}@${artifact.version}; the desktop release must remain unpublished.`);
 }
@@ -129,7 +133,7 @@ if (import.meta.main) {
     },
     pause: () =>
       new Promise(resolve => {
-        setTimeout(resolve, 2000);
+        setTimeout(resolve, VISIBLE_PAUSE_MS);
       })
   });
   console.log(`Verified ${name}@${version} (${result}, ${artifact.integrity}).`);
