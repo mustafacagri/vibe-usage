@@ -64,6 +64,9 @@ export function createQuotaWatch(threshold?: number): (snapshot: Snapshot) => Qu
   const lastHeadroom = new Map<string, number>();
   return snapshot => {
     const line = threshold ?? snapshot.settings.lowQuotaPercent;
+    // What a hidden tool did meanwhile is no change to tell about: forget it until it is shown again.
+    for (const provider of snapshot.providers)
+      if (snapshot.settings.hiddenProviders.includes(provider.id)) for (const account of provider.accounts) lastHeadroom.delete(account.id);
     return snapshot.providers
       .filter(provider => !snapshot.settings.hiddenProviders.includes(provider.id))
       .flatMap(provider =>

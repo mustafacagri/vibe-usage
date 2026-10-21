@@ -151,4 +151,10 @@ test('a hidden tool is left out of the tray icon, the tooltip and the alerts', (
     at(90).map(alert => alert.kind),
     ['available']
   );
+  // Seen while shown, then hidden through a drop: showing it again does not announce the drop.
+  at(90);
+  state.settings.hiddenProviders = ['cursor'];
+  at(5);
+  state.settings.hiddenProviders = [];
+  assert.deepEqual(at(5), [], 'what happened while hidden is not news');
 });
