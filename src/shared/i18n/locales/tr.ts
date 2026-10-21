@@ -250,6 +250,7 @@ export const tr: Messages = {
     'Bu oturumun son taşınmasından beri konuşması diske kaydedilmemiş; taşınsaydı kaybolacaktı, bu yüzden taşınmadı. Olduğu yerde devam ediyor.',
   error_launch_failed: 'Terminal açılamadı.',
   error_app_not_found: '{app} varsayılan konumda kurulu değil.',
+  error_cursor_agent_missing: 'Cursor Agent CLI kurulu değil. cursor.com/cli adresinden kurun, sonra tekrar giriş yapın.',
   error_sender_rejected: 'İstek reddedildi.',
   error_no_verified_quota: 'Doğrulanmış kotası olan hesap yok. --account ile birini seçin.',
   error_no_cli: '{tool} için komut satırı aracı yok.',

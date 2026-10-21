@@ -28,6 +28,7 @@ export type AppErrorCode =
   | 'handover_sensitive_context'
   | 'launch_failed'
   | 'app_not_found'
+  | 'cursor_agent_missing'
   | 'sender_rejected'
   | 'no_verified_quota'
   | 'no_cli'

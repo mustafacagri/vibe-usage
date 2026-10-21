@@ -246,9 +246,9 @@ const LAUNCHERS: Record<ProviderId, (options: LaunchOptions) => Promise<Terminal
   },
   async cursor({ model, prompt }) {
     // Only the Cursor Agent CLI runs a task in a terminal; without it the app is opened.
-    const binary = await findCursorAgent();
+    const agent = await findCursorAgent();
     // Selecting a folder does not grant trust to its code. Cursor asks the user itself.
-    return binary ? { binary, args: [...optional('--model', model), ...trailing(prompt)], env: {} } : null;
+    return agent ? { binary: agent.binary, args: [...agent.args, ...optional('--model', model), ...trailing(prompt)], env: {} } : null;
   },
   antigravity: () => Promise.resolve(null)
 };
@@ -341,7 +341,14 @@ export interface SignIn {
   spawnProcess?: SpawnProcess | undefined;
 }
 
-export async function openSignIn({ providerId, account, dataDir, cwd, platform, spawnProcess }: SignIn): Promise<void> {
+export async function openSignIn({ providerId, account, dataDir, cwd, platform = process.platform, spawnProcess }: SignIn): Promise<void> {
+  // Cursor's Windows quota is read from the sign-in the Agent CLI keeps; signing in to the app
+  // leaves it unchanged, so there the CLI signs in. On macOS the app's own sign-in is what is read.
+  if (providerId === 'cursor' && platform === 'win32') {
+    const agent = await findCursorAgent();
+    if (!agent) throw new AppError('cursor_agent_missing');
+    return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
+  }
   const args = LOGIN_ARGS[providerId];
   if (!args) return openDesktopApp({ providerId, platform, spawnProcess });
   const env = account ? profileEnvironment(account) : {};

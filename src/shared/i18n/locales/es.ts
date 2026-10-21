@@ -259,6 +259,7 @@ export const es: Messages = {
     'La conversación de esta sesión desde su último traslado no está guardada; no se movió porque se perdería. Sigue donde está.',
   error_launch_failed: 'No se pudo abrir el terminal.',
   error_app_not_found: '{app} no está instalado en su ubicación predeterminada.',
+  error_cursor_agent_missing: 'La CLI de Cursor Agent no está instalada. Instálala desde cursor.com/cli y vuelve a iniciar sesión.',
   error_sender_rejected: 'Solicitud rechazada.',
   error_no_verified_quota: 'Ninguna cuenta con cuota verificada. Elige una con --account.',
   error_no_cli: '{tool} no tiene herramienta de línea de comandos.',

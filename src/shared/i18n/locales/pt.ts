@@ -259,6 +259,7 @@ export const pt: Messages = {
     'A conversa desta sessão desde a última mudança não está salva; ela não foi movida, pois seria perdida. Continua onde está.',
   error_launch_failed: 'Não foi possível abrir o terminal.',
   error_app_not_found: '{app} não está instalado no local padrão.',
+  error_cursor_agent_missing: 'A CLI do Cursor Agent não está instalada. Instale-a em cursor.com/cli e inicie sessão novamente.',
   error_sender_rejected: 'Solicitação rejeitada.',
   error_no_verified_quota: 'Nenhuma conta com cota verificada. Escolha uma com --account.',
   error_no_cli: '{tool} não tem ferramenta de linha de comando.',

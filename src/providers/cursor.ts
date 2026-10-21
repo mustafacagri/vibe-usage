@@ -1,9 +1,10 @@
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Environment } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
-import { isObject, type JsonObject } from '../core/files.ts';
+import { isFile, isObject, type JsonObject } from '../core/files.ts';
 import { normalizeWindow, safePlan } from '../core/model.ts';
 import { accountId, DEFAULT_ACCOUNT_KEY } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
@@ -145,13 +146,45 @@ function sessionCookie(token: string, clock?: Clock): string {
   return `WorkosCursorSessionToken=${user}%3A%3A${token}`;
 }
 
-// The Cursor Agent CLI; null when not installed.
-export async function findCursorAgent(): Promise<string | null> {
-  for (const name of TOOL_INSTALLS.cursor.binaries) {
-    const binary = await findBinary(name).catch(() => null);
-    if (binary) return binary;
+// How to start the Cursor Agent CLI: the program and the arguments that come before the user's.
+export interface CursorAgentCommand {
+  binary: string;
+  args: readonly string[];
+}
+
+// The folder names the CLI's own launcher accepts (not the `.previous` copy kept beside an update).
+const VERSION_FOLDER = /^\d{4}\.\d{1,2}\.\d{1,2}(-\d{2}-\d{2}-\d{2})?-[a-f0-9]+$/;
+
+// The date a version folder is named after (2026.10.14-0f9edde, or with a build time after the
+// day), as a number that orders the folders; the CLI's own launcher picks the newest the same way.
+function versionDay(name: string): number {
+  const [year = '', month = '', day = ''] = (name.split('-')[0] ?? '').split('.');
+  const value = Number(`${year}${month.padStart(2, '0')}${day.padStart(2, '0')}`);
+  return Number.isFinite(value) ? value : 0;
+}
+
+// On Windows the CLI is installed as .cmd and .ps1 wrappers, which are never started. They run
+// the node.exe and index.js of the newest version folder; those are started directly.
+export async function findWindowsCursorAgent(env: Environment = process.env, home = os.homedir()): Promise<CursorAgentCommand | null> {
+  const root = path.join(env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'), 'cursor-agent');
+  const versions = (await fsp.readdir(path.join(root, 'versions')).catch(() => []))
+    .filter(name => VERSION_FOLDER.test(name))
+    .sort((a, b) => versionDay(b) - versionDay(a) || b.localeCompare(a));
+  for (const directory of [root, ...versions.map(name => path.join(root, 'versions', name))]) {
+    const binary = path.join(directory, 'node.exe');
+    const script = path.join(directory, 'index.js');
+    if ((await isFile(binary)) && (await isFile(script))) return { binary, args: [script] };
   }
   return null;
+}
+
+// The Cursor Agent CLI; null when not installed.
+export async function findCursorAgent(env: Environment = process.env, home = os.homedir()): Promise<CursorAgentCommand | null> {
+  for (const name of TOOL_INSTALLS.cursor.binaries) {
+    const binary = await findBinary(name, { env, home }).catch(() => null);
+    if (binary) return { binary, args: [] };
+  }
+  return process.platform === 'win32' ? findWindowsCursorAgent(env, home) : null;
 }
 
 export interface CursorProviderOptions {

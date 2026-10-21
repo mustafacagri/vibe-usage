@@ -8,7 +8,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createService } from '../src/core/service.ts';
 import { getJson, type GetJsonOptions, type RunProcess } from '../src/providers/common.ts';
-import { createCursorProvider, type CursorProviderOptions } from '../src/providers/cursor.ts';
+import { createCursorProvider, findWindowsCursorAgent, type CursorProviderOptions } from '../src/providers/cursor.ts';
 import { account, tempDir } from './helpers/fixtures.ts';
 
 const NOW = 1_000_000_000_000;
@@ -147,4 +147,30 @@ test('a Cursor HTTPS response at 13 seconds fits the shared 25 second refresh bu
   response.emit('end');
   await refresh;
   assert.equal(service.snapshot().providers[0]?.accounts[0]?.status, 'ok');
+});
+
+test('the Windows Cursor Agent CLI is its newest complete version, started through node.exe', async t => {
+  const local = await tempDir(t, 'vibe-cursor-agent-');
+  const env = { LOCALAPPDATA: local };
+  assert.equal(await findWindowsCursorAgent(env, local), null, 'nothing installed');
+  const install = async (directory: string, files: string[]): Promise<void> => {
+    await fs.mkdir(directory, { recursive: true });
+    for (const file of files) await fs.writeFile(path.join(directory, file), '');
+  };
+  const versions = path.join(local, 'cursor-agent', 'versions');
+  await install(path.join(versions, '2026.9.30-aaaaaaa'), ['node.exe', 'index.js']);
+  await install(path.join(versions, '2026.10.14-0f9edde'), ['node.exe', 'index.js']);
+  await install(path.join(versions, '2026.10.20-bbbbbbb'), ['index.js']);
+  await install(path.join(versions, '2026.10.16-ccccccc.previous'), ['node.exe', 'index.js']);
+  const newest = path.join(versions, '2026.10.14-0f9edde');
+  assert.deepEqual(await findWindowsCursorAgent(env, local), {
+    binary: path.join(newest, 'node.exe'),
+    args: [path.join(newest, 'index.js')]
+  });
+  await install(path.join(local, 'cursor-agent'), ['node.exe', 'index.js']);
+  assert.equal(
+    (await findWindowsCursorAgent(env, local))?.binary,
+    path.join(local, 'cursor-agent', 'node.exe'),
+    'an unpacked install wins'
+  );
 });

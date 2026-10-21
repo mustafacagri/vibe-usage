@@ -578,6 +578,7 @@ const SAFE_ERRORS = [
   'account_not_found',
   'binary_missing',
   'app_not_found',
+  'cursor_agent_missing',
   'session_not_found',
   'session_newer_elsewhere',
   'session_still_running',

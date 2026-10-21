@@ -262,6 +262,7 @@ export const it: Messages = {
     "La conversazione di questa sessione dall'ultimo spostamento non è salvata; non è stata spostata perché andrebbe persa. Continua dove si trova.",
   error_launch_failed: 'Impossibile aprire il terminale.',
   error_app_not_found: '{app} non è installato nella posizione predefinita.',
+  error_cursor_agent_missing: 'La CLI di Cursor Agent non è installata. Installala da cursor.com/cli, poi accedi di nuovo.',
   error_sender_rejected: 'Richiesta rifiutata.',
   error_no_verified_quota: 'Nessun account con quota verificata. Scegline uno con --account.',
   error_no_cli: '{tool} non ha uno strumento da riga di comando.',

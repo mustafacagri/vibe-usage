@@ -261,6 +261,7 @@ export const nl: Messages = {
     'Het gesprek van deze sessie sinds de laatste verplaatsing is niet opgeslagen; ze is niet verplaatst, want dan ging het verloren. Ze gaat verder waar ze is.',
   error_launch_failed: 'De terminal kon niet worden geopend.',
   error_app_not_found: '{app} is niet op de standaardlocatie geïnstalleerd.',
+  error_cursor_agent_missing: 'De Cursor Agent-CLI is niet geïnstalleerd. Installeer hem via cursor.com/cli en meld je daarna opnieuw aan.',
   error_sender_rejected: 'Verzoek geweigerd.',
   error_no_verified_quota: 'Geen account met geverifieerd quotum. Kies er een met --account.',
   error_no_cli: '{tool} heeft geen opdrachtregeltool.',

@@ -249,6 +249,7 @@ export const ko: Messages = {
     '이 세션의 마지막 이동 이후 대화가 디스크에 저장되지 않아, 잃지 않도록 옮기지 않았습니다. 지금 있는 곳에서 계속됩니다.',
   error_launch_failed: '터미널을 열 수 없습니다.',
   error_app_not_found: '{app}이(가) 기본 위치에 설치되어 있지 않습니다.',
+  error_cursor_agent_missing: 'Cursor Agent CLI가 설치되어 있지 않습니다. cursor.com/cli에서 설치한 뒤 다시 로그인하세요.',
   error_sender_rejected: '요청이 거부되었습니다.',
   error_no_verified_quota: '검증된 할당량이 있는 계정이 없습니다. --account로 선택하세요.',
   error_no_cli: '{tool}에는 명령줄 도구가 없습니다.',

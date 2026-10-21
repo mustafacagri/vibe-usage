@@ -256,3 +256,44 @@ test('a session the app resumes gets no resume question; a fresh start keeps Cla
   const started = await launchPlan('claude', { account: second });
   assert.deepEqual(started?.env.set, { CLAUDE_CONFIG_DIR: second.configDir });
 });
+
+test('on Windows, Cursor signs in through the Agent CLI, and says so when it is missing', async t => {
+  const dataDir = await tempDir(t, 'vibe-data-');
+  const binary = path.join(await tempDir(t, 'vibe-cursor-bin-'), 'cursor-agent.exe');
+  await fs.writeFile(binary, '');
+  const saved = {
+    agent: process.env.VIBE_CURSOR_AGENT_BINARY,
+    other: process.env.VIBE_AGENT_BINARY,
+    local: process.env.LOCALAPPDATA,
+    path: process.env.PATH,
+    Path: process.env.Path
+  };
+  t.after(() => {
+    for (const [key, value] of [
+      ['VIBE_CURSOR_AGENT_BINARY', saved.agent],
+      ['VIBE_AGENT_BINARY', saved.other],
+      ['LOCALAPPDATA', saved.local],
+      ['PATH', saved.path],
+      ['Path', saved.Path]
+    ] as const) {
+      if (value === undefined) Reflect.deleteProperty(process.env, key);
+      else process.env[key] = value;
+    }
+  });
+  process.env.VIBE_CURSOR_AGENT_BINARY = binary;
+  const calls: string[][] = [];
+  await openSignIn({ providerId: 'cursor', dataDir, cwd: dataDir, platform: 'win32', spawnProcess: fakeSpawn(calls) });
+  const args = calls[0] ?? [];
+  assert.equal(args[args.indexOf('-Executable') + 1], binary);
+  const encoded = args[args.indexOf('-ArgumentsBase64') + 1] ?? '';
+  assert.equal(Buffer.from(encoded, 'base64').toString('utf8'), 'login');
+  delete process.env.VIBE_CURSOR_AGENT_BINARY;
+  delete process.env.VIBE_AGENT_BINARY;
+  process.env.LOCALAPPDATA = dataDir;
+  process.env.PATH = '';
+  delete process.env.Path;
+  await assert.rejects(
+    openSignIn({ providerId: 'cursor', dataDir, cwd: dataDir, platform: 'win32', spawnProcess: fakeSpawn([]) }),
+    /cursor_agent_missing/
+  );
+});

@@ -76,9 +76,9 @@ export async function refreshCursorModels({ cacheDir, force = false, binary, now
 > {
   const cached = readCursorCache(cacheDir);
   if (!force && cached && now - cached.updatedAt < CURSOR_CACHE_TTL_MS) return cached.models;
-  const agent = binary ?? (await findCursorAgent());
+  const agent = binary ? { binary, args: [] } : await findCursorAgent();
   if (!agent) return null;
-  const output = await runProcess(agent, ['--list-models'], { timeoutMs: CURSOR_LIST_TIMEOUT_MS }).catch(() => '');
+  const output = await runProcess(agent.binary, [...agent.args, '--list-models'], { timeoutMs: CURSOR_LIST_TIMEOUT_MS }).catch(() => '');
   const models = parseCursorModelList(output);
   if (!models.length) return null;
   // The cache only saves the next CLI call; failing to write it changes nothing else.

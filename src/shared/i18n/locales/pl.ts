@@ -261,6 +261,8 @@ export const pl: Messages = {
     'Rozmowa tej sesji od ostatniego przeniesienia nie jest zapisana; nie przeniesiono jej, bo zostałaby utracona. Trwa tam, gdzie jest.',
   error_launch_failed: 'Nie udało się otworzyć terminala.',
   error_app_not_found: '{app} nie jest zainstalowany w domyślnej lokalizacji.',
+  error_cursor_agent_missing:
+    'Cursor Agent CLI nie jest zainstalowane. Zainstaluj je ze strony cursor.com/cli, a potem zaloguj się ponownie.',
   error_sender_rejected: 'Żądanie odrzucone.',
   error_no_verified_quota: 'Brak konta ze zweryfikowanym limitem. Wybierz je opcją --account.',
   error_no_cli: '{tool} nie ma narzędzia wiersza poleceń.',

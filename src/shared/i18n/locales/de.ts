@@ -261,6 +261,8 @@ export const de: Messages = {
     'Das Gespräch dieser Sitzung seit ihrem letzten Wechsel ist nicht gespeichert; sie wurde nicht verschoben, sonst ginge es verloren. Sie läuft dort weiter.',
   error_launch_failed: 'Das Terminal konnte nicht geöffnet werden.',
   error_app_not_found: '{app} ist nicht am Standardort installiert.',
+  error_cursor_agent_missing:
+    'Die Cursor-Agent-CLI ist nicht installiert. Installieren Sie sie von cursor.com/cli und melden Sie sich dann erneut an.',
   error_sender_rejected: 'Anfrage abgelehnt.',
   error_no_verified_quota: 'Kein Konto mit geprüftem Kontingent. Wählen Sie eines mit --account.',
   error_no_cli: '{tool} hat kein Kommandozeilenwerkzeug.',
