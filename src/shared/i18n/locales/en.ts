@@ -259,7 +259,6 @@ export const en = {
     "This session's conversation since it last moved is not saved to disk, so it was not moved: it would be lost. It goes on where it is.",
   error_launch_failed: 'The terminal could not be opened.',
   error_app_not_found: '{app} is not installed in its default location.',
-  error_cursor_agent_missing: 'Cursor Agent CLI is not installed. Install it from cursor.com/cli, then sign in again.',
   error_sender_rejected: 'Request rejected.',
   error_no_verified_quota: 'No account with verified quota. Choose one with --account.',
   error_no_cli: '{tool} has no command-line tool.',

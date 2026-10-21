@@ -174,3 +174,41 @@ test('the Windows Cursor Agent CLI is its newest complete version, started throu
     'an unpacked install wins'
   );
 });
+
+test('on Windows the Cursor app’s own sign-in is read, then the CLI’s, and the first one still valid is used', async t => {
+  const expired = jwt({ sub: 'auth0|user_123', exp: NOW / 1000 - 10 });
+  const appData = await tempDir(t, 'vibe-cursor-windows-');
+  const cursor = path.join(appData, 'Cursor');
+  const store = path.join(cursor, 'User/globalStorage/state.vscdb');
+  const requests: GetJsonOptions[] = [];
+  const read = (): Promise<unknown> =>
+    createCursorProvider({
+      platform: 'win32',
+      env: { APPDATA: appData },
+      clock: () => NOW,
+      getJson: (_endpoint, options = {}) => {
+        requests.push(options);
+        return Promise.resolve(summary);
+      }
+    }).fetch(cursorAccount);
+  await assert.rejects(read(), /auth_missing/, 'neither the app nor the CLI is signed in');
+  await fs.mkdir(path.dirname(store), { recursive: true });
+  // Committed only to the live WAL, as while the app is running.
+  const writer = new DatabaseSync(store);
+  try {
+    writer.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);');
+    writer.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('cursorAuth/accessToken', expired);
+    await assert.rejects(read(), /auth_expired/, 'the app’s sign-in has run out and there is no other');
+    await fs.writeFile(path.join(cursor, 'auth.json'), JSON.stringify({ accessToken: valid }));
+    await read();
+    assert.equal(requests.at(-1)?.headers?.Cookie, `WorkosCursorSessionToken=user_123%3A%3A${valid}`, 'the CLI’s sign-in stands in');
+    writer.prepare('UPDATE ItemTable SET value = ?').run(valid);
+    await read();
+    assert.equal(requests.length, 2);
+    writer.prepare('UPDATE ItemTable SET value = ?').run(expired);
+    await fs.writeFile(path.join(cursor, 'auth.json'), JSON.stringify({ accessToken: expired }));
+    await assert.rejects(read(), /auth_expired/, 'both have run out');
+  } finally {
+    writer.close();
+  }
+});

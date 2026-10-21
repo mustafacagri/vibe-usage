@@ -260,7 +260,6 @@ export const fr: Messages = {
     "La conversation de cette session depuis son dernier déplacement n'est pas enregistrée ; elle n'a pas été déplacée, elle serait perdue. Elle continue là où elle est.",
   error_launch_failed: "Le terminal n'a pas pu s'ouvrir.",
   error_app_not_found: "{app} n'est pas installé à son emplacement par défaut.",
-  error_cursor_agent_missing: 'La CLI Cursor Agent n’est pas installée. Installez-la depuis cursor.com/cli, puis reconnectez-vous.',
   error_sender_rejected: 'Requête refusée.',
   error_no_verified_quota: 'Aucun compte avec un quota vérifié. Choisissez-en un avec --account.',
   error_no_cli: "{tool} n'a pas d'outil en ligne de commande.",

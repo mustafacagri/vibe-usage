@@ -342,11 +342,19 @@ export interface SignIn {
 }
 
 export async function openSignIn({ providerId, account, dataDir, cwd, platform = process.platform, spawnProcess }: SignIn): Promise<void> {
-  // Cursor's Windows quota is read from the sign-in the Agent CLI keeps; signing in to the app
-  // leaves it unchanged, so there the CLI signs in. On macOS the app's own sign-in is what is read.
+  // Cursor's quota is read from the app's sign-in, which signing in to the app updates. A Windows
+  // machine that has only the Agent CLI signs in through it (its sign-in is read as well).
   if (providerId === 'cursor' && platform === 'win32') {
+    const opened = await openDesktopApp({ providerId, platform, spawnProcess }).then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof AppError && error.code === 'app_not_found') return false;
+        throw error;
+      }
+    );
+    if (opened) return;
     const agent = await findCursorAgent();
-    if (!agent) throw new AppError('cursor_agent_missing');
+    if (!agent) throw new AppError('app_not_found', { app: 'Cursor' });
     return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
   }
   const args = LOGIN_ARGS[providerId];

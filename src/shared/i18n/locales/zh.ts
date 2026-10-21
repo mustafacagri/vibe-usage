@@ -245,7 +245,6 @@ export const zh: Messages = {
   error_session_unsaved: '此会话自上次转移以来的对话未保存到磁盘，转移会丢失，因此未转移。它在原处继续。',
   error_launch_failed: '无法打开终端。',
   error_app_not_found: '{app} 未安装在默认位置。',
-  error_cursor_agent_missing: '尚未安装 Cursor Agent CLI。请从 cursor.com/cli 安装，然后重新登录。',
   error_sender_rejected: '请求被拒绝。',
   error_no_verified_quota: '没有具有已验证配额的账号。请使用 --account 选择一个。',
   error_no_cli: '{tool} 没有命令行工具。',

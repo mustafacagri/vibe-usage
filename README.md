@@ -176,9 +176,9 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 Model lists come from each tool's own data: Claude Code aliases and the models you used, the Codex model cache, and
 `cursor-agent --list-models` (cached for 24 hours).
 
-On Windows, Cursor's quota is read from the sign-in the Cursor Agent CLI keeps (`%APPDATA%Cursorauth.json`), so
-**Sign in** runs `cursor-agent login` and asks you to install the CLI (cursor.com/cli) when it is missing. On macOS it
-opens the Cursor app, whose own sign-in is what is read.
+Cursor's quota is read from the Cursor app's own sign-in on macOS and Windows; on Windows the sign-in the Cursor Agent CLI
+keeps (`%APPDATA%Cursorauth.json`) is read too, and used when the app's has run out. **Sign in** opens the app, or on a
+Windows machine with only the CLI runs `cursor-agent login`.
 
 ## Privacy and safety
 

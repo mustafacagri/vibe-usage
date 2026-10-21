@@ -1,6 +1,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import type { Environment } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
@@ -115,20 +116,57 @@ interface TokenSource {
   runProcess: RunProcess;
 }
 
-async function readAccessToken({ home, platform, env, runProcess }: TokenSource, context?: RefreshContext): Promise<unknown> {
+const TOKEN_KEY = 'cursorAuth/accessToken';
+const APP_STORE = 'User/globalStorage/state.vscdb';
+
+// The token the Cursor app keeps in its own database, read without taking part in its writes.
+// This is a live WAL database: read-only mode includes committed WAL frames, whereas immutable
+// mode would ignore them and could use a previous account's token after a sign-in change.
+async function readAppStoreToken(file: string, context?: RefreshContext): Promise<unknown> {
+  remainingTimeout(SQLITE_TIMEOUT_MS, context);
+  if (!(await isFile(file))) throw new ProviderError('auth_missing');
+  try {
+    const database = new DatabaseSync(file, { readOnly: true, timeout: SQLITE_TIMEOUT_MS });
+    try {
+      return database.prepare('SELECT value FROM ItemTable WHERE key = ? LIMIT 1').get(TOKEN_KEY)?.value;
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    throw new ProviderError('process_failed', { cause: error });
+  }
+}
+
+// The signed-in sessions this machine holds, most authoritative first. On Windows that is the
+// app's own sign-in, then the one the Cursor Agent CLI keeps in auth.json: either can be the
+// only one present, and either can be the one that is still valid.
+async function readAccessTokens({ home, platform, env, runProcess }: TokenSource, context?: RefreshContext): Promise<unknown[]> {
   if (platform === 'win32') {
-    const auth = await readCredentialFile(path.join(env.APPDATA ?? path.join(home, 'AppData/Roaming'), 'Cursor/auth.json'), context);
-    return auth.accessToken;
+    const roaming = env.APPDATA ?? path.join(home, 'AppData/Roaming');
+    const reads = [
+      () => readAppStoreToken(path.join(roaming, 'Cursor', APP_STORE), context),
+      async () => (await readCredentialFile(path.join(roaming, 'Cursor/auth.json'), context)).accessToken
+    ];
+    const tokens: unknown[] = [];
+    let failure: ProviderError | undefined;
+    for (const read of reads) {
+      try {
+        tokens.push(await read());
+      } catch (error) {
+        // A missing store is the normal state of a machine that never used it.
+        if (!(error instanceof ProviderError)) throw error;
+        if (error.code !== 'auth_missing') failure ??= error;
+      }
+    }
+    if (!tokens.length && failure) throw failure;
+    return tokens;
   }
   if (platform !== 'darwin') throw new ProviderError('unsupported_platform');
-  // This is a live WAL database. Read-only mode includes committed WAL frames; immutable
-  // mode would ignore them and could use a previous account's token after a sign-in change.
-  const db = path.join(home, 'Library/Application Support/Cursor/User/globalStorage/state.vscdb');
-  const uri = pathToFileURL(db);
+  const uri = pathToFileURL(path.join(home, 'Library/Application Support/Cursor', APP_STORE));
   uri.searchParams.set('mode', 'ro');
-  const query = "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken' LIMIT 1;";
+  const query = `SELECT value FROM ItemTable WHERE key = '${TOKEN_KEY}' LIMIT 1;`;
   try {
-    return (await runProcess('/usr/bin/sqlite3', ['-readonly', uri.href, query], { timeoutMs: SQLITE_TIMEOUT_MS, ...context })).trim();
+    return [(await runProcess('/usr/bin/sqlite3', ['-readonly', uri.href, query], { timeoutMs: SQLITE_TIMEOUT_MS, ...context })).trim()];
   } catch (error) {
     if (error instanceof ProviderError) throw error;
     throw new ProviderError('process_failed', { cause: error });
@@ -213,11 +251,25 @@ export function createCursorProvider(options: CursorProviderOptions = {}): Provi
       ]),
     async fetch(account, context) {
       if (account.configDir) throw new ProviderError('unsupported_profile');
-      const token = await readAccessToken(source, context);
+      const tokens = await readAccessTokens(source, context);
       remainingTimeout(USAGE_TIMEOUT_MS, context);
-      if (typeof token !== 'string' || !token.trim()) throw new ProviderError('auth_missing');
+      // The first session that is still usable; if none is, the first one's reason.
+      let cookie: string | undefined;
+      let failure: Error = new ProviderError('auth_missing');
+      let reason = false;
+      for (const token of tokens) {
+        if (typeof token !== 'string' || !token.trim()) continue;
+        try {
+          cookie = sessionCookie(token, options.clock);
+          break;
+        } catch (error) {
+          if (!reason && error instanceof Error) failure = error;
+          reason = true;
+        }
+      }
+      if (!cookie) throw failure;
       const usage = await getJson(QUOTA_ENDPOINTS.cursor, {
-        headers: { Accept: 'application/json', Cookie: sessionCookie(token, options.clock) },
+        headers: { Accept: 'application/json', Cookie: cookie },
         timeoutMs: USAGE_TIMEOUT_MS,
         ...context
       });

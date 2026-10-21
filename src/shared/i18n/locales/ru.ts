@@ -260,7 +260,6 @@ export const ru: Messages = {
     'Разговор этой сессии с последнего переноса не сохранён на диск; её не перенесли, иначе он бы потерялся. Она продолжается на месте.',
   error_launch_failed: 'Не удалось открыть терминал.',
   error_app_not_found: '{app} не установлен в стандартное расположение.',
-  error_cursor_agent_missing: 'Cursor Agent CLI не установлен. Установите его с cursor.com/cli и войдите снова.',
   error_sender_rejected: 'Запрос отклонён.',
   error_no_verified_quota: 'Нет аккаунта с подтверждённой квотой. Выберите его через --account.',
   error_no_cli: 'У {tool} нет инструмента командной строки.',

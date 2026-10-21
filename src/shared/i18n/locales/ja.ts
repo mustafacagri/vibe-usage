@@ -251,8 +251,6 @@ export const ja: Messages = {
     'このセッションの直近の移動以降の会話はディスクに保存されていないため、失われないよう移動しませんでした。今の場所で続きます。',
   error_launch_failed: 'ターミナルを開けませんでした。',
   error_app_not_found: '{app} が既定の場所にインストールされていません。',
-  error_cursor_agent_missing:
-    'Cursor Agent CLI がインストールされていません。cursor.com/cli からインストールして、もう一度サインインしてください。',
   error_sender_rejected: 'リクエストが拒否されました。',
   error_no_verified_quota: '検証済みのクォータがあるアカウントがありません。--account で選択してください。',
   error_no_cli: '{tool} にはコマンドラインツールがありません。',
