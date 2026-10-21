@@ -8,7 +8,7 @@
 
 **Every AI coding subscription you pay for, in one menu-bar window.**
 
-See how much quota Claude Code, Codex, Cursor and Antigravity have left, and keep working when a limit runs out:
+See how much quota Claude Code, Codex, Cursor, Antigravity and GitHub Copilot have left, and keep working when a limit runs out:
 your session continues on another account or tool, without re-explaining the task.
 
 Windows tray · macOS menu bar · 13 languages · no passwords, no tokens stored
@@ -40,8 +40,10 @@ and writes a briefing of the current session so the new tool can continue where 
 ### Quota at a glance
 
 Every limit of every account: 5-hour and weekly windows, per-model scopes, spend pools. Countdowns show when each one
-resets, and a limit that will run out before it resets says when, at the current pace. The last 7 days are one click
-away as a chart. If a refresh fails, the last reading stays visible and is clearly marked as stale. Unknown numbers are
+resets, and a limit that will run out before it resets says when, at the current pace. The last 7 days and the last
+24 hours are one click away as charts, and Claude Code and Codex show the tokens they used (today, over the week, by
+model) counted from their own logs. When a tool's maker reports a problem on its status page, the card says so: a
+slow or failing tool may not be your limit. If a refresh fails, the last reading stays visible and is clearly marked as stale. Unknown numbers are
 never shown as a full quota. The tray icon is a ring that fills with what your first tool has left; hover it for every
 tool. Show each tool's accounts side by side, order the tools as you like, and switch to a compact view with one line
 per account.
@@ -174,13 +176,20 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 | Codex       | The installed CLI's app-server rate-limit methods                       | `~/.codex/sessions`                     | `codex` CLI                            |
 | Cursor      | The signed-in session's usage summary                                   | Cursor Agent CLI chats (`~/.cursor/chats`) | `cursor-agent`, otherwise the app      |
 | Antigravity | The running app's local service (process and port ownership verified)   | `~/.gemini/antigravity-ide`             | Antigravity app                        |
+| GitHub Copilot | GitHub's Copilot usage endpoint, with the GitHub CLI's sign-in       | none                                    | none: only its quota is shown          |
 
 Model lists come from each tool's own data: Claude Code aliases and the models you used, the Codex model cache, and
 `cursor-agent --list-models` (cached for 24 hours).
 
 Cursor's quota is read from the Cursor app's own sign-in on macOS and Windows; on Windows the sign-in the Cursor Agent CLI
-keeps (`%APPDATA%Cursorauth.json`) is read too, and used when the app's has run out. **Sign in** opens the app, or on a
+keeps (`%APPDATA%\Cursor\auth.json`) is read too, and used when the app's has run out. **Sign in** opens the app, or on a
 Windows machine with only the CLI runs `cursor-agent login`.
+
+GitHub Copilot's quota is read with the token the GitHub CLI uses: `GH_TOKEN` or `GITHUB_TOKEN` when set, otherwise
+`gh auth token`. The token goes only to `api.github.com/copilot_internal/user`. GitHub does not document that
+endpoint, so it may change without notice; the card then reports an unexpected answer instead of guessing. The card
+appears once such a sign-in exists, and without a GitHub sign-in nothing is shown. Copilot is not a handover or
+fallback target: the app starts nothing in it.
 
 ## Privacy and safety
 
@@ -190,8 +199,9 @@ Windows machine with only the CLI runs `cursor-agent login`.
   accounts on its own, an expired Claude Code sign-in is renewed by Claude Code itself: one minimal Haiku request (one
   word, no tools, nothing saved), at most every 30 minutes per account. Continuing a Claude Code session on
   another account copies its transcript into that account's profile folder; the original is left as it is.
-- **Few endpoints.** Quota requests go only to the Anthropic and Cursor usage endpoints, with TLS verification on
-  (and the renewal above goes through Claude Code).
+- **Few endpoints.** Quota requests go only to the Anthropic, Cursor and GitHub Copilot usage endpoints, with TLS
+  verification on (and the renewal above goes through Claude Code). Every five minutes the app reads the status pages of
+  Claude, OpenAI, Cursor and GitHub (public JSON, no sign-in sent); Settings → General turns this off.
   Codex and Antigravity are read locally. Once a day the app asks GitHub for its latest release (Settings → General
   turns this off). An installed Windows copy then downloads a new version itself, only from this repository's
   releases, checks it against the release's SHA-512 checksums (and, for a signed release, its publisher), and installs
@@ -199,7 +209,8 @@ Windows machine with only the CLI runs `cursor-agent login`.
 - **Local data, no saved credentials.** Settings live in `%APPDATA%\Vibe Usage\settings.json` (Windows) or
   `~/Library/Application Support/Vibe Usage/settings.json` (macOS), with `settings.json.bak` (the previous good copy)
   and, if the file was ever damaged, `settings.json.damaged-<time>`. Next to them, `history.json` keeps a week of quota
-  percentages for the chart and the forecast (numbers only), `measurements.json` each account's last good reading (its
+  percentages for the chart and the forecast (numbers only), `token-usage.json` the token counts read from Claude Code's and Codex's own logs (numbers, model names and the log
+  files' paths; never the conversations), `measurements.json` each account's last good reading (its
   limits, percentages, reset times and plan, shown as stale after a restart until a fresh read), and `continuity.json`
   the handover history: project folders, tool and account ids, session ids and outcomes, never conversation text,
   tokens or e-mails. Settings can include account email labels and local paths. The local

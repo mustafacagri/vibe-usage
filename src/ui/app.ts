@@ -15,7 +15,8 @@ import {
   type ProfileProviderId,
   type Provider,
   type ProviderId,
-  visibleProviders
+  visibleProviders,
+  WORK_PROVIDER_IDS
 } from '../shared/catalog.ts';
 import { compactLines, isLowQuota, needsSignIn, type CompactLine, type CompactNote, type KnownWindow } from '../shared/account-state.ts';
 import {
@@ -26,6 +27,7 @@ import {
   formatDuration,
   formatFreshness,
   formatPercent,
+  gridTimes,
   hasOwnName,
   LAUNCH_MESSAGES,
   SUGGESTION_BUTTONS,
@@ -66,8 +68,11 @@ import type {
   ProviderStatus,
   QuotaWindow,
   SettingsNotice,
+  AccountTokens,
+  ServiceIssue,
   Snapshot,
   Suggestion,
+  TokenTotals,
   TransitionRecord,
   UpdateInfo,
   UpdateInstall,
@@ -83,9 +88,15 @@ declare global {
 const TOAST_MS = 5000;
 const SETTINGS_MESSAGE_MS = 4000;
 // Countdowns and ages are relative to now; re-render this often between snapshots.
-const CLOCK_TICK_MS = 30 * 1000;
+const CLOCK_TICK_MS = 30 * DURATION_MS.SECOND;
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 const SHORT_ID_LENGTH = 8;
+const SERVICE_STATUS_TEXT = {
+  degraded_performance: 'serviceDegraded',
+  partial_outage: 'servicePartial',
+  major_outage: 'serviceMajor'
+} as const satisfies Record<ServiceIssue['status'], MessageKey>;
+
 const STATUS_TEXT: Partial<Record<ProviderStatus, MessageKey>> = {
   pending: 'reading',
   ok: 'live',
@@ -94,7 +105,7 @@ const STATUS_TEXT: Partial<Record<ProviderStatus, MessageKey>> = {
 };
 const DETAILS_SECTION = 'details';
 // The folded sections of a provider card, by class; an open one stays open across renders.
-const CARD_SECTIONS = { spending: 'spending', history: 'history' } as const;
+const CARD_SECTIONS = { spending: 'spending', history: 'history', tokens: 'tokens' } as const;
 // What a toast says once a tool started, by how it started.
 // Room below the last row of the compact view.
 const COMPACT_BOTTOM_PADDING = 12;
@@ -170,6 +181,7 @@ const ui = {
   notificationsLabel: $('#notifications-label', HTMLElement),
   compareAccounts: $('#compare-accounts', HTMLInputElement),
   checkUpdates: $('#check-updates', HTMLInputElement),
+  checkServiceStatus: $('#check-service-status', HTMLInputElement),
   lowQuota: $('#low-quota', HTMLSelectElement),
   quietHours: $('#quiet-hours', HTMLInputElement),
   quietHoursTimes: $('#quiet-hours-times', HTMLElement),
@@ -245,6 +257,8 @@ let modelRequest = 0;
 const selectedAccount = new Map<ProviderId, string>();
 // The last history read, so a rebuilt card draws its charts at once and then updates them.
 let history: Awaited<ReturnType<VibeApi['history']>> | null = null;
+// The last token read, so an opened card shows it at once and then updates it.
+let tokenUsage: Awaited<ReturnType<VibeApi['tokenUsage']>> | null = null;
 // Cards left as they are while the user works a control in them (see renderCards).
 let cardsStale = false;
 let toastTimer: number | undefined;
@@ -578,7 +592,32 @@ function compareBody(provider: Provider, accounts: readonly MeasuredAccount[]): 
 
 // ------------------------------------------------------------------- history
 
-const HISTORY_DAYS = 7;
+// The two charts of the history section: the grid falls every `stepHours` of the local clock, and
+// its labels name the weekday in the middle of a day or the hour at each mark.
+interface HistorySpan {
+  durationMs: number;
+  stepHours: number;
+  title: MessageKey;
+  // How a grid mark is named, and whether the name sits between two marks (a day) or on one.
+  markFormat: Intl.DateTimeFormatOptions;
+  nameBetween: boolean;
+}
+const DAY_SPAN: HistorySpan = {
+  durationMs: DURATION_MS.DAY,
+  stepHours: 4,
+  title: 'historyDayTitle',
+  markFormat: { hour: 'numeric' },
+  nameBetween: false
+};
+const WEEK_SPAN: HistorySpan = {
+  durationMs: DURATION_MS.WEEK,
+  stepHours: 24,
+  title: 'historyTitle',
+  markFormat: { weekday: 'short' },
+  nameBetween: true
+};
+// The day comes first and is the one shown until the user picks the week.
+const HISTORY_SPANS: readonly HistorySpan[] = [DAY_SPAN, WEEK_SPAN];
 // Readings further apart than this mean the app was not running: the line breaks there.
 const HISTORY_GAP_MS = 3 * DURATION_MS.HOUR;
 // Categorical slots 1–3 stepped for the dark surface, validated (CVD and contrast) against it.
@@ -601,8 +640,8 @@ interface ChartSeries {
 
 // Used percent of each limit over the last week: one line per limit, the latest value written
 // at its end, and a crosshair that reads every line at the pointer.
-function historyChart(series: readonly ChartSeries[], now: number): HTMLElement {
-  const start = now - HISTORY_DAYS * DURATION_MS.DAY;
+function historyChart(series: readonly ChartSeries[], now: number, span: HistorySpan): HTMLElement {
+  const start = now - span.durationMs;
   const plotWidth = CHART.width - CHART.left - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
   const x = (time: number): number => CHART.left + ((time - start) / (now - start)) * plotWidth;
@@ -616,11 +655,13 @@ function historyChart(series: readonly ChartSeries[], now: number): HTMLElement 
     label.textContent = formatPercent(percent, language);
     chart.append(label);
   }
-  const weekday = new Intl.DateTimeFormat(language, { weekday: 'short' });
-  for (let day = new Date(start).setHours(24, 0, 0, 0); day < now; day += DURATION_MS.DAY) {
-    const label = svg('text', { class: 'axis', x: x(day + DURATION_MS.DAY / 2), y: CHART.height - 4, 'text-anchor': 'middle' });
-    if (day + DURATION_MS.DAY / 2 < now) label.textContent = weekday.format(day + DURATION_MS.DAY / 2);
-    chart.append(svg('line', { class: 'grid day', x1: x(day), x2: x(day), y1: CHART.top, y2: CHART.top + plotHeight }), label);
+  const markFormat = new Intl.DateTimeFormat(language, span.markFormat);
+  const stepMs = span.stepHours * DURATION_MS.HOUR;
+  for (const mark of gridTimes(start, now, span.stepHours)) {
+    const labelAt = span.nameBetween ? mark + stepMs / 2 : mark;
+    const label = svg('text', { class: 'axis', x: x(labelAt), y: CHART.height - 4, 'text-anchor': 'middle' });
+    if (labelAt < now) label.textContent = markFormat.format(labelAt);
+    chart.append(svg('line', { class: 'grid day', x1: x(mark), x2: x(mark), y1: CHART.top, y2: CHART.top + plotHeight }), label);
   }
   const ends: { y: number; text: string }[] = [];
   for (const { color, samples } of series) {
@@ -702,27 +743,165 @@ async function fillHistory(details: HTMLDetailsElement, accounts: readonly Measu
   drawHistory(details, accounts, history);
 }
 
+// The span whose chart the history section shows; it stays while the cards are rebuilt.
+let historySpan: HistorySpan = DAY_SPAN;
+
+// Where each key moves the selected tab to, among `count` tabs.
+const TAB_KEYS: Readonly<Record<string, (index: number, count: number) => number>> = {
+  ArrowRight: (index, count) => (index + 1) % count,
+  ArrowLeft: (index, count) => (index - 1 + count) % count,
+  Home: () => 0,
+  End: (_index, count) => count - 1
+};
+// Each history section gets ids of its own, which its tabs and its panel point to each other with.
+let historySections = 0;
+
 function drawHistory(details: HTMLDetailsElement, accounts: readonly MeasuredAccount[], read: NonNullable<typeof history>): void {
   const now = Date.now();
-  const charts = accounts.flatMap(account => {
-    const series = chartedWindows(account).flatMap((window, i) => {
-      const samples = read.find(s => s.accountId === account.id && s.windowId === window.id)?.samples ?? [];
-      return samples.length ? [{ label: describeWindow(window, format()).label, color: SERIES_COLORS[i] ?? '', samples }] : [];
+  const lines = new Map(
+    accounts.map(account => [
+      account.id,
+      chartedWindows(account).flatMap((window, i) => {
+        const samples = read.find(s => s.accountId === account.id && s.windowId === window.id)?.samples ?? [];
+        return samples.length ? [{ label: describeWindow(window, format()).label, color: SERIES_COLORS[i] ?? '', samples }] : [];
+      })
+    ])
+  );
+  const chartsOf = (span: HistorySpan): HTMLElement[] =>
+    accounts.flatMap(account => {
+      // A chart of the day needs a reading inside it: older lines would only be empty axes.
+      const shown = (lines.get(account.id) ?? []).filter(line => line.samples.some(([time]) => time >= now - span.durationMs));
+      if (!shown.length) return [];
+      const chart = historyChart(shown, now, span);
+      if (accounts.length > 1) chart.prepend(element('figcaption', '', pickerName(account)));
+      return [chart];
     });
-    if (!series.length) return [];
-    const chart = historyChart(series, now);
-    if (accounts.length > 1) chart.prepend(element('figcaption', '', pickerName(account)));
-    return [chart];
-  });
   const summary = details.querySelector('summary');
-  details.replaceChildren(...(summary ? [summary] : []), ...(charts.length ? charts : [element('div', 'empty', t('historyEmpty'))]));
+  const head = summary ? [summary] : [];
+  if (![...lines.values()].some(line => line.length)) {
+    details.replaceChildren(...head, element('div', 'empty', t('historyEmpty')));
+    return;
+  }
+  const sectionId = `history-${historySections++}`;
+  const tablist = element('div', 'history-tabs');
+  tablist.setAttribute('role', 'tablist');
+  tablist.setAttribute('aria-label', t('historySection'));
+  const panel = element('div', 'history-panel');
+  panel.id = `${sectionId}-panel`;
+  panel.setAttribute('role', 'tabpanel');
+  panel.tabIndex = 0;
+  const entries = HISTORY_SPANS.map((span, index) => {
+    const tab = element('button', 'history-tab', t(span.title));
+    tab.id = `${sectionId}-tab-${index}`;
+    tab.type = 'button';
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', panel.id);
+    return { span, tab };
+  });
+  const select = (span: HistorySpan): void => {
+    historySpan = span;
+    for (const entry of entries) {
+      const selected = entry.span === span;
+      entry.tab.setAttribute('aria-selected', String(selected));
+      entry.tab.tabIndex = selected ? 0 : -1;
+      if (selected) panel.setAttribute('aria-labelledby', entry.tab.id);
+    }
+    const charts = chartsOf(span);
+    panel.replaceChildren(...(charts.length ? charts : [element('div', 'empty', t('historyQuietPeriod'))]));
+  };
+  entries.forEach(({ span, tab }, index) => {
+    tab.addEventListener('click', () => {
+      select(span);
+    });
+    tab.addEventListener('keydown', event => {
+      const next = entries[TAB_KEYS[event.key]?.(index, entries.length) ?? index];
+      if (!next || next.span === span) return;
+      event.preventDefault();
+      select(next.span);
+      next.tab.focus();
+    });
+  });
+  tablist.append(...entries.map(entry => entry.tab));
+  select(historySpan);
+  details.replaceChildren(...head, tablist, panel);
 }
 
 function historySection(accounts: readonly MeasuredAccount[]): HTMLDetailsElement {
   const details = element('details', CARD_SECTIONS.history);
-  details.append(element('summary', '', t('historyTitle')));
+  details.append(element('summary', '', t('historySection')));
   details.addEventListener('toggle', () => {
     if (details.open) void action(() => fillHistory(details, accounts));
+  });
+  return details;
+}
+
+// ------------------------------------------------------------------- tokens
+
+const TOKEN_COLUMNS = [
+  ['input', 'tokenInput'],
+  ['output', 'tokenOutput'],
+  ['cacheRead', 'tokenCacheRead'],
+  ['cacheWrite', 'tokenCacheWrite']
+] as const satisfies readonly (readonly [keyof TokenTotals, MessageKey])[];
+
+interface TokenRow {
+  name: string;
+  tokens: TokenTotals;
+}
+
+function tokenTable(heading: string, rows: readonly TokenRow[]): HTMLTableElement {
+  const numbers = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 });
+  const table = element('table', 'token-table');
+  const head = element('tr');
+  head.append(element('th', '', heading), ...TOKEN_COLUMNS.map(([, key]) => element('th', 'number', t(key))));
+  for (const cell of head.children) cell.setAttribute('scope', 'col');
+  table.append(head);
+  for (const { name, tokens } of rows) {
+    const row = element('tr');
+    const label = element('th', 'name', name);
+    label.title = name;
+    label.setAttribute('scope', 'row');
+    row.append(label, ...TOKEN_COLUMNS.map(([field]) => element('td', 'number', numbers.format(tokens[field]))));
+    table.append(row);
+  }
+  return table;
+}
+
+// Draws what the tool's logs add up to, from the last read if any, then from a fresh one.
+async function fillTokens(details: HTMLDetailsElement, accounts: readonly MeasuredAccount[]): Promise<void> {
+  if (tokenUsage) drawTokens(details, accounts, tokenUsage);
+  else details.append(loadingNote());
+  tokenUsage = await vibe.tokenUsage();
+  drawTokens(details, accounts, tokenUsage);
+}
+
+function drawTokens(details: HTMLDetailsElement, accounts: readonly MeasuredAccount[], read: readonly AccountTokens[]): void {
+  const blocks = accounts.flatMap(account => {
+    const tokens = read.find(entry => entry.accountId === account.id);
+    if (!tokens?.models.length) return [];
+    const block = element('div', 'token-block');
+    if (accounts.length > 1) block.append(element('div', 'token-caption', pickerName(account)));
+    block.append(
+      tokenTable(t('tokensTitle'), [
+        { name: t('tokenToday'), tokens: tokens.today },
+        { name: t('historyTitle'), tokens: tokens.week }
+      ]),
+      tokenTable(
+        t('tokenModels'),
+        tokens.models.map(({ model, tokens: used }) => ({ name: model || t('tokenModelUnknown'), tokens: used }))
+      )
+    );
+    return [block];
+  });
+  const summary = details.querySelector('summary');
+  details.replaceChildren(...(summary ? [summary] : []), ...(blocks.length ? blocks : [element('div', 'empty', t('tokensEmpty'))]));
+}
+
+function tokensSection(accounts: readonly MeasuredAccount[]): HTMLDetailsElement {
+  const details = element('details', CARD_SECTIONS.tokens);
+  details.append(element('summary', '', t('tokensTitle')));
+  details.addEventListener('toggle', () => {
+    if (details.open) void action(() => fillTokens(details, accounts));
   });
   return details;
 }
@@ -873,6 +1052,22 @@ function renderSuggestions(snapshot: Snapshot): void {
   ui.suggestions.replaceChildren(...(snapshot.suggestions ?? []).map(suggestionCard));
 }
 
+// What the tool's maker reports about its service: a slow or failing tool may not be the user's limit.
+function serviceIssueNote(issue: ServiceIssue): HTMLElement {
+  const note = element('div', `service-issue ${issue.status}`);
+  note.append(element('span', '', t('serviceIssue', { state: t(SERVICE_STATUS_TEXT[issue.status]) })));
+  return note;
+}
+
+function accountsInView(
+  accounts: readonly MeasuredAccount[],
+  compare: boolean,
+  shown: MeasuredAccount | undefined
+): readonly MeasuredAccount[] {
+  if (compare) return accounts;
+  return shown ? [shown] : [];
+}
+
 function providerCard(state: ProviderState): HTMLElement {
   const provider = providerById(state.id);
   const section = element('section', 'provider');
@@ -883,11 +1078,15 @@ function providerCard(state: ProviderState): HTMLElement {
     ? undefined
     : (accounts.find(a => a.id === selectedAccount.get(provider.id)) ?? accounts.find(a => a.primary) ?? accounts[0]);
   section.append(cardHeader(provider, compare ? [] : accounts, shown));
+  const issue = current().serviceIssues?.find(entry => entry.providerId === provider.id);
+  if (issue) section.append(serviceIssueNote(issue));
   if (compare) section.append(...compareBody(provider, accounts));
   else if (shown) section.append(...accountBody(provider, shown));
   else section.append(element('div', 'empty', statusMessage(state) || t('status_no_accounts')), signInButton(provider));
-  const charted = (compare ? accounts : shown ? [shown] : []).filter(a => chartedWindows(a).length);
+  const inView = accountsInView(accounts, compare, shown);
+  const charted = inView.filter(a => chartedWindows(a).length);
   if (charted.length) section.append(historySection(charted));
+  if (isProfileProvider(provider.id) && inView.length) section.append(tokensSection(inView));
 
   const status = shown?.status ?? state.status;
   const footer = element('div', `provider-status${status === 'stale' ? ' stale' : ''}`);
@@ -967,7 +1166,10 @@ function render(snapshot: Snapshot, focused: Element | null = document.activeEle
   applyStaticText();
 
   const order = visibleProviders(snapshot.settings);
-  const providers = snapshot.providers.filter(p => order.includes(p.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+  // A tool that only reports its quota has a card once there is a sign-in to read it with.
+  const providers = snapshot.providers
+    .filter(p => order.includes(p.id) && (providerById(p.id).runsWork || p.accounts.length))
+    .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   const { compact } = snapshot.settings;
   document.body.classList.toggle('compact', compact);
   renderCards(providers, compact, focused);
@@ -1018,7 +1220,7 @@ function renderProviderOrder(): void {
       select.id = `provider-slot-${slot}`;
       fillSelect(
         select,
-        PROVIDER_IDS.map(id => [id, providerLabel(id)] as const),
+        WORK_PROVIDER_IDS.map(id => [id, providerLabel(id)] as const),
         providerId
       );
       select.setAttribute('aria-label', t('slotLabel', { n: slot + 1 }));
@@ -1074,8 +1276,9 @@ function renderHomeOrder(): void {
       toggle.title = t(hidden ? 'showTool' : 'hideTool', { name: providerById(providerId).name });
       toggle.setAttribute('aria-label', toggle.title);
       toggle.setAttribute('aria-pressed', String(hidden));
-      // One tool always stays: the window would have nothing to show.
-      toggle.disabled = !hidden && hiddenProviders.length >= order.length - 1;
+      // A tool that runs work always stays: the window would have nothing to show.
+      toggle.disabled =
+        !hidden && providerById(providerId).runsWork && WORK_PROVIDER_IDS.every(id => id === providerId || hiddenProviders.includes(id));
       onClick(toggle, async () => {
         await saveSettings({
           hiddenProviders: hidden ? hiddenProviders.filter(id => id !== providerId) : [...hiddenProviders, providerId]
@@ -1157,7 +1360,7 @@ async function projectRow(preference: ProjectPreference): Promise<HTMLElement> {
   };
 
   const tool = element('select');
-  fillSelect(tool, [['', t('projectAnyTool')], ...PROVIDER_IDS.map(id => [id, providerLabel(id)] as const)], preference.tool ?? '');
+  fillSelect(tool, [['', t('projectAnyTool')], ...WORK_PROVIDER_IDS.map(id => [id, providerLabel(id)] as const)], preference.tool ?? '');
   onChange(tool, () => {
     const chosen = selectedProvider(tool);
     // A model or account belongs to one tool; changing the tool drops them.
@@ -1415,6 +1618,7 @@ async function renderSettings(): Promise<void> {
   ui.quietEnd.value = settings.quietHours?.end ?? DEFAULT_QUIET_HOURS.end;
   ui.compareAccounts.checked = settings.compareAccounts;
   ui.checkUpdates.checked = settings.checkUpdates;
+  ui.checkServiceStatus.checked = settings.checkServiceStatus;
   showAutoContinue(settings.autoContinue);
   showReturnToPrimary(settings.returnToPrimary);
   showReopenAfterRestart(settings.reopenAfterRestart);
@@ -1446,6 +1650,7 @@ onChange(ui.openAtLogin, () =>
 onChange(ui.notifications, () => saveSettings({ notifications: ui.notifications.checked }));
 onChange(ui.compareAccounts, () => saveSettings({ compareAccounts: ui.compareAccounts.checked }));
 onChange(ui.checkUpdates, () => saveSettings({ checkUpdates: ui.checkUpdates.checked }));
+onChange(ui.checkServiceStatus, () => saveSettings({ checkServiceStatus: ui.checkServiceStatus.checked }));
 onChange(ui.lowQuota, () => saveSettings({ lowQuotaPercent: Number(ui.lowQuota.value) }));
 // Quiet hours are saved once both times are valid and different; the inputs keep the choice.
 function saveQuietHours(): Promise<void> {
@@ -1603,7 +1808,7 @@ async function refreshHandoverModels(): Promise<void> {
 // chosen session) is never left as the target.
 function syncHandoverTarget(): void {
   const from = selectedProvider(ui.handoverFrom) ?? ui.handoverSession.selectedOptions[0]?.dataset.provider;
-  if (from && ui.handoverTo.value === from) ui.handoverTo.value = PROVIDER_IDS.find(id => id !== from) ?? '';
+  if (from && ui.handoverTo.value === from) ui.handoverTo.value = WORK_PROVIDER_IDS.find(id => id !== from) ?? '';
 }
 
 function setHandoverProject(dir: string): void {
@@ -1635,10 +1840,10 @@ function handoverRequest(): HandoverRequest {
 
 onClick(ui.handoverButton, async () => {
   if (!handoverProjectDir) setHandoverProject(await vibe.defaultProjectDir());
-  fillSelect(ui.handoverFrom, [[AUTO, t('autoDetectSession')], ...PROVIDER_IDS.map(id => [id, providerLabel(id)] as const)], AUTO);
+  fillSelect(ui.handoverFrom, [[AUTO, t('autoDetectSession')], ...WORK_PROVIDER_IDS.map(id => [id, providerLabel(id)] as const)], AUTO);
   fillSelect(
     ui.handoverTo,
-    PROVIDER_IDS.map(id => [id, providerLabel(id)] as const),
+    WORK_PROVIDER_IDS.map(id => [id, providerLabel(id)] as const),
     normalizeProviderOrder(current().settings.providerOrder)[0]
   );
   clearHandoverPreview();

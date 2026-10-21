@@ -16,6 +16,7 @@
   --accent-cursor: #8b5cf6;
   --accent-codex: #10b981;
   --accent-antigravity: #38bdf8;
+  --accent-copilot: #e879f9;
 
   --green: #10b981;
   --warn: #f59e0b;
@@ -1403,6 +1404,65 @@ dialog header h2 {
   color: #fcd34d;
 }
 
+/* Tokens the tool used, from its logs */
+.token-block + .token-block {
+  margin-top: 10px;
+}
+
+.token-caption {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.token-table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-table th,
+.token-table td {
+  padding: 3px 4px;
+  font-weight: 400;
+  text-align: left;
+  color: var(--text);
+}
+
+.token-table tr:first-child th {
+  color: var(--text-muted);
+}
+
+.token-table .number {
+  text-align: right;
+}
+
+.token-table .name {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A problem the tool's maker reports on its status page */
+.service-issue {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.service-issue.major_outage {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.1);
+}
+
 /* Notification threshold and quiet hours */
 .inline-field {
   flex-direction: row;
@@ -1654,13 +1714,15 @@ dialog header h2 {
 }
 
 /* History: used percent over the last week */
-.history {
+.history,
+.tokens {
   margin-top: 10px;
   border-top: 1px dashed rgba(255, 255, 255, 0.08);
   padding-top: 6px;
 }
 
-.history summary {
+.history summary,
+.tokens summary {
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -1669,8 +1731,35 @@ dialog header h2 {
   user-select: none;
 }
 
-.history[open] summary {
+.history[open] summary,
+.tokens[open] summary {
   color: var(--text-secondary);
+}
+
+.history-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.history-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.history-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.history-tab[aria-selected='true'] {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-hover);
+  color: var(--text);
 }
 
 .history-chart {
@@ -2019,6 +2108,14 @@ button.compact-note:hover {
   --avatar-end: #2563eb;
   --fill-start: #2563eb;
   --fill-end: #38bdf8;
+}
+[data-provider='copilot'] {
+  --accent: var(--accent-copilot);
+  --accent-end: #8b5cf6;
+  --avatar-start: #c026d3;
+  --avatar-end: #7c3aed;
+  --fill-start: #c026d3;
+  --fill-end: #e879f9;
 }
 
 .provider[data-provider]::before {

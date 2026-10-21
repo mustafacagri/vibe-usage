@@ -18,7 +18,7 @@ import {
   AUTO,
   CLAUDE_PERMISSION_MODES,
   isOneOf,
-  PROVIDER_IDS,
+  WORK_PROVIDER_IDS,
   type Auto,
   type ClaudePermissionMode,
   type ProfileProviderId,
@@ -1206,9 +1206,16 @@ type Lister = (
   sessionId?: string
 ) => Promise<(SessionCandidate | null)[]> | (SessionCandidate | null)[];
 
-const LISTERS: Record<ProviderId, Lister> = { claude: listClaude, codex: listCodex, cursor: listCursor, antigravity: listAntigravity };
+// GitHub Copilot keeps no sessions this app can read.
+const LISTERS: Record<ProviderId, Lister> = {
+  claude: listClaude,
+  codex: listCodex,
+  cursor: listCursor,
+  antigravity: listAntigravity,
+  copilot: () => []
+};
 
-const providersFor = (providerId: ProviderId | Auto): readonly ProviderId[] => (providerId === AUTO ? PROVIDER_IDS : [providerId]);
+const providersFor = (providerId: ProviderId | Auto): readonly ProviderId[] => (providerId === AUTO ? WORK_PROVIDER_IDS : [providerId]);
 
 // Sessions of the project, newest first. A provider whose data cannot be read lists none.
 async function sessionCandidates(

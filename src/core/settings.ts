@@ -18,6 +18,7 @@ import {
   MAX_LABEL_LENGTH,
   MODEL_ID_PATTERN,
   PROVIDER_IDS,
+  WORK_PROVIDER_IDS,
   providerById,
   REFRESH_INTERVAL_SECONDS,
   type ProviderId
@@ -60,6 +61,7 @@ const SETTINGS_KEYS = [
   'reopenAfterRestart',
   'compact',
   'checkUpdates',
+  'checkServiceStatus',
   'projectPreferences',
   'lowQuotaPercent',
   'quietHours'
@@ -88,7 +90,7 @@ export function defaultSettings(): Settings {
     intervalSeconds: REFRESH_INTERVAL_SECONDS.default,
     accounts: [],
     dismissedAccountIds: [],
-    providerOrder: [...PROVIDER_IDS],
+    providerOrder: [...WORK_PROVIDER_IDS],
     hiddenProviders: [],
     preferredModels: {},
     language: DEFAULT_LANGUAGE,
@@ -99,6 +101,7 @@ export function defaultSettings(): Settings {
     reopenAfterRestart: 'ask',
     compact: false,
     checkUpdates: true,
+    checkServiceStatus: true,
     projectPreferences: [],
     lowQuotaPercent: LOW_QUOTA_PERCENT
   };
@@ -186,17 +189,29 @@ function validateWindow(value: unknown): WindowBounds {
   return { x, y, width, height };
 }
 
-function validateProviderOrder(value: unknown): ProviderId[] {
+// A duplicate-free list of tools from `ids`.
+function validateToolList(
+  value: unknown,
+  ids: readonly ProviderId[],
+  code: 'invalid_provider_order' | 'invalid_hidden_providers'
+): ProviderId[] {
   check(
-    Array.isArray(value) && value.length <= PROVIDER_IDS.length && new Set(value).size === value.length && value.every(isProviderId),
-    'invalid_provider_order'
+    Array.isArray(value) &&
+      value.length <= ids.length &&
+      new Set(value).size === value.length &&
+      value.every((id): id is ProviderId => isOneOf(ids, id)),
+    code
   );
   return value;
 }
 
 function validateHiddenProviders(value: unknown): ProviderId[] {
-  const hidden = validateProviderOrder(value);
-  check(hidden.length < PROVIDER_IDS.length, 'invalid_hidden_providers');
+  const hidden = validateToolList(value, PROVIDER_IDS, 'invalid_hidden_providers');
+  // The window needs a tool to show that is there without a sign-in to read: one that runs work.
+  check(
+    WORK_PROVIDER_IDS.some(id => !hidden.includes(id)),
+    'invalid_hidden_providers'
+  );
   return hidden;
 }
 
@@ -234,7 +249,7 @@ function validateProjectPreference(input: unknown, seen: Set<string>): ProjectPr
   const projectDir = validateConfigDir(input.projectDir);
   check(!seen.has(pathKey(projectDir)), 'duplicate_project_preference');
   seen.add(pathKey(projectDir));
-  check(tool === undefined || isProviderId(tool), 'invalid_project_preference');
+  check(tool === undefined || isOneOf(WORK_PROVIDER_IDS, tool), 'invalid_project_preference');
   check(
     model === undefined ||
       (tool !== undefined && providerById(tool).acceptsModel && typeof model === 'string' && MODEL_ID_PATTERN.test(model)),
@@ -304,7 +319,8 @@ export function validateSettings(document: unknown): Settings {
     returnToPrimary,
     reopenAfterRestart,
     compact,
-    checkUpdates
+    checkUpdates,
+    checkServiceStatus
   } = input;
   check(typeof pinned === 'boolean', 'invalid_pinned');
   check(isOptionalBoolean(notifications), 'invalid_notifications');
@@ -312,7 +328,7 @@ export function validateSettings(document: unknown): Settings {
   check(autoContinue === undefined || isOneOf(AUTO_CONTINUE, autoContinue), 'invalid_auto_continue');
   check(returnToPrimary === undefined || isOneOf(AUTOMATION_MODES, returnToPrimary), 'invalid_settings');
   check(reopenAfterRestart === undefined || isOneOf(AUTOMATION_MODES, reopenAfterRestart), 'invalid_settings');
-  check(isOptionalBoolean(compact) && isOptionalBoolean(checkUpdates), 'invalid_settings');
+  check(isOptionalBoolean(compact) && isOptionalBoolean(checkUpdates) && isOptionalBoolean(checkServiceStatus), 'invalid_settings');
   check(
     typeof intervalSeconds === 'number' &&
       Number.isInteger(intervalSeconds) &&
@@ -341,7 +357,10 @@ export function validateSettings(document: unknown): Settings {
     accounts: accounts.map(account => validateAccount(account, ids, primaries)),
     dismissedAccountIds:
       input.dismissedAccountIds === undefined ? defaults.dismissedAccountIds : validateDismissed(input.dismissedAccountIds),
-    providerOrder: input.providerOrder === undefined ? defaults.providerOrder : validateProviderOrder(input.providerOrder),
+    providerOrder:
+      input.providerOrder === undefined
+        ? defaults.providerOrder
+        : validateToolList(input.providerOrder, WORK_PROVIDER_IDS, 'invalid_provider_order'),
     hiddenProviders: input.hiddenProviders === undefined ? defaults.hiddenProviders : validateHiddenProviders(input.hiddenProviders),
     preferredModels: input.preferredModels === undefined ? defaults.preferredModels : validatePreferredModels(input.preferredModels),
     language: language ?? defaults.language,
@@ -352,12 +371,13 @@ export function validateSettings(document: unknown): Settings {
     reopenAfterRestart: reopenAfterRestart ?? defaults.reopenAfterRestart,
     compact: compact ?? defaults.compact,
     checkUpdates: checkUpdates ?? defaults.checkUpdates,
+    checkServiceStatus: checkServiceStatus ?? defaults.checkServiceStatus,
     projectPreferences:
       input.projectPreferences === undefined ? defaults.projectPreferences : validateProjectPreferences(input.projectPreferences),
     lowQuotaPercent: lowQuotaPercent ?? defaults.lowQuotaPercent,
     // null clears the quiet hours: an absent field would keep the current ones in a patch.
     ...(input.quietHours === undefined || input.quietHours === null ? {} : { quietHours: validateQuietHours(input.quietHours) }),
-    ...(input.homeOrder === undefined ? {} : { homeOrder: validateProviderOrder(input.homeOrder) }),
+    ...(input.homeOrder === undefined ? {} : { homeOrder: validateToolList(input.homeOrder, PROVIDER_IDS, 'invalid_provider_order') }),
     ...(input.window === undefined ? {} : { window: validateWindow(input.window) })
   };
 }

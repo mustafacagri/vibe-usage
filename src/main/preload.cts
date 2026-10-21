@@ -51,6 +51,7 @@ const api: Ipc.VibeApi = {
   continueWork: suggestionId => call('continueWork', suggestionId),
   dismissSuggestion: suggestionId => call('dismissSuggestion', suggestionId),
   history: () => call('history'),
+  tokenUsage: () => call('tokenUsage'),
   transitions: () => call('transitions'),
   retryTransition: id => call('retryTransition', id),
   openUpdate: () => call('openUpdate'),

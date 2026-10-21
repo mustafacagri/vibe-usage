@@ -27,18 +27,20 @@ import { createToolProbe } from '../core/diagnostics.ts';
 import { AppError } from '../core/errors.ts';
 import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip, type QuotaAlert } from '../core/glance.ts';
 import { createHistory } from '../core/history.ts';
+import { createTokenUsage } from '../core/token-usage.ts';
 import { renewClaudeSignIn } from '../core/claude-renew.ts';
 import { MEASUREMENTS_FILE } from '../core/measurements.ts';
 import { createService, type Service } from '../core/service.ts';
 import { appDataDir, inQuietHours, settingsPath } from '../core/settings.ts';
 import { ringIcon } from '../core/tray-icon.ts';
 import { createInstaller, updateSupport, type UpdaterBackend } from '../core/updater.ts';
+import { checkServiceStatus, mergeServiceIssues, STATUS_PROVIDER_IDS } from '../core/status.ts';
 import { checkForUpdate, isReleaseDownload, isReleasePage, manualInstallerSuffix } from '../core/updates.ts';
-import { APP_NAME, APP_REPOSITORY, DURATION_MS } from '../shared/catalog.ts';
+import { APP_NAME, APP_REPOSITORY, DURATION_MS, MEDIA_TYPE, visibleProviders } from '../shared/catalog.ts';
 import { DEFAULT_LANGUAGE, translator, type Translate } from '../shared/i18n/index.ts';
 import { SUGGESTION_BUTTONS, type FormatContext } from '../shared/format.ts';
 import { IPC_PREFIX, SNAPSHOT_EVENT, type LoginItem } from '../shared/ipc.ts';
-import type { Settings, Snapshot, UpdateInfo, WindowBounds } from '../shared/types.ts';
+import type { ServiceIssue, Settings, Snapshot, UpdateInfo, WindowBounds } from '../shared/types.ts';
 import { createHandlers, type MainContext } from './handlers.ts';
 import { assertSender, envelope } from './ipc-policy.ts';
 
@@ -57,10 +59,12 @@ const WINDOW = {
 // Tray icon sizes for 100%, 150% and 200% display scaling.
 const TRAY_ICON_SCALES = [1, 1.5, 2];
 const TRAY_ICON_SIZE = 16;
-const UPDATE_FIRST_CHECK_DELAY_MS = 15 * 1000;
+const UPDATE_FIRST_CHECK_DELAY_MS = 15 * DURATION_MS.SECOND;
 const UPDATE_CHECK_INTERVAL_MS = DURATION_MS.DAY;
+const STATUS_FIRST_CHECK_DELAY_MS = 10 * DURATION_MS.SECOND;
+const STATUS_CHECK_INTERVAL_MS = 5 * DURATION_MS.MINUTE;
 // A check that gets no answer ends, so that the next one is still scheduled.
-const UPDATE_REQUEST_TIMEOUT_MS = 15 * 1000;
+const CHECK_REQUEST_TIMEOUT_MS = 15 * DURATION_MS.SECOND;
 const BOUNDS_SAVE_DELAY_MS = 500;
 // A tool writes several files while signing in; it is read once they settle.
 const FOLDER_CHANGE_DEBOUNCE_MS = 1000;
@@ -68,7 +72,7 @@ const FOLDER_CHANGE_DEBOUNCE_MS = 1000;
 const RESUME_REFRESH_DELAY_MS = 5000;
 // Returning to the window (after a sign-in in the browser, say) reads quota again unless it
 // was read this recently.
-const FOCUS_REFRESH_MIN_AGE_MS = 30 * 1000;
+const FOCUS_REFRESH_MIN_AGE_MS = 30 * DURATION_MS.SECOND;
 // Marks a start by the login item, which opens the app to the tray only. Windows passes it
 // to the registered command; macOS reports such a start through `wasOpenedAtLogin`.
 const OPENED_AT_LOGIN_ARG = '--opened-at-login';
@@ -97,6 +101,7 @@ let poll: NodeJS.Timeout | undefined;
 let boundsTimer: NodeJS.Timeout | undefined;
 let resumeTimer: NodeJS.Timeout | undefined;
 let updateTimer: NodeJS.Timeout | undefined;
+let statusTimer: NodeJS.Timeout | undefined;
 // Records a deliberate quit, so sessions closed after it are not taken for ones the system ended.
 let quitContinuity: (() => void) | undefined;
 // Held so that its click handler lives as long as the notification is shown.
@@ -257,13 +262,13 @@ function trayImage(percent: number | null, lowPercent: number): NativeImage {
   return image;
 }
 
-const fetchJson = async (url: string): Promise<unknown> => {
+// A check that gets no answer (GitHub's rate limit, an outage) has not found "nothing new": it failed.
+const fetchJson = async (url: string, accept: string): Promise<unknown> => {
   const response = await net.fetch(url, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': APP_NAME },
-    signal: AbortSignal.timeout(UPDATE_REQUEST_TIMEOUT_MS)
+    headers: { Accept: accept, 'User-Agent': APP_NAME },
+    signal: AbortSignal.timeout(CHECK_REQUEST_TIMEOUT_MS)
   });
-  // No answer (GitHub's rate limit, an outage) is not "no release": the check failed.
-  if (!response.ok) throw new Error(`release check answered ${response.status}`);
+  if (!response.ok) throw new Error(`${new URL(url).host} answered ${response.status}`);
   return response.json();
 };
 
@@ -306,6 +311,7 @@ async function start(): Promise<void> {
     renewSignIn: { claude: account => renewClaudeSignIn(account, { dataDir, home: homeDir }) }
   });
   const history = await createHistory({ dataDir });
+  const tokenUsage = await createTokenUsage({ dataDir, homeDir });
   const continuity = await createContinuity({
     homeDir,
     dataDir,
@@ -330,6 +336,7 @@ async function start(): Promise<void> {
   // The ring last drawn, by its percentage and low line.
   let trayDrawn: string | undefined;
   let update: UpdateInfo | undefined;
+  let serviceIssues: ServiceIssue[] = [];
   const unsupported = await updateSupport({ packaged: app.isPackaged, platform: process.platform, execPath: process.execPath });
   const installer = createInstaller(unsupported ?? releaseUpdater(), () => {
     send(view());
@@ -345,6 +352,7 @@ async function start(): Promise<void> {
   const view = (): Snapshot => ({
     ...history.annotate(service.snapshot()),
     suggestions: continuity.suggestions(),
+    ...(serviceIssues.length ? { serviceIssues } : {}),
     ...(update ? { update, updateInstall: installer.state() } : {})
   });
   const send = (snapshot: Snapshot): void => {
@@ -487,7 +495,7 @@ async function start(): Promise<void> {
       return;
     }
     updateTimer = setTimeout(() => {
-      checkForUpdate(app.getVersion(), fetchJson, manualInstallerSuffix(process.platform, process.arch))
+      checkForUpdate(app.getVersion(), url => fetchJson(url, MEDIA_TYPE.githubJson), manualInstallerSuffix(process.platform, process.arch))
         .then(found => {
           if (!service.snapshot().settings.checkUpdates) return;
           update = found ?? undefined;
@@ -501,6 +509,45 @@ async function start(): Promise<void> {
     }, delayMs);
   };
 
+  // A status read is under way, and a change since it began asks for another when it ends.
+  let statusReading = false;
+  let statusAskedAgain = false;
+  const checkStatus = (delayMs = STATUS_FIRST_CHECK_DELAY_MS): void => {
+    clearTimeout(statusTimer);
+    if (!service.snapshot().settings.checkServiceStatus) {
+      serviceIssues = [];
+      send(view());
+      return;
+    }
+    statusTimer = setTimeout(() => {
+      statusReading = true;
+      const shown = visibleProviders(service.snapshot().settings);
+      checkServiceStatus(
+        url => fetchJson(url, MEDIA_TYPE.json),
+        STATUS_PROVIDER_IDS.filter(id => shown.includes(id))
+      )
+        .then(reading => {
+          if (!service.snapshot().settings.checkServiceStatus) return;
+          serviceIssues = mergeServiceIssues(serviceIssues, reading);
+          send(view());
+        })
+        // The read itself cannot fail (a page that does not answer is a result); this is the app's own fault, so it is told.
+        .catch((error: unknown) => {
+          console.error(error);
+        })
+        .finally(() => {
+          statusReading = false;
+          checkStatus(statusAskedAgain ? STATUS_FIRST_CHECK_DELAY_MS : STATUS_CHECK_INTERVAL_MS);
+          statusAskedAgain = false;
+        });
+    }, delayMs);
+  };
+  // Another read is asked for now, or right after the one under way: it covers the tools shown now.
+  const recheckStatus = (): void => {
+    if (statusReading) statusAskedAgain = true;
+    else checkStatus();
+  };
+
   const handlers = createHandlers({
     service,
     dataDir,
@@ -511,6 +558,7 @@ async function start(): Promise<void> {
     refresh,
     continuity,
     history,
+    tokenUsage,
     installer: {
       download: downloadUpdate,
       install: () => {
@@ -526,17 +574,17 @@ async function start(): Promise<void> {
       win.setContentSize(width, Math.round(Math.min(Math.max(height, WINDOW.compactMinHeight), WINDOW.compactMaxHeight)));
     },
     settingsChanged(before, after) {
+      const hiddenChanged =
+        after.hiddenProviders.some(id => !before.hiddenProviders.includes(id)) ||
+        before.hiddenProviders.some(id => !after.hiddenProviders.includes(id));
       if (after.pinned !== before.pinned) win.setAlwaysOnTop(after.pinned);
       if (after.language !== before.language) buildTrayMenu();
       if (after.intervalSeconds !== before.intervalSeconds) schedule();
       // A tool shown again has had no fresh reading while it was hidden.
-      if (
-        after.hiddenProviders.some(id => !before.hiddenProviders.includes(id)) ||
-        before.hiddenProviders.some(id => !after.hiddenProviders.includes(id))
-      )
-        refreshInBackground();
+      if (hiddenChanged) refreshInBackground();
       if (after.compact !== before.compact) applyCompact(after.compact);
       if (after.checkUpdates !== before.checkUpdates) checkUpdates();
+      if (after.checkServiceStatus !== before.checkServiceStatus || hiddenChanged) recheckStatus();
     },
     hideWindow: () => {
       win.hide();
@@ -626,10 +674,12 @@ async function start(): Promise<void> {
   app.on('will-quit', () => {
     service.dispose();
     void history.flush();
+    void tokenUsage.flush();
   });
   await win.loadFile(HTML);
   if (!openedAtLogin()) show(win);
   checkUpdates();
+  checkStatus();
   schedule();
   await refresh();
 }
@@ -654,6 +704,7 @@ app.on('before-quit', () => {
   clearTimeout(boundsTimer);
   clearTimeout(resumeTimer);
   clearTimeout(updateTimer);
+  clearTimeout(statusTimer);
 });
 // The app lives in the tray: closing the window never quits it.
 app.on('window-all-closed', () => undefined);

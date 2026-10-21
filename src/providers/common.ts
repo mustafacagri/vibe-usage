@@ -36,7 +36,8 @@ const TOKEN_EXPIRY_SKEW_MS = DURATION_MS.MINUTE;
 // The only remote endpoints the app may call. Everything else is rejected before a request.
 export const QUOTA_ENDPOINTS = {
   claude: 'https://api.anthropic.com/api/oauth/usage',
-  cursor: 'https://cursor.com/api/usage-summary'
+  cursor: 'https://cursor.com/api/usage-summary',
+  copilot: 'https://api.github.com/copilot_internal/user'
 } as const;
 const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set(Object.values(QUOTA_ENDPOINTS));
 
@@ -270,6 +271,9 @@ export interface DesktopApp {
   windows: readonly string[];
 }
 
+// The GitHub CLI, which holds the sign-in Copilot's quota is read with.
+export const GITHUB_CLI = 'gh';
+
 // How each tool is installed: its command-line binaries in lookup order, and its desktop app.
 // Launches and diagnostics both look tools up here.
 export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly string[]; app?: DesktopApp }>> = {
@@ -277,7 +281,9 @@ export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly str
   codex: { binaries: ['codex'] },
   // The Cursor Agent CLI; older installs only have the `agent` name.
   cursor: { binaries: ['cursor-agent', 'agent'], app: { mac: 'Cursor', windows: ['cursor', 'Cursor.exe'] } },
-  antigravity: { binaries: [], app: { mac: 'Antigravity', windows: ['Antigravity', 'Antigravity.exe'] } }
+  antigravity: { binaries: [], app: { mac: 'Antigravity', windows: ['Antigravity', 'Antigravity.exe'] } },
+  // Copilot has no program of its own here: the GitHub CLI holds the sign-in its quota is read with.
+  copilot: { binaries: [GITHUB_CLI] }
 };
 
 const localAppData = (env: Environment, home: string): string => env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');

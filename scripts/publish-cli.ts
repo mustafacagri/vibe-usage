@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { MEDIA_TYPE } from '../src/shared/catalog.ts';
 
 export interface PackageArtifact {
   name: string;
@@ -70,7 +71,7 @@ export async function publishVerified(
 async function readPublished(name: string, version: string): Promise<PublishedArtifact | null> {
   const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, {
     signal: AbortSignal.timeout(15_000),
-    headers: { accept: 'application/json', 'cache-control': 'no-cache' }
+    headers: { accept: MEDIA_TYPE.json, 'cache-control': 'no-cache' }
   });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`npm registry returned HTTP ${response.status}; publication stopped.`);

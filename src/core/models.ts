@@ -156,7 +156,8 @@ export function discoverModels({ homeDir = os.homedir(), cacheDir, accounts = []
     claude: claudeModels(accountProfileDirs('claude', homeDir, accounts)),
     codex: codexModels(accountProfileDirs('codex', homeDir, accounts)),
     cursor: cursorModels(homeDir, cacheDir),
-    antigravity: []
+    antigravity: [],
+    copilot: []
   };
 }
 

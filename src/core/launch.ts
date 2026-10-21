@@ -250,7 +250,8 @@ const LAUNCHERS: Record<ProviderId, (options: LaunchOptions) => Promise<Terminal
     // Selecting a folder does not grant trust to its code. Cursor asks the user itself.
     return agent ? { binary: agent.binary, args: [...agent.args, ...optional('--model', model), ...trailing(prompt)], env: {} } : null;
   },
-  antigravity: () => Promise.resolve(null)
+  antigravity: () => Promise.resolve(null),
+  copilot: () => Promise.resolve(null)
 };
 
 // Model ids come from settings, the UI or the command line, so they are checked here,
@@ -329,7 +330,11 @@ export async function writeHandoff(file: string, launch: ToolLaunch): Promise<bo
 
 // Sign-in flows: each CLI handles its own login; desktop apps sign in inside the app.
 // Plain `claude` only asks to sign in when no credentials exist; expired ones open a session.
-const LOGIN_ARGS: Partial<Record<ProviderId, readonly string[]>> = { claude: ['auth', 'login'], codex: ['login'] };
+const LOGIN_ARGS: Partial<Record<ProviderId, readonly string[]>> = {
+  claude: ['auth', 'login'],
+  codex: ['login'],
+  copilot: ['auth', 'login']
+};
 
 export interface SignIn {
   providerId: ProviderId;
@@ -358,9 +363,18 @@ export async function openSignIn({ providerId, account, dataDir, cwd, platform =
     return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
   }
   const args = LOGIN_ARGS[providerId];
-  if (!args) return openDesktopApp({ providerId, platform, spawnProcess });
+  const [binaryName] = TOOL_INSTALLS[providerId].binaries;
+  if (!args || !binaryName) return openDesktopApp({ providerId, platform, spawnProcess });
   const env = account ? profileEnvironment(account) : {};
-  return openInTerminal({ cwd, binary: await findBinary(providerId), args, env, dataDir, platform, spawnProcess });
+  return openInTerminal({
+    cwd,
+    binary: await findBinary(binaryName),
+    args,
+    env,
+    dataDir,
+    platform,
+    spawnProcess
+  });
 }
 
 // Claude settings files that can override the selected profile's identity, keyed by name.

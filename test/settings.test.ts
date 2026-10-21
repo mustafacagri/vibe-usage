@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { appDataDir, defaultSettings, loadSettings, saveSettings, validateSettings } from '../src/core/settings.ts';
-import { PROVIDER_IDS } from '../src/shared/catalog.ts';
 import { tempDir } from './helpers/fixtures.ts';
 
 const base = { pinned: false, intervalSeconds: 120, accounts: [] };
@@ -16,8 +15,8 @@ const account = (fields: Record<string, unknown> = {}) => ({
   ...fields
 });
 
-test('defaults cover every provider and English; absent fields get them', () => {
-  assert.deepEqual(defaultSettings().providerOrder, PROVIDER_IDS);
+test('defaults cover every tool work moves between and English; absent fields get them', () => {
+  assert.deepEqual(defaultSettings().providerOrder, ['claude', 'codex', 'cursor', 'antigravity']);
   assert.equal(defaultSettings().language, 'en');
   assert.equal(defaultSettings().notifications, false);
   assert.deepEqual(validateSettings(base), defaultSettings());
@@ -120,9 +119,37 @@ test('atomic round trip persists only public settings', async t => {
   assert.equal(await loadSettings(path.join(dir, 'missing.json')), null);
 });
 
-test('hidden tools are a duplicate-free list of known tools that leaves at least one visible', () => {
+test('hidden tools are a duplicate-free list of known tools that leaves a tool that runs work visible', () => {
   assert.deepEqual(validateSettings(base).hiddenProviders, []);
   assert.deepEqual(validateSettings({ ...base, hiddenProviders: ['antigravity', 'cursor'] }).hiddenProviders, ['antigravity', 'cursor']);
-  for (const hiddenProviders of [['cursor', 'cursor'], ['nope'], 'cursor', ['claude', 'codex', 'cursor', 'antigravity']])
+  for (const hiddenProviders of [
+    ['cursor', 'cursor'],
+    ['nope'],
+    'cursor',
+    ['claude', 'codex', 'cursor', 'antigravity'],
+    ['claude', 'codex', 'cursor', 'antigravity', 'copilot']
+  ])
     assert.throws(() => validateSettings({ ...base, hiddenProviders }), /invalid_/, JSON.stringify(hiddenProviders));
+});
+
+test('looking at the status pages is on until it is turned off, and only a boolean says so', () => {
+  assert.equal(validateSettings(base).checkServiceStatus, true);
+  assert.equal(validateSettings({ ...base, checkServiceStatus: false }).checkServiceStatus, false);
+  assert.throws(() => validateSettings({ ...base, checkServiceStatus: 'no' }), /invalid_settings/);
+});
+
+test("a tool that only reports its quota can be hidden, but is never a fallback or a project's tool", () => {
+  assert.deepEqual(validateSettings({ ...base, hiddenProviders: ['copilot'] }).hiddenProviders, ['copilot']);
+  assert.throws(() => validateSettings({ ...base, providerOrder: ['copilot', 'claude'] }), /invalid_provider_order/);
+  const projectDir = path.resolve('project');
+  assert.throws(
+    () => validateSettings({ ...base, projectPreferences: [{ projectDir, tool: 'copilot', autoContinue: 'inherit' }] }),
+    /invalid_project_preference/
+  );
+});
+
+test('the order the window shows holds every tool, the fallback order only those that run work', () => {
+  const home = ['copilot', 'claude', 'codex', 'cursor', 'antigravity'];
+  assert.deepEqual(validateSettings({ ...base, homeOrder: home }).homeOrder, home);
+  assert.throws(() => validateSettings({ ...base, homeOrder: ['nope'] }), /invalid_provider_order/);
 });

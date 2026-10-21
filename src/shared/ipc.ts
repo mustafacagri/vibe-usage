@@ -1,7 +1,7 @@
 // The contract between the renderer and the main process. Each method is invoked on the
 // channel `vibe:<name>`; results travel in an envelope so that error codes survive the hop.
 import type { Auto, ProfileProviderId, ProviderId } from './catalog.ts';
-import type { Diagnostics, ErrorPayload, QuietHours, Settings, Snapshot, TransitionRecord } from './types.ts';
+import type { AccountTokens, Diagnostics, ErrorPayload, QuietHours, Settings, Snapshot, TransitionRecord } from './types.ts';
 
 export const IPC_PREFIX = 'vibe:';
 export const SNAPSHOT_EVENT = `${IPC_PREFIX}update` as const;
@@ -138,6 +138,8 @@ export interface VibeMethods {
   continueWork(suggestionId: string): Canceled | ContinueOutcome;
   dismissSuggestion(suggestionId: string): Snapshot;
   history(): HistorySeries[];
+  // What each account's tool used, from its own logs; the first call may take a while.
+  tokenUsage(): AccountTokens[];
   transitions(): TransitionRecord[];
   retryTransition(id: string): Canceled | ContinueOutcome;
   // Opens the page of the newer release the snapshot reports.

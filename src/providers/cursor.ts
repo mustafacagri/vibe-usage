@@ -7,7 +7,7 @@ import type { Environment } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
 import { isFile, isObject, type JsonObject } from '../core/files.ts';
 import { normalizeWindow, safePlan } from '../core/model.ts';
-import { accountId, DEFAULT_ACCOUNT_KEY } from '../shared/catalog.ts';
+import { accountId, DEFAULT_ACCOUNT_KEY, MEDIA_TYPE } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
 import type { QuotaWindow } from '../shared/types.ts';
 import {
@@ -269,7 +269,7 @@ export function createCursorProvider(options: CursorProviderOptions = {}): Provi
       }
       if (!cookie) throw failure;
       const usage = await getJson(QUOTA_ENDPOINTS.cursor, {
-        headers: { Accept: 'application/json', Cookie: cookie },
+        headers: { Accept: MEDIA_TYPE.json, Cookie: cookie },
         timeoutMs: USAGE_TIMEOUT_MS,
         ...context
       });

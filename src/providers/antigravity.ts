@@ -5,7 +5,16 @@ import type { Environment } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
 import { field, isObject, parseJson, type JsonObject } from '../core/files.ts';
 import { hasControlChars, isoFromUnixSeconds, normalizeEmail, normalizeWindow, safeText } from '../core/model.ts';
-import { accountId, DURATION_MS, durationLabel, isOneOf, MAX_LABEL_LENGTH, MINUTES, type PeriodLabel } from '../shared/catalog.ts';
+import {
+  accountId,
+  DURATION_MS,
+  durationLabel,
+  isOneOf,
+  MAX_LABEL_LENGTH,
+  MEDIA_TYPE,
+  MINUTES,
+  type PeriodLabel
+} from '../shared/catalog.ts';
 import type { Account, QuotaWindow } from '../shared/types.ts';
 import {
   MAX_RESPONSE_BYTES,
@@ -368,7 +377,7 @@ export const requestLocalJson: RequestLocalJson = (server, port, method, options
             rejectUnauthorized: false,
             timeout: timeoutMs,
             headers: {
-              'Content-Type': 'application/json',
+              'Content-Type': MEDIA_TYPE.json,
               'Content-Length': Buffer.byteLength(body),
               'Connect-Protocol-Version': '1',
               'X-Codeium-Csrf-Token': server.csrfToken

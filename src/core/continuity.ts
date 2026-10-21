@@ -159,6 +159,7 @@ export async function findRecentSession(account: Account, homeDir: string, ident
       session = latestCursorSession(homeDir, identity);
       break;
     case 'antigravity':
+    case 'copilot':
       session = null;
   }
   return session ? { ...session, accountId: account.id, model: await recentSessionModel(session).catch(() => '') } : null;

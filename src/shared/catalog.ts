@@ -8,7 +8,7 @@ export const APP_SLUG = 'vibe-usage';
 // The GitHub repository releases are published to (`owner/name`).
 export const APP_REPOSITORY = `mustafacagri/${APP_SLUG}`;
 
-export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'antigravity'] as const;
+export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'antigravity', 'copilot'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
 export interface Provider {
@@ -18,16 +18,21 @@ export interface Provider {
   // Whether the tool can be started with a chosen model. Antigravity opens as a desktop app,
   // which takes no model argument.
   readonly acceptsModel: boolean;
+  // Whether the app can start work in the tool, so a handover or a fallback may pick it.
+  readonly runsWork: boolean;
 }
 
 const PROVIDER_DETAILS: Readonly<Record<ProviderId, Omit<Provider, 'id'>>> = {
-  claude: { name: 'Claude', glyph: '◈', acceptsModel: true },
-  codex: { name: 'Codex', glyph: '✺', acceptsModel: true },
-  cursor: { name: 'Cursor', glyph: '✦', acceptsModel: true },
-  antigravity: { name: 'Antigravity', glyph: '▲', acceptsModel: false }
+  claude: { name: 'Claude', glyph: '◈', acceptsModel: true, runsWork: true },
+  codex: { name: 'Codex', glyph: '✺', acceptsModel: true, runsWork: true },
+  cursor: { name: 'Cursor', glyph: '✦', acceptsModel: true, runsWork: true },
+  antigravity: { name: 'Antigravity', glyph: '▲', acceptsModel: false, runsWork: true },
+  // Only its quota is read: it lives inside the editors, so the app starts nothing.
+  copilot: { name: 'GitHub Copilot', glyph: '◐', acceptsModel: false, runsWork: false }
 };
 
 export const PROVIDERS: readonly Provider[] = PROVIDER_IDS.map(id => ({ id, ...PROVIDER_DETAILS[id] }));
+export const WORK_PROVIDER_IDS: readonly ProviderId[] = PROVIDER_IDS.filter(id => PROVIDER_DETAILS[id].runsWork);
 
 // Tools that keep one sign-in per profile folder, the default one in the home directory.
 // Further accounts live in sibling folders (`.codex-work`) or in any folder the user adds.
@@ -37,6 +42,9 @@ export const isProfileProvider = (id: ProviderId): id is ProfileProviderId => Ob
 export const PROFILE_PROVIDER_IDS: readonly ProfileProviderId[] = PROVIDER_IDS.filter(isProfileProvider);
 // The variable that points each of those tools at a profile folder other than the default one.
 export const PROFILE_ENV = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' } as const satisfies Record<ProfileProviderId, string>;
+
+// The media types the app asks for and sends.
+export const MEDIA_TYPE = { json: 'application/json', githubJson: 'application/vnd.github+json' } as const;
 
 export const AUTO = 'auto';
 export type Auto = typeof AUTO;
@@ -69,6 +77,11 @@ export const AUTO_CONTINUE = ['off', 'accounts', 'tools'] as const;
 export const INHERIT = 'inherit';
 // How the app takes a step it may take by itself: never, after asking, or on its own.
 export const AUTOMATION_MODES = ['off', 'ask', 'auto'] as const;
+// What a status page says of a component that is not working, from the mildest to the worst;
+// planned maintenance is none of them.
+export const SERVICE_STATUSES = ['degraded_performance', 'partial_outage', 'major_outage'] as const;
+// The states that need no alert: working, or down on purpose.
+export const SERVICE_QUIET_STATUSES = ['operational', 'under_maintenance'] as const;
 export const SUGGESTION_KINDS = ['low', 'return', 'reopen'] as const;
 export const TRANSITION_STATUSES = ['offered', 'dispatching', 'dispatched', 'failed', 'interrupted', 'dismissed'] as const;
 
@@ -81,7 +94,7 @@ export const REFRESH_INTERVAL_SECONDS = { min: 30, max: 900, default: 120, choic
 
 export const MINUTES = { HOUR: 60, DAY: 1440, FIVE_HOURS: 300, WEEK: 10080 } as const;
 // The same units in milliseconds, for times and ages.
-export const DURATION_MS = { SECOND: 1000, MINUTE: 60_000, HOUR: 3_600_000, DAY: 86_400_000 } as const;
+export const DURATION_MS = { SECOND: 1000, MINUTE: 60_000, HOUR: 3_600_000, DAY: 86_400_000, WEEK: 604_800_000 } as const;
 
 // What Claude Code sets for the processes it starts. A Claude Code that inherits them takes itself
 // for a child session of another one and saves nothing: no transcript, no entry in the profile's
@@ -136,15 +149,16 @@ export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === 'string' && Object.hasOwn(PROVIDER_DETAILS, value);
 }
 
-// A complete, duplicate-free order: known entries first, then any provider left out.
-export function normalizeProviderOrder(order: unknown): ProviderId[] {
-  const known = Array.isArray(order) ? order.filter(isProviderId) : [];
-  return [...new Set([...known, ...PROVIDER_IDS])];
+// A complete, duplicate-free order of `ids` (the tools work moves between unless told otherwise):
+// known entries first, then any tool left out.
+export function normalizeProviderOrder(order: unknown, ids: readonly ProviderId[] = WORK_PROVIDER_IDS): ProviderId[] {
+  const known = Array.isArray(order) ? order.filter(id => isOneOf(ids, id)) : [];
+  return [...new Set([...known, ...ids])];
 }
 
 // The order the window and the tray list tools in: the user's own, else the fallback order.
 export const displayOrder = (settings: { homeOrder?: unknown; providerOrder: unknown }): ProviderId[] =>
-  normalizeProviderOrder(settings.homeOrder ?? settings.providerOrder);
+  normalizeProviderOrder(settings.homeOrder ?? settings.providerOrder, PROVIDER_IDS);
 
 // The tools the window and the tray show, in display order.
 export const visibleProviders = (settings: {

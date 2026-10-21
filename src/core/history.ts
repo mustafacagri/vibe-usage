@@ -4,17 +4,16 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { DURATION_MS } from '../shared/catalog.ts';
 import type { MeasuredAccount, QuotaWindow, Snapshot } from '../shared/types.ts';
-import { isObject, writeFileAtomic } from './files.ts';
+import { createDebouncedSaver, isObject } from './files.ts';
 
 const HISTORY_FILE = 'history.json';
-export const HISTORY_RETENTION_MS = 7 * 24 * DURATION_MS.HOUR;
+export const HISTORY_RETENTION_MS = DURATION_MS.WEEK;
 // A reading is kept when the value changed, or at least this long after the previous one.
 const SAMPLE_INTERVAL_MS = 10 * DURATION_MS.MINUTE;
 // The pace is taken over the last hour of the current period...
 const PACE_WINDOW_MS = DURATION_MS.HOUR;
 // ...and needs readings at least this far apart to mean anything.
 const PACE_MIN_SPAN_MS = 10 * DURATION_MS.MINUTE;
-const SAVE_DELAY_MS = 30 * 1000;
 const PERCENT_MAX = 100;
 
 // [time in ms, used percent]
@@ -93,23 +92,14 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
     // Unreadable history is dropped below.
   }
   const store = parseStore(document, clock());
-  let saveTimer: NodeJS.Timeout | undefined;
-  let pending: Promise<void> = Promise.resolve();
+  const saver = createDebouncedSaver(file, () =>
+    JSON.stringify({
+      version: 1,
+      accounts: Object.fromEntries([...store].map(([accountId, windows]) => [accountId, Object.fromEntries(windows)]))
+    })
+  );
 
   const samplesOf = (accountId: string, windowId: string): Sample[] => store.get(accountId)?.get(windowId) ?? [];
-
-  function save(): Promise<void> {
-    clearTimeout(saveTimer);
-    saveTimer = undefined;
-    const accounts = Object.fromEntries([...store].map(([accountId, windows]) => [accountId, Object.fromEntries(windows)]));
-    pending = pending.then(() => writeFileAtomic(file, JSON.stringify({ version: 1, accounts }))).catch(() => undefined);
-    return pending;
-  }
-
-  function scheduleSave(): void {
-    saveTimer ??= setTimeout(() => void save(), SAVE_DELAY_MS);
-    saveTimer.unref();
-  }
 
   function record(snapshot: Snapshot): void {
     const now = clock();
@@ -130,7 +120,7 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
         changed = true;
       }
     }
-    if (changed) scheduleSave();
+    if (changed) saver.schedule();
   }
 
   function annotate(snapshot: Snapshot): Snapshot {
@@ -156,5 +146,5 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
     );
   }
 
-  return { record, annotate, series, flush: save };
+  return { record, annotate, series, flush: saver.flush };
 }
