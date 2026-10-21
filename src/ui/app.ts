@@ -199,6 +199,7 @@ const ui = {
   updateText: $('#update-text', HTMLElement),
   updateOpen: $('#update-open', HTMLButtonElement),
   updateInstall: $('#update-install', HTMLButtonElement),
+  updateDismiss: $('#update-dismiss', HTMLButtonElement),
   updateNote: $('#update-note', HTMLElement),
   homeOrder: $('#home-order', HTMLElement),
   interval: $('#interval', HTMLSelectElement),
@@ -901,6 +902,17 @@ function providerCard(state: ProviderState): HTMLElement {
 // Where the copy can update itself: download, then restart into it. Elsewhere the release page
 // stays the way, with the reason, and Download opens this machine's installer when the release
 // has one.
+// The release whose banner was closed; a newer release shows it again. Storage can be unavailable.
+const DISMISSED_UPDATE_KEY = 'vibe.dismissedUpdate';
+const dismissedUpdate = (): string | null => {
+  try {
+    return localStorage.getItem(DISMISSED_UPDATE_KEY);
+  } catch {
+    return null;
+  }
+};
+let dismissedThisRun: string | undefined;
+
 function renderUpdateInstall(install: UpdateInstall | undefined, update: UpdateInfo | undefined): void {
   const byHand = install?.state === 'unsupported' && Boolean(update?.download);
   ui.updateInstall.hidden = !install || (install.state === 'unsupported' && !byHand);
@@ -964,7 +976,7 @@ function render(snapshot: Snapshot, focused: Element | null = document.activeEle
   ui.settingsNoticeText.textContent = notice ? t(NOTICE_TEXT[notice]) : '';
   // Restored settings only need to be acknowledged; the others need a decision in Settings.
   ui.settingsNoticeAction.textContent = t(notice === 'recovered' ? 'dismissSuggestion' : 'settings');
-  ui.updateBanner.hidden = !snapshot.update;
+  ui.updateBanner.hidden = !snapshot.update || snapshot.update.version === (dismissedThisRun ?? dismissedUpdate());
   ui.updateText.textContent = snapshot.update ? t('updateAvailable', { version: snapshot.update.version }) : '';
   renderUpdateInstall(snapshot.updateInstall, snapshot.update);
   ui.overallStatus.textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: snapshot.providers.length });
@@ -1717,6 +1729,18 @@ onClick(ui.refresh, () => vibe.refresh());
 onClick(ui.pin, () => vibe.pin());
 onClick(ui.compactButton, () => saveSettings({ compact: !current().settings.compact }));
 onClick(ui.updateOpen, () => vibe.openUpdate());
+onClick(ui.updateDismiss, () => {
+  const version = current().update?.version;
+  if (!version) return Promise.resolve();
+  dismissedThisRun = version;
+  try {
+    localStorage.setItem(DISMISSED_UPDATE_KEY, version);
+  } catch {
+    // The banner stays closed for this run only.
+  }
+  render(current());
+  return Promise.resolve();
+});
 onClick(ui.updateInstall, () => (current().updateInstall?.state === 'downloaded' ? vibe.installUpdate() : vibe.downloadUpdate()));
 onClick(ui.hide, () => vibe.hide());
 

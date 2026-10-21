@@ -33,7 +33,7 @@ import { createService, type Service } from '../core/service.ts';
 import { appDataDir, inQuietHours, settingsPath } from '../core/settings.ts';
 import { ringIcon } from '../core/tray-icon.ts';
 import { createInstaller, updateSupport, type UpdaterBackend } from '../core/updater.ts';
-import { checkForUpdate, isReleaseDownload, isReleasePage, macInstallerSuffix } from '../core/updates.ts';
+import { checkForUpdate, isReleaseDownload, isReleasePage, manualInstallerSuffix } from '../core/updates.ts';
 import { APP_NAME, APP_REPOSITORY, DURATION_MS } from '../shared/catalog.ts';
 import { DEFAULT_LANGUAGE, translator, type Translate } from '../shared/i18n/index.ts';
 import { SUGGESTION_BUTTONS, type FormatContext } from '../shared/format.ts';
@@ -487,7 +487,7 @@ async function start(): Promise<void> {
       return;
     }
     updateTimer = setTimeout(() => {
-      checkForUpdate(app.getVersion(), fetchJson, process.platform === 'darwin' ? macInstallerSuffix(process.arch) : undefined)
+      checkForUpdate(app.getVersion(), fetchJson, manualInstallerSuffix(process.platform, process.arch))
         .then(found => {
           if (!service.snapshot().settings.checkUpdates) return;
           update = found ?? undefined;

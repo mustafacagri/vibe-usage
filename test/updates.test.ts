@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkForUpdate, isNewer, isReleasePage, LATEST_RELEASE_URL, macInstallerSuffix } from '../src/core/updates.ts';
+import {
+  checkForUpdate,
+  isNewer,
+  isReleasePage,
+  LATEST_RELEASE_URL,
+  macInstallerSuffix,
+  manualInstallerSuffix
+} from '../src/core/updates.ts';
 
 test('versions compare part by part; anything unparsable is never newer', () => {
   assert.equal(isNewer('v0.2.0', '0.1.9'), true);
@@ -61,4 +68,13 @@ test('the macOS installer suffix matches how the packages are named', async () =
     .replace('${arch}', 'arm64')
     .replace('${ext}', 'dmg');
   assert.ok(name.endsWith(macInstallerSuffix('arm64')), name);
+});
+
+test('copies that cannot update themselves download the file for their platform', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { build: { artifactName: string } };
+  const name = pkg.build.artifactName.replace('', '0.3.0').replace('', 'win').replace('', 'x64').replace('', 'zip');
+  assert.ok(name.endsWith(manualInstallerSuffix('win32', 'x64') ?? '?'), name);
+  assert.equal(manualInstallerSuffix('darwin', 'arm64'), '-mac-arm64.dmg');
+  assert.equal(manualInstallerSuffix('linux', 'x64'), undefined);
 });

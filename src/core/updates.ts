@@ -49,6 +49,15 @@ function installerUrl(assets: unknown[], suffix: string): string | undefined {
 // (`…-${os}-${arch}.${ext}`); Node's arch names (arm64, x64) are electron-builder's.
 export const macInstallerSuffix = (arch: string): string => `-mac-${arch}.dmg`;
 
+// A Windows copy that cannot replace itself (the portable zip) is offered the archive it came from.
+export const windowsArchiveSuffix = (arch: string): string => `-win-${arch}.zip`;
+
+// The file a copy that cannot update itself downloads by hand, or undefined where there is none.
+export function manualInstallerSuffix(platform: NodeJS.Platform, arch: string): string | undefined {
+  if (platform === 'darwin') return macInstallerSuffix(arch);
+  return platform === 'win32' ? windowsArchiveSuffix(arch) : undefined;
+}
+
 export const isReleaseDownload = (url: unknown): url is string => typeof url === 'string' && url.startsWith(RELEASE_DOWNLOAD);
 
 export const isReleasePage = (url: unknown): url is string => typeof url === 'string' && url.startsWith(RELEASE_PAGE);
