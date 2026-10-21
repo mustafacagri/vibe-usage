@@ -11,12 +11,11 @@ import { defaultProfileDir } from '../providers/profiles.ts';
 import { DURATION_MS, isProfileProvider, type ProfileProviderId } from '../shared/catalog.ts';
 import type { Account, AccountTokens, TokenTotals } from '../shared/types.ts';
 import { systemErrorCode } from './errors.ts';
-import { attempt, isObject, JSON_LINES_EXTENSION, pathKey, readJson, writeFileAtomic, type JsonObject } from './files.ts';
+import { attempt, createDebouncedSaver, isObject, JSON_LINES_EXTENSION, pathKey, readJson, type JsonObject } from './files.ts';
 
 const CACHE_FILE = 'token-usage.json';
 const CACHE_VERSION = 1;
 const TOKEN_WINDOW_MS = DURATION_MS.WEEK;
-const SAVE_DELAY_MS = 30 * DURATION_MS.SECOND;
 const NEWLINE = 0x0a;
 const KEY_LENGTH = 12;
 
@@ -237,23 +236,8 @@ export async function createTokenUsage({
 }): Promise<TokenUsage> {
   const cacheFile = path.join(dataDir, CACHE_FILE);
   const files = parseCache(await attempt(() => readJson(cacheFile)));
-  let saveTimer: NodeJS.Timeout | undefined;
-  let pending: Promise<void> = Promise.resolve();
+  const saver = createDebouncedSaver(cacheFile, () => JSON.stringify({ version: CACHE_VERSION, files: Object.fromEntries(files) }));
   let queue: Promise<unknown> = Promise.resolve();
-
-  function save(): Promise<void> {
-    clearTimeout(saveTimer);
-    saveTimer = undefined;
-    const document = JSON.stringify({ version: CACHE_VERSION, files: Object.fromEntries(files) });
-    // The cache can be read again from the logs: a save that fails costs a slower next start, nothing else.
-    pending = pending.then(() => writeFileAtomic(cacheFile, document)).catch(() => undefined);
-    return pending;
-  }
-
-  function scheduleSave(): void {
-    saveTimer ??= setTimeout(() => void save(), SAVE_DELAY_MS);
-    saveTimer.unref();
-  }
 
   // Brings what is kept for the profile's logs up to date; returns the files it holds.
   async function refreshProfile(providerId: ProfileProviderId, profile: string, since: number): Promise<string[]> {
@@ -281,7 +265,7 @@ export async function createTokenUsage({
       state.mtimeMs = stat.mtimeMs;
       state.records = state.records.filter(record => record[RECORD.time] >= since);
       files.set(file, state);
-      scheduleSave();
+      saver.schedule();
     }
     return present;
   }
@@ -301,7 +285,7 @@ export async function createTokenUsage({
     for (const [file, state] of files) {
       if (state.mtimeMs < since) {
         files.delete(file);
-        scheduleSave();
+        saver.schedule();
       }
     }
     return tracked.map(account => {
@@ -321,6 +305,6 @@ export async function createTokenUsage({
       queue = result.catch(() => undefined);
       return result;
     },
-    flush: save
+    flush: saver.flush
   };
 }

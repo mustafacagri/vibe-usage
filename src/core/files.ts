@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { DURATION_MS } from '../shared/catalog.ts';
 
 export type JsonObject = Record<string, unknown>;
 
@@ -118,6 +119,38 @@ export async function writeFileAtomic(file: string, text: string): Promise<void>
   } finally {
     await fsp.rm(temporary, { force: true });
   }
+}
+
+// How long changes to a kept file are gathered before it is written.
+const SAVE_DELAY_MS = 30 * DURATION_MS.SECOND;
+
+export interface DebouncedSaver {
+  // A change was made: the file is written a while after the first change of a burst.
+  schedule: () => void;
+  // Writes now, and resolves once everything asked for so far is on disk.
+  flush: () => Promise<void>;
+}
+
+// Keeps `file` up to date with what `serialize` returns, without writing for every change. Writes run
+// one after another. One that fails is not retried: the data stays in memory, and the next change
+// writes it again.
+export function createDebouncedSaver(file: string, serialize: () => string): DebouncedSaver {
+  let timer: NodeJS.Timeout | undefined;
+  let pending: Promise<void> = Promise.resolve();
+  function flush(): Promise<void> {
+    clearTimeout(timer);
+    timer = undefined;
+    const text = serialize();
+    pending = pending.then(() => writeFileAtomic(file, text)).catch(() => undefined);
+    return pending;
+  }
+  return {
+    schedule() {
+      timer ??= setTimeout(() => void flush(), SAVE_DELAY_MS);
+      timer.unref();
+    },
+    flush
+  };
 }
 
 // The same, for the moment the app quits, when nothing asynchronous is waited for.
