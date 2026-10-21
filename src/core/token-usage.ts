@@ -14,7 +14,7 @@ import { attempt, isObject, JSON_LINES_EXTENSION, pathKey, readJson, writeFileAt
 
 const CACHE_FILE = 'token-usage.json';
 const CACHE_VERSION = 1;
-export const TOKEN_WINDOW_MS = 7 * DURATION_MS.DAY;
+const TOKEN_WINDOW_MS = DURATION_MS.WEEK;
 const SAVE_DELAY_MS = 30 * DURATION_MS.SECOND;
 const NEWLINE = 0x0a;
 const KEY_LENGTH = 12;
@@ -42,7 +42,10 @@ const emptyState = (): FileState => ({ size: 0, mtimeMs: 0, offset: 0, lastKey: 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
 const keyOf = (value: string): string => createHash('sha256').update(value).digest('base64url').slice(0, KEY_LENGTH);
 
-// How one tool writes what it spent. `read` takes a line of a transcript and returns the record
+// The log formats were checked against this machine's real transcripts (2026-10-21): Claude writes a
+// response as several lines carrying one `message.id` and the same counts, and its `input_tokens`
+// leave out the cache; Codex's `total_tokens` is `input_tokens` plus `output_tokens` (the cached part is
+// inside `input_tokens`), and its running total moves with each call. How one tool writes what it spent. `read` takes a line of a transcript and returns the record
 // it holds, if any, keeping what the next line depends on in `state`.
 interface LogFormat {
   folder: string;
@@ -86,6 +89,7 @@ function readCodexLine(line: JsonObject, state: FileState): TokenRecord | null {
   if (total.total_tokens === state.lastTotal) return null;
   state.lastTotal = total.total_tokens;
   const cached = count(last.cached_input_tokens);
+  // No Codex log checked carried a cache write, and where it would be counted is unknown: it is not read.
   return [time, state.model, Math.max(count(last.input_tokens) - cached, 0), count(last.output_tokens), cached, 0, ''];
 }
 
@@ -225,6 +229,7 @@ export async function createTokenUsage({
     clearTimeout(saveTimer);
     saveTimer = undefined;
     const document = JSON.stringify({ version: CACHE_VERSION, files: Object.fromEntries(files) });
+    // The cache can be read again from the logs: a save that fails costs a slower next start, nothing else.
     pending = pending.then(() => writeFileAtomic(cacheFile, document)).catch(() => undefined);
     return pending;
   }

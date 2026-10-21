@@ -1,11 +1,12 @@
 // Whether a tool's service reports a problem, from the status page its maker runs. A tool that
 // answers slowly or not at all may be down for everyone, which no quota reading says.
-import { isOneOf, PROVIDER_IDS, SERVICE_STATUSES, type ProviderId } from '../shared/catalog.ts';
+import { PROVIDER_IDS, SERVICE_STATUSES, type ProviderId } from '../shared/catalog.ts';
 import type { ServiceIssue } from '../shared/types.ts';
-import { isObject } from './files.ts';
+import { isObject, type JsonObject } from './files.ts';
 
-// Each page's components that carry the tool's own work (the ids stay when a page renames one).
-// A tool without a page here (Antigravity) is never reported on.
+// Each page's components that carry the tool's own work, by the ids the pages gave them on
+// 2026-10-21 (an id stays when a page renames a component). A tool without a page here
+// (Antigravity) is never reported on.
 export const STATUS_PAGES = {
   // Claude Code
   claude: { url: 'https://status.claude.com', components: ['yyzkbfz2thpt'] },
@@ -29,15 +30,19 @@ export interface ServiceStatusReading {
   failed: ProviderId[];
 }
 
-function parseSummary(providerId: StatusProviderId, document: unknown): ServiceIssue[] {
+// The worst state among the tool's components, or null when they all work. A page that lists
+// none of the components is no sign of calm: its ids changed, so the read fails.
+function parseSummary(providerId: StatusProviderId, document: unknown): ServiceIssue | null {
   if (!isObject(document) || !Array.isArray(document.components)) throw new TypeError('not a status summary');
   const watched: readonly string[] = STATUS_PAGES[providerId].components;
-  return document.components.flatMap((entry): ServiceIssue[] => {
-    if (!isObject(entry) || typeof entry.id !== 'string' || !watched.includes(entry.id)) return [];
-    const { name, status } = entry;
-    if (typeof name !== 'string' || !isOneOf(SERVICE_STATUSES, status)) return [];
-    return [{ providerId, component: name, status }];
-  });
+  const components = document.components.filter(
+    (entry): entry is JsonObject => isObject(entry) && typeof entry.id === 'string' && watched.includes(entry.id)
+  );
+  if (!components.length) throw new TypeError('none of the watched components is on the page');
+  // SERVICE_STATUSES run from the mildest to the worst.
+  const worst = Math.max(-1, ...components.map(({ status }) => SERVICE_STATUSES.findIndex(known => known === status)));
+  const status = SERVICE_STATUSES[worst];
+  return status ? { providerId, status } : null;
 }
 
 export async function checkServiceStatus(
@@ -48,7 +53,13 @@ export async function checkServiceStatus(
     providerIds.map(async id => parseSummary(id, await fetchJson(`${STATUS_PAGES[id].url}${SUMMARY_PATH}`)))
   );
   return {
-    issues: readings.flatMap(reading => (reading.status === 'fulfilled' ? reading.value : [])),
+    issues: readings.flatMap(reading => (reading.status === 'fulfilled' && reading.value ? [reading.value] : [])),
     failed: providerIds.filter((_id, i) => readings[i]?.status === 'rejected')
   };
+}
+
+// What is known after a reading: its issues, and for each tool whose page could not be read what
+// was known before. A tool the reading did not ask about is left out.
+export function mergeServiceIssues(previous: readonly ServiceIssue[], { issues, failed }: ServiceStatusReading): ServiceIssue[] {
+  return [...previous.filter(issue => failed.includes(issue.providerId)), ...issues];
 }

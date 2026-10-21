@@ -44,7 +44,7 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
   const unmeasured = { usedPercent: null, remainingPercent: null, resetsAt: null };
   return {
     refreshing: false,
-    serviceIssues: [{ providerId: 'cursor', component: 'IDE', status: 'partial_outage' }],
+    serviceIssues: [{ providerId: 'cursor', status: 'partial_outage' }],
     settings: {
       schemaVersion: 1,
       language,
@@ -392,7 +392,7 @@ export function history(now = Date.now()): HistorySeries[] {
   ];
 }
 
-// A week of Claude's tokens: mostly cache reads, as the logs show.
+// A week of Claude's tokens, mostly cache reads, as the logs show, and Codex's under a model its log never named.
 export function tokenUsage(): AccountTokens[] {
   return [
     {
@@ -403,6 +403,12 @@ export function tokenUsage(): AccountTokens[] {
         { model: 'claude-opus-5-5', tokens: { input: 90_000, output: 27_000_000, cacheRead: 13_000_000_000, cacheWrite: 200_000_000 } },
         { model: 'claude-sonnet-5-5', tokens: { input: 10_360, output: 2_295_926, cacheRead: 962_842_680, cacheWrite: 12_887_769 } }
       ]
+    },
+    {
+      accountId: 'codex:default',
+      today: { input: 5_157_101, output: 361_667, cacheRead: 125_437_696, cacheWrite: 0 },
+      week: { input: 53_648_530, output: 2_854_323, cacheRead: 1_123_740_288, cacheWrite: 0 },
+      models: [{ model: '', tokens: { input: 53_648_530, output: 2_854_323, cacheRead: 1_123_740_288, cacheWrite: 0 } }]
     }
   ];
 }

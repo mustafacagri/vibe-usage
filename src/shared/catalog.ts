@@ -74,7 +74,8 @@ export const AUTO_CONTINUE = ['off', 'accounts', 'tools'] as const;
 export const INHERIT = 'inherit';
 // How the app takes a step it may take by itself: never, after asking, or on its own.
 export const AUTOMATION_MODES = ['off', 'ask', 'auto'] as const;
-// What a status page says of a component that is not working; planned maintenance is none of them.
+// What a status page says of a component that is not working, from the mildest to the worst;
+// planned maintenance is none of them.
 export const SERVICE_STATUSES = ['degraded_performance', 'partial_outage', 'major_outage'] as const;
 export const SUGGESTION_KINDS = ['low', 'return', 'reopen'] as const;
 export const TRANSITION_STATUSES = ['offered', 'dispatching', 'dispatched', 'failed', 'interrupted', 'dismissed'] as const;
@@ -88,7 +89,7 @@ export const REFRESH_INTERVAL_SECONDS = { min: 30, max: 900, default: 120, choic
 
 export const MINUTES = { HOUR: 60, DAY: 1440, FIVE_HOURS: 300, WEEK: 10080 } as const;
 // The same units in milliseconds, for times and ages.
-export const DURATION_MS = { SECOND: 1000, MINUTE: 60_000, HOUR: 3_600_000, DAY: 86_400_000 } as const;
+export const DURATION_MS = { SECOND: 1000, MINUTE: 60_000, HOUR: 3_600_000, DAY: 86_400_000, WEEK: 604_800_000 } as const;
 
 // What Claude Code sets for the processes it starts. A Claude Code that inherits them takes itself
 // for a child session of another one and saves nothing: no transcript, no entry in the profile's

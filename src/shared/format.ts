@@ -180,6 +180,7 @@ export function describeCode(code: string, t: Translate, params?: Params): strin
 // The times, on the local clock, of a chart's grid lines: every whole `stepHours` mark after
 // `start` and before `end` (24 gives the midnights).
 export function gridTimes(start: number, end: number, stepHours: number): number[] {
+  if (!Number.isInteger(stepHours) || stepHours < 1) throw new RangeError('a grid steps by a whole number of hours');
   const times: number[] = [];
   const cursor = new Date(start);
   cursor.setMinutes(0, 0, 0);

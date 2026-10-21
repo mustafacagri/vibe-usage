@@ -7,7 +7,7 @@ import type { MeasuredAccount, QuotaWindow, Snapshot } from '../shared/types.ts'
 import { isObject, writeFileAtomic } from './files.ts';
 
 const HISTORY_FILE = 'history.json';
-export const HISTORY_RETENTION_MS = 7 * 24 * DURATION_MS.HOUR;
+export const HISTORY_RETENTION_MS = DURATION_MS.WEEK;
 // A reading is kept when the value changed, or at least this long after the previous one.
 const SAMPLE_INTERVAL_MS = 10 * DURATION_MS.MINUTE;
 // The pace is taken over the last hour of the current period...

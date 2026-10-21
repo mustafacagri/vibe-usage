@@ -205,8 +205,6 @@ function validateToolList(
   return value;
 }
 
-const validateProviderOrder = (value: unknown): ProviderId[] => validateToolList(value, WORK_PROVIDER_IDS, 'invalid_provider_order');
-
 function validateHiddenProviders(value: unknown): ProviderId[] {
   const hidden = validateToolList(value, PROVIDER_IDS, 'invalid_hidden_providers');
   check(hidden.length < PROVIDER_IDS.length, 'invalid_hidden_providers');
@@ -355,7 +353,10 @@ export function validateSettings(document: unknown): Settings {
     accounts: accounts.map(account => validateAccount(account, ids, primaries)),
     dismissedAccountIds:
       input.dismissedAccountIds === undefined ? defaults.dismissedAccountIds : validateDismissed(input.dismissedAccountIds),
-    providerOrder: input.providerOrder === undefined ? defaults.providerOrder : validateProviderOrder(input.providerOrder),
+    providerOrder:
+      input.providerOrder === undefined
+        ? defaults.providerOrder
+        : validateToolList(input.providerOrder, WORK_PROVIDER_IDS, 'invalid_provider_order'),
     hiddenProviders: input.hiddenProviders === undefined ? defaults.hiddenProviders : validateHiddenProviders(input.hiddenProviders),
     preferredModels: input.preferredModels === undefined ? defaults.preferredModels : validatePreferredModels(input.preferredModels),
     language: language ?? defaults.language,

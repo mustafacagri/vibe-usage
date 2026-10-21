@@ -195,3 +195,37 @@ test('tools whose logs hold no token counts are left out', async t => {
   const { usage } = await setup(t);
   assert.deepEqual(await usage.read([account({ id: 'cursor:a', providerId: 'cursor' })]), []);
 });
+
+test('Codex: calls before any turn names a model are kept under no model, and a running total that fell is a new call', async t => {
+  const { home, usage } = await setup(t);
+  await writeLines(path.join(home, '.codex', 'sessions', '2026', '10', '17', 'rollout-unnamed.jsonl'), [
+    codexCount(NOW - 3 * HOUR, 500, { input: 400, cached: 0, output: 100 }),
+    codexCount(NOW - 2 * HOUR, 80, { input: 50, cached: 0, output: 30 })
+  ]);
+  const [tokens] = await usage.read([codexAccount()]);
+  assert.deepEqual(tokens?.models, [{ model: '', tokens: { input: 450, output: 130, cacheRead: 0, cacheWrite: 0 } }]);
+});
+
+test('reads asked for together share one scan and agree', async t => {
+  const { home, usage } = await setup(t);
+  await writeLines(path.join(home, '.claude', 'projects', 'app', 'session.jsonl'), [
+    claudeLine('one', NOW - HOUR, 'opus', { input_tokens: 3 })
+  ]);
+  const [first, second] = await Promise.all([usage.read([claudeAccount()]), usage.read([claudeAccount()])]);
+  assert.deepEqual(first, second);
+  assert.equal(first[0]?.week.input, 3);
+});
+
+test('a log untouched for longer than the window, and what was kept of it, are left out', async t => {
+  const { home, dataDir, usage } = await setup(t);
+  const file = path.join(home, '.claude', 'projects', 'app', 'old.jsonl');
+  await writeLines(file, [claudeLine('old', NOW - HOUR, 'opus', { input_tokens: 9 })]);
+  // The file was last written an hour before the clock's "now".
+  await fs.utimes(file, new Date(NOW - HOUR), new Date(NOW - HOUR));
+  assert.equal((await usage.read([claudeAccount()]))[0]?.week.input, 9);
+  await usage.flush();
+  const later = await createTokenUsage({ dataDir, homeDir: home, clock: () => NOW + 8 * 24 * HOUR });
+  assert.deepEqual((await later.read([claudeAccount()]))[0]?.week, NO_TOKENS);
+  await later.flush();
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'token-usage.json'), 'utf8')), { version: 1, files: {} });
+});

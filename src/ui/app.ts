@@ -610,7 +610,7 @@ const DAY_SPAN: HistorySpan = {
   nameBetween: false
 };
 const WEEK_SPAN: HistorySpan = {
-  durationMs: 7 * DURATION_MS.DAY,
+  durationMs: DURATION_MS.WEEK,
   stepHours: 24,
   title: 'historyTitle',
   markFormat: { weekday: 'short' },
@@ -793,7 +793,7 @@ function drawHistory(details: HTMLDetailsElement, accounts: readonly MeasuredAcc
     }
     panel.setAttribute('aria-label', t(span.title));
     const charts = chartsOf(span);
-    panel.replaceChildren(...(charts.length ? charts : [element('div', 'empty', t('historyEmpty'))]));
+    panel.replaceChildren(...(charts.length ? charts : [element('div', 'empty', t('historyQuietPeriod'))]));
   };
   HISTORY_SPANS.forEach((span, index) => {
     const tab = tabs.get(span);
@@ -1040,13 +1040,13 @@ function renderSuggestions(snapshot: Snapshot): void {
 }
 
 // What the tool's maker reports about its service: a slow or failing tool may not be the user's limit.
-function serviceIssueNotes(providerId: ProviderId): HTMLElement[] {
+function serviceIssueNote(providerId: ProviderId): HTMLElement[] {
   return (current().serviceIssues ?? [])
     .filter(issue => issue.providerId === providerId)
     .map(issue => {
       const note = element('div', `service-issue ${issue.status}`);
       note.setAttribute('role', 'status');
-      note.append(element('span', '', t('serviceIssue', { component: issue.component, state: t(SERVICE_STATUS_TEXT[issue.status]) })));
+      note.append(element('span', '', t('serviceIssue', { state: t(SERVICE_STATUS_TEXT[issue.status]) })));
       return note;
     });
 }
@@ -1060,14 +1060,14 @@ function providerCard(state: ProviderState): HTMLElement {
   const shown = compare
     ? undefined
     : (accounts.find(a => a.id === selectedAccount.get(provider.id)) ?? accounts.find(a => a.primary) ?? accounts[0]);
-  section.append(cardHeader(provider, compare ? [] : accounts, shown), ...serviceIssueNotes(provider.id));
+  section.append(cardHeader(provider, compare ? [] : accounts, shown), ...serviceIssueNote(provider.id));
   if (compare) section.append(...compareBody(provider, accounts));
   else if (shown) section.append(...accountBody(provider, shown));
   else section.append(element('div', 'empty', statusMessage(state) || t('status_no_accounts')), signInButton(provider));
-  const charted = (compare ? accounts : shown ? [shown] : []).filter(a => chartedWindows(a).length);
+  const inView = compare ? accounts : shown ? [shown] : [];
+  const charted = inView.filter(a => chartedWindows(a).length);
   if (charted.length) section.append(historySection(charted));
-  const counted = compare ? accounts : shown ? [shown] : [];
-  if (isProfileProvider(provider.id) && counted.length) section.append(tokensSection(counted));
+  if (isProfileProvider(provider.id) && inView.length) section.append(tokensSection(inView));
 
   const status = shown?.status ?? state.status;
   const footer = element('div', `provider-status${status === 'stale' ? ' stale' : ''}`);

@@ -34,7 +34,7 @@ import { createService, type Service } from '../core/service.ts';
 import { appDataDir, inQuietHours, settingsPath } from '../core/settings.ts';
 import { ringIcon } from '../core/tray-icon.ts';
 import { createInstaller, updateSupport, type UpdaterBackend } from '../core/updater.ts';
-import { checkServiceStatus, STATUS_PROVIDER_IDS } from '../core/status.ts';
+import { checkServiceStatus, mergeServiceIssues, STATUS_PROVIDER_IDS } from '../core/status.ts';
 import { checkForUpdate, isReleaseDownload, isReleasePage, manualInstallerSuffix } from '../core/updates.ts';
 import { APP_NAME, APP_REPOSITORY, DURATION_MS, visibleProviders } from '../shared/catalog.ts';
 import { DEFAULT_LANGUAGE, translator, type Translate } from '../shared/i18n/index.ts';
@@ -61,10 +61,12 @@ const TRAY_ICON_SCALES = [1, 1.5, 2];
 const TRAY_ICON_SIZE = 16;
 const UPDATE_FIRST_CHECK_DELAY_MS = 15 * 1000;
 const UPDATE_CHECK_INTERVAL_MS = DURATION_MS.DAY;
-const STATUS_FIRST_CHECK_DELAY_MS = 10 * 1000;
+const STATUS_FIRST_CHECK_DELAY_MS = 10 * DURATION_MS.SECOND;
 const STATUS_CHECK_INTERVAL_MS = 5 * DURATION_MS.MINUTE;
 // A check that gets no answer ends, so that the next one is still scheduled.
-const CHECK_REQUEST_TIMEOUT_MS = 15 * 1000;
+const CHECK_REQUEST_TIMEOUT_MS = 15 * DURATION_MS.SECOND;
+const JSON_ACCEPT = 'application/json';
+const GITHUB_JSON_ACCEPT = 'application/vnd.github+json';
 const BOUNDS_SAVE_DELAY_MS = 500;
 // A tool writes several files while signing in; it is read once they settle.
 const FOLDER_CHANGE_DEBOUNCE_MS = 1000;
@@ -262,12 +264,12 @@ function trayImage(percent: number | null, lowPercent: number): NativeImage {
   return image;
 }
 
-const fetchJson = async (url: string): Promise<unknown> => {
+// A check that gets no answer (GitHub's rate limit, an outage) has not found "nothing new": it failed.
+const fetchJson = async (url: string, accept: string): Promise<unknown> => {
   const response = await net.fetch(url, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': APP_NAME },
+    headers: { Accept: accept, 'User-Agent': APP_NAME },
     signal: AbortSignal.timeout(CHECK_REQUEST_TIMEOUT_MS)
   });
-  // No answer (GitHub's rate limit, an outage) is no "nothing new": the check failed.
   if (!response.ok) throw new Error(`${new URL(url).host} answered ${response.status}`);
   return response.json();
 };
@@ -495,7 +497,7 @@ async function start(): Promise<void> {
       return;
     }
     updateTimer = setTimeout(() => {
-      checkForUpdate(app.getVersion(), fetchJson, manualInstallerSuffix(process.platform, process.arch))
+      checkForUpdate(app.getVersion(), url => fetchJson(url, GITHUB_JSON_ACCEPT), manualInstallerSuffix(process.platform, process.arch))
         .then(found => {
           if (!service.snapshot().settings.checkUpdates) return;
           update = found ?? undefined;
@@ -519,13 +521,12 @@ async function start(): Promise<void> {
     statusTimer = setTimeout(() => {
       const shown = visibleProviders(service.snapshot().settings);
       checkServiceStatus(
-        fetchJson,
+        url => fetchJson(url, JSON_ACCEPT),
         STATUS_PROVIDER_IDS.filter(id => shown.includes(id))
       )
-        .then(({ issues, failed }) => {
+        .then(reading => {
           if (!service.snapshot().settings.checkServiceStatus) return;
-          // A page that did not answer leaves what was known about its tool as it was.
-          serviceIssues = [...serviceIssues.filter(issue => failed.includes(issue.providerId)), ...issues];
+          serviceIssues = mergeServiceIssues(serviceIssues, reading);
           send(view());
         })
         .catch(() => undefined)

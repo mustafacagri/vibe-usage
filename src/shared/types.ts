@@ -270,15 +270,14 @@ export interface TransitionRecord {
   retryable?: boolean;
 }
 
-// A problem a tool's maker reports on its status page. `component` is the name the page gives it.
+// A problem a tool's maker reports on its status page: the worst state of the components that carry its work.
 export interface ServiceIssue {
   providerId: ProviderId;
-  component: string;
   status: (typeof SERVICE_STATUSES)[number];
 }
 
 // Tokens an account's tool used, as its own logs count them. `input` is what was not read from
-// the cache; `output` includes the tokens spent thinking.
+// the cache.
 export interface TokenTotals {
   input: number;
   output: number;

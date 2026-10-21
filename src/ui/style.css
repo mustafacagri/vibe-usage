@@ -1449,9 +1449,6 @@ dialog header h2 {
 
 /* A problem the tool's maker reports on its status page */
 .service-issue {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   margin: 0 0 8px;
   padding: 8px 10px;
   border: 1px solid rgba(245, 158, 11, 0.28);

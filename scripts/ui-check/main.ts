@@ -156,6 +156,16 @@ async function check(language: Language): Promise<string[]> {
     // History charts load when opened; open them so they are checked too.
     await run(win, "document.querySelectorAll('details.history, details.tokens').forEach(details => { details.open = true; })");
     await quiet(win);
+    // The history opens on the day; the week's tab is used once, then the day's, so both draw.
+    await run(
+      win,
+      "document.querySelectorAll('.history-tab').forEach(tab => { if (tab.getAttribute('aria-selected') === 'false') tab.click(); })"
+    );
+    await run(
+      win,
+      "document.querySelectorAll('.history-tab').forEach(tab => { if (tab.getAttribute('aria-selected') === 'false') tab.click(); })"
+    );
+    await quiet(win);
     for (const view of VIEWS) {
       for (const button of view.buttons ?? []) {
         await run(win, `document.querySelector(${JSON.stringify(button)}).click()`);
