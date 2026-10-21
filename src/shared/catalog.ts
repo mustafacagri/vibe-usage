@@ -8,7 +8,7 @@ export const APP_SLUG = 'vibe-usage';
 // The GitHub repository releases are published to (`owner/name`).
 export const APP_REPOSITORY = `mustafacagri/${APP_SLUG}`;
 
-export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'antigravity'] as const;
+export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'antigravity', 'copilot'] as const;
 export type ProviderId = (typeof PROVIDER_IDS)[number];
 
 export interface Provider {
@@ -18,16 +18,21 @@ export interface Provider {
   // Whether the tool can be started with a chosen model. Antigravity opens as a desktop app,
   // which takes no model argument.
   readonly acceptsModel: boolean;
+  // Whether the app can start work in the tool, so a handover or a fallback may pick it.
+  readonly runsWork: boolean;
 }
 
 const PROVIDER_DETAILS: Readonly<Record<ProviderId, Omit<Provider, 'id'>>> = {
-  claude: { name: 'Claude', glyph: '◈', acceptsModel: true },
-  codex: { name: 'Codex', glyph: '✺', acceptsModel: true },
-  cursor: { name: 'Cursor', glyph: '✦', acceptsModel: true },
-  antigravity: { name: 'Antigravity', glyph: '▲', acceptsModel: false }
+  claude: { name: 'Claude', glyph: '◈', acceptsModel: true, runsWork: true },
+  codex: { name: 'Codex', glyph: '✺', acceptsModel: true, runsWork: true },
+  cursor: { name: 'Cursor', glyph: '✦', acceptsModel: true, runsWork: true },
+  antigravity: { name: 'Antigravity', glyph: '▲', acceptsModel: false, runsWork: true },
+  // Only its quota is read: it lives inside the editors, so the app starts nothing.
+  copilot: { name: 'GitHub Copilot', glyph: '◐', acceptsModel: false, runsWork: false }
 };
 
 export const PROVIDERS: readonly Provider[] = PROVIDER_IDS.map(id => ({ id, ...PROVIDER_DETAILS[id] }));
+export const WORK_PROVIDER_IDS: readonly ProviderId[] = PROVIDER_IDS.filter(id => PROVIDER_DETAILS[id].runsWork);
 
 // Tools that keep one sign-in per profile folder, the default one in the home directory.
 // Further accounts live in sibling folders (`.codex-work`) or in any folder the user adds.
@@ -69,6 +74,8 @@ export const AUTO_CONTINUE = ['off', 'accounts', 'tools'] as const;
 export const INHERIT = 'inherit';
 // How the app takes a step it may take by itself: never, after asking, or on its own.
 export const AUTOMATION_MODES = ['off', 'ask', 'auto'] as const;
+// What a status page says of a component that is not working; planned maintenance is none of them.
+export const SERVICE_STATUSES = ['degraded_performance', 'partial_outage', 'major_outage'] as const;
 export const SUGGESTION_KINDS = ['low', 'return', 'reopen'] as const;
 export const TRANSITION_STATUSES = ['offered', 'dispatching', 'dispatched', 'failed', 'interrupted', 'dismissed'] as const;
 
@@ -136,15 +143,16 @@ export function isProviderId(value: unknown): value is ProviderId {
   return typeof value === 'string' && Object.hasOwn(PROVIDER_DETAILS, value);
 }
 
-// A complete, duplicate-free order: known entries first, then any provider left out.
-export function normalizeProviderOrder(order: unknown): ProviderId[] {
-  const known = Array.isArray(order) ? order.filter(isProviderId) : [];
-  return [...new Set([...known, ...PROVIDER_IDS])];
+// A complete, duplicate-free order of `ids` (the tools work moves between unless told otherwise):
+// known entries first, then any tool left out.
+export function normalizeProviderOrder(order: unknown, ids: readonly ProviderId[] = WORK_PROVIDER_IDS): ProviderId[] {
+  const known = Array.isArray(order) ? order.filter(id => isOneOf(ids, id)) : [];
+  return [...new Set([...known, ...ids])];
 }
 
 // The order the window and the tray list tools in: the user's own, else the fallback order.
 export const displayOrder = (settings: { homeOrder?: unknown; providerOrder: unknown }): ProviderId[] =>
-  normalizeProviderOrder(settings.homeOrder ?? settings.providerOrder);
+  normalizeProviderOrder(settings.homeOrder ?? settings.providerOrder, PROVIDER_IDS);
 
 // The tools the window and the tray show, in display order.
 export const visibleProviders = (settings: {

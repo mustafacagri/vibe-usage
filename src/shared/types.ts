@@ -7,6 +7,7 @@ import type {
   AUTOMATION_MODES,
   INHERIT,
   ProviderId,
+  SERVICE_STATUSES,
   SUGGESTION_KINDS,
   TRANSITION_STATUSES
 } from './catalog.ts';
@@ -201,6 +202,8 @@ export interface Settings {
   compact: boolean;
   // Look for a newer release on GitHub once a day.
   checkUpdates: boolean;
+  // Ask the tools' status pages whether their service has a problem.
+  checkServiceStatus: boolean;
   projectPreferences: ProjectPreference[];
   // The headroom at or below which an account counts as running low.
   lowQuotaPercent: number;
@@ -267,6 +270,37 @@ export interface TransitionRecord {
   retryable?: boolean;
 }
 
+// A problem a tool's maker reports on its status page. `component` is the name the page gives it.
+export interface ServiceIssue {
+  providerId: ProviderId;
+  component: string;
+  status: (typeof SERVICE_STATUSES)[number];
+}
+
+// Tokens an account's tool used, as its own logs count them. `input` is what was not read from
+// the cache; `output` includes the tokens spent thinking.
+export interface TokenTotals {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface ModelTokens {
+  // As the log names it; empty when the log never said.
+  model: string;
+  tokens: TokenTotals;
+}
+
+// What an account used since midnight and over the last seven days, the latter by model, most
+// used first.
+export interface AccountTokens {
+  accountId: string;
+  today: TokenTotals;
+  week: TokenTotals;
+  models: ModelTokens[];
+}
+
 export interface UpdateInfo {
   version: string;
   // The release page.
@@ -295,6 +329,7 @@ export interface Snapshot {
   settingsNotice?: SettingsNotice;
   // Added by the desktop app; the service and the CLI leave them out.
   suggestions?: Suggestion[];
+  serviceIssues?: ServiceIssue[];
   update?: UpdateInfo;
   updateInstall?: UpdateInstall;
 }

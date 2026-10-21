@@ -1206,7 +1206,14 @@ type Lister = (
   sessionId?: string
 ) => Promise<(SessionCandidate | null)[]> | (SessionCandidate | null)[];
 
-const LISTERS: Record<ProviderId, Lister> = { claude: listClaude, codex: listCodex, cursor: listCursor, antigravity: listAntigravity };
+// GitHub Copilot keeps no sessions this app can read.
+const LISTERS: Record<ProviderId, Lister> = {
+  claude: listClaude,
+  codex: listCodex,
+  cursor: listCursor,
+  antigravity: listAntigravity,
+  copilot: () => []
+};
 
 const providersFor = (providerId: ProviderId | Auto): readonly ProviderId[] => (providerId === AUTO ? PROVIDER_IDS : [providerId]);
 

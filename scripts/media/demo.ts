@@ -26,7 +26,7 @@ const ACCOUNTS: Account[] = [
 ];
 
 export const PROJECT_DIR = '/Users/you/projects/acme-app';
-export const MODELS: ModelCatalog = { claude: ['opus', 'sonnet'], codex: ['gpt-6-luna'], cursor: ['auto'], antigravity: [] };
+export const MODELS: ModelCatalog = { claude: ['opus', 'sonnet'], codex: ['gpt-6-luna'], cursor: ['auto'], antigravity: [], copilot: [] };
 export const SMART_LAUNCH: SmartLaunchPreview = {
   providerId: 'codex',
   verified: true,
@@ -71,6 +71,7 @@ export function snapshot(
       reopenAfterRestart: 'auto',
       compact: view.compact ?? false,
       checkUpdates: true,
+      checkServiceStatus: true,
       projectPreferences: [{ projectDir: PROJECT_DIR, tool: 'claude', model: 'opus', accountId: 'claude:work', autoContinue: 'accounts' }],
       lowQuotaPercent: 20,
       quietHours: { start: '23:00', end: '08:00' },
@@ -198,7 +199,7 @@ export function transitions(now = Date.now()): TransitionRecord[] {
 
 // Every tool installed and read a moment ago.
 export function diagnostics(): Diagnostics {
-  const counts: Record<ProviderId, number> = { claude: 2, codex: 2, cursor: 1, antigravity: 2 };
+  const counts: Record<ProviderId, number> = { claude: 2, codex: 2, cursor: 1, antigravity: 2, copilot: 0 };
   return {
     generatedAt: 0,
     intervalSeconds: 120,

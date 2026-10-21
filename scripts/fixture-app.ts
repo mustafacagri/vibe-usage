@@ -12,7 +12,7 @@ import {
   type SmartLaunchPreview,
   type VibeMethods
 } from '../src/shared/ipc.ts';
-import type { Diagnostics, Snapshot, TransitionRecord } from '../src/shared/types.ts';
+import type { AccountTokens, Diagnostics, Snapshot, TransitionRecord } from '../src/shared/types.ts';
 
 export const ROOT = path.resolve(import.meta.dirname, '..');
 const BUILD = path.join(ROOT, 'build');
@@ -24,6 +24,7 @@ export interface Fixture {
   sessions: () => SessionSummary[];
   projectDir: string;
   history?: () => HistorySeries[];
+  tokenUsage?: () => AccountTokens[];
   diagnostics?: () => Diagnostics;
   transitions?: () => TransitionRecord[];
 }
@@ -77,6 +78,7 @@ export function serveFixture(fixture: Fixture): void {
     continueWork: () => ({ status: 'continued', to: 'claude', accountId: null, resumed: true, mode: 'terminal' }),
     dismissSuggestion: fixture.snapshot,
     history: fixture.history ?? (() => []),
+    tokenUsage: fixture.tokenUsage ?? (() => []),
     transitions: fixture.transitions ?? (() => []),
     retryTransition: () => canceled,
     openUpdate: () => undefined,

@@ -8,6 +8,7 @@ import { AppError } from '../core/errors.ts';
 import { parseJson, pathKey, writeFileAtomic } from '../core/files.ts';
 import { executeHandover, listSessions, parseProviderChoice, previewHandover, previewSmartLaunch, smartLaunch } from '../core/handover.ts';
 import type { History } from '../core/history.ts';
+import type { TokenUsage } from '../core/token-usage.ts';
 import { launchTool, launchWarnings, openSignIn, type SpawnProcess } from '../core/launch.ts';
 import { discoverModels, refreshCursorModels } from '../core/models.ts';
 import { sessionSources } from '../core/sessions.ts';
@@ -53,6 +54,7 @@ export interface MainContext {
   view(): Snapshot;
   continuity: Pick<Continuity, 'accept' | 'dismiss' | 'isRunning' | 'transitions' | 'retry'>;
   history: Pick<History, 'series'>;
+  tokenUsage: Pick<TokenUsage, 'read'>;
   openUpdate(): void;
   installer: Pick<Installer, 'download' | 'install'>;
   fitHeight(height: number): void;
@@ -338,6 +340,7 @@ export function createHandlers(context: MainContext): Handlers {
         return context.publish();
       }),
     history: () => Promise.resolve(context.history.series(service.snapshot().providers.flatMap(p => p.accounts.map(a => a.id)))),
+    tokenUsage: () => context.tokenUsage.read(service.snapshot().providers.flatMap(p => p.accounts)),
     openUpdate: () =>
       Promise.try(() => {
         context.openUpdate();

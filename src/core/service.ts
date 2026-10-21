@@ -2,6 +2,7 @@
 // snapshots. Settings writes are serialized; reads run per provider, deduplicated.
 import os from 'node:os';
 import { createAntigravityProvider } from '../providers/antigravity.ts';
+import { createCopilotProvider } from '../providers/copilot.ts';
 import { createClaudeProvider } from '../providers/claude.ts';
 import { createCodexProvider } from '../providers/codex.ts';
 import type { Clock } from '../providers/common.ts';
@@ -37,7 +38,8 @@ const ADAPTER_FACTORIES: Readonly<Record<ProviderId, () => ProviderAdapter>> = {
   claude: () => createClaudeProvider(),
   codex: () => createCodexProvider(),
   cursor: () => createCursorProvider(),
-  antigravity: () => createAntigravityProvider()
+  antigravity: () => createAntigravityProvider(),
+  copilot: () => createCopilotProvider()
 };
 
 const FETCH_TIMEOUT_MS = 12000;

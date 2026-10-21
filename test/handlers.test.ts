@@ -13,6 +13,7 @@ import type { MessageKey } from '../src/shared/i18n/index.ts';
 import type { Account, Settings } from '../src/shared/types.ts';
 import { account, fakeSpawn, tempDir } from './helpers/fixtures.ts';
 
+const NO_TOKENS = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const claudeAccount = account({ id: 'claude:default', labelKey: 'accountA', configDir: os.tmpdir(), configDirExplicit: false });
 const claude: ProviderAdapter = {
   id: 'claude',
@@ -111,6 +112,9 @@ async function harness(
       }
     },
     history: { series: ids => ids.map(accountId => ({ accountId, windowId: 'w', samples: [] })) },
+    tokenUsage: {
+      read: accounts => Promise.resolve(accounts.map(a => ({ accountId: a.id, today: NO_TOKENS, week: NO_TOKENS, models: [] })))
+    },
     openUpdate: () => {
       log.openedUpdates++;
     },
@@ -461,6 +465,11 @@ test('suggestions, history, updates and the compact height reach their owners af
     (await handlers.history()).map(s => s.accountId),
     ['claude:default']
   );
+  assert.deepEqual(
+    (await handlers.tokenUsage()).map(entry => entry.accountId),
+    ['claude:default'],
+    'the token counts are asked for the accounts the snapshot holds'
+  );
 });
 
 test('continuing a session that is still being written asks first; declining starts nothing', async t => {
@@ -583,7 +592,8 @@ test('diagnostics list each tool and copy or save a report without names or path
       ['claude', true],
       ['codex', true],
       ['cursor', true],
-      ['antigravity', false]
+      ['antigravity', false],
+      ['copilot', true]
     ]
   );
   await handlers.copyDiagnostics();

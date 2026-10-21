@@ -3,7 +3,15 @@
 import type { ProviderId } from '../../src/shared/catalog.ts';
 import type { Language } from '../../src/shared/i18n/index.ts';
 import type { HistorySeries, ModelCatalog, SessionSummary, SmartLaunchPreview } from '../../src/shared/ipc.ts';
-import type { Account, Diagnostics, MeasuredAccount, ProviderState, Snapshot, TransitionRecord } from '../../src/shared/types.ts';
+import type {
+  Account,
+  AccountTokens,
+  Diagnostics,
+  MeasuredAccount,
+  ProviderState,
+  Snapshot,
+  TransitionRecord
+} from '../../src/shared/types.ts';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -15,7 +23,8 @@ const ACCOUNTS: Account[] = [
   { id: 'claude:default', providerId: 'claude', labelKey: 'accountA', configDir: '/home/me/.claude', primary: true, enabled: true },
   { id: 'claude:work', providerId: 'claude', label: 'Work', configDir: '/home/me/.claude-work', primary: false, enabled: true },
   { id: 'cursor:default', providerId: 'cursor', labelKey: 'defaultAccount', primary: true, enabled: true },
-  { id: 'antigravity:a', providerId: 'antigravity', label: 'me@example.com', primary: true, enabled: true }
+  { id: 'antigravity:a', providerId: 'antigravity', label: 'me@example.com', primary: true, enabled: true },
+  { id: 'copilot:default', providerId: 'copilot', label: 'octo-user', primary: true, enabled: true }
 ];
 
 export function snapshot(language: Language, now = Date.now()): Snapshot {
@@ -35,6 +44,7 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
   const unmeasured = { usedPercent: null, remainingPercent: null, resetsAt: null };
   return {
     refreshing: false,
+    serviceIssues: [{ providerId: 'cursor', component: 'IDE', status: 'partial_outage' }],
     settings: {
       schemaVersion: 1,
       language,
@@ -47,6 +57,7 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
       reopenAfterRestart: 'ask',
       compact: false,
       checkUpdates: true,
+      checkServiceStatus: true,
       // A project with every choice made, one of them an account that has since been removed.
       projectPreferences: [
         {
@@ -194,6 +205,17 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
           ]
         })
       ]),
+      provider('copilot', 'ok', [
+        measured('copilot:default', {
+          status: 'ok',
+          fetchedAt,
+          plan: 'free',
+          windows: [
+            { id: 'chat', labelKey: 'copilotChat', usedPercent: 25, remainingPercent: 75, resetsAt: at(11 * 24 * HOUR) },
+            { id: 'completions', labelKey: 'copilotCompletions', usedPercent: 0, remainingPercent: 100, resetsAt: at(11 * 24 * HOUR) }
+          ]
+        })
+      ]),
       provider('antigravity', 'ok', [
         measured('antigravity:a', {
           status: 'ok',
@@ -324,6 +346,18 @@ export const DIAGNOSTICS: Diagnostics = {
       ]
     },
     {
+      id: 'copilot',
+      installed: true,
+      status: 'ok',
+      messageCode: null,
+      accountCount: 1,
+      enabledCount: 1,
+      ageMs: 20_000,
+      stale: false,
+      remedy: null,
+      accounts: [{ ordinal: 1, enabled: true, primary: true, status: 'ok', messageCode: null, ageMs: 20_000, stale: false, remedy: null }]
+    },
+    {
       id: 'antigravity',
       installed: false,
       status: 'unavailable',
@@ -338,7 +372,7 @@ export const DIAGNOSTICS: Diagnostics = {
   ]
 };
 
-export const MODELS: ModelCatalog = { claude: ['opus', 'sonnet'], codex: ['gpt-6-luna'], cursor: ['auto'], antigravity: [] };
+export const MODELS: ModelCatalog = { claude: ['opus', 'sonnet'], codex: ['gpt-6-luna'], cursor: ['auto'], antigravity: [], copilot: [] };
 
 export const SMART_PREVIEW: SmartLaunchPreview = {
   providerId: 'codex',
@@ -355,6 +389,21 @@ export function history(now = Date.now()): HistorySeries[] {
   return [
     { accountId: 'claude:default', windowId: 'five_hour', samples: samples(h => ((7 * 24 - h) % 5) * 18 + 5) },
     { accountId: 'claude:default', windowId: 'seven_day', samples: samples(h => (7 * 24 - h) / 2.4) }
+  ];
+}
+
+// A week of Claude's tokens: mostly cache reads, as the logs show.
+export function tokenUsage(): AccountTokens[] {
+  return [
+    {
+      accountId: 'claude:default',
+      today: { input: 5_800, output: 2_488_750, cacheRead: 1_062_652_813, cacheWrite: 16_101_828 },
+      week: { input: 100_360, output: 29_295_926, cacheRead: 13_962_842_680, cacheWrite: 212_887_769 },
+      models: [
+        { model: 'claude-opus-5-5', tokens: { input: 90_000, output: 27_000_000, cacheRead: 13_000_000_000, cacheWrite: 200_000_000 } },
+        { model: 'claude-sonnet-5-5', tokens: { input: 10_360, output: 2_295_926, cacheRead: 962_842_680, cacheWrite: 12_887_769 } }
+      ]
+    }
   ];
 }
 

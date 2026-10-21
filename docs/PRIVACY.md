@@ -10,10 +10,14 @@ refresh itself, copy refresh tokens into its settings/history, or send them to a
 renewal is delegated to Claude Code through a minimal Haiku request, at most once per account every 30 minutes.
 Quota requests use the existing access token at the provider's allowed endpoint.
 
-Anthropic and Cursor quota requests verify TLS. Codex uses its local CLI; Antigravity uses its local service after
+Anthropic, Cursor and GitHub Copilot quota requests verify TLS. The Copilot request carries the GitHub token the GitHub
+CLI would use (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`), only to `api.github.com`; the token is not stored. Codex uses its local CLI; Antigravity uses its local service after
 process, port and account checks. GitHub release checks can be disabled. Downloading an update and restarting to
 install it are separate user actions. Supported installed builds verify update checksums and publisher signatures;
 unsigned development builds and portable archives keep the release-page route.
+
+Every five minutes the app also reads the public status pages of Claude, OpenAI, Cursor and GitHub (JSON, no sign-in
+or account data sent) to tell when a tool's service has a problem. Settings → General turns this off.
 
 ## What is written locally
 
@@ -26,6 +30,7 @@ the app does not save credentials there. The main files are:
 | `settings.json`, `.bak`, `.damaged-<time>` | Preferences, account metadata, previous or damaged settings |
 | `settings.json.lock.sqlite` | A local process lock for settings transactions; no credential store |
 | `history.json` | Quota percentages over the last week |
+| `token-usage.json` | Token counts per response read from Claude Code's and Codex's logs (time, model name, counts) with the log files' paths and read positions; no conversation text |
 | `measurements.json` | Last known limits, percentages, reset times and plan; unverified after restart |
 | `continuity.json` | Project/tool/account/session identifiers, process evidence and transition outcomes |
 | Project `VIBE_HANDOVER.md` | A redacted, bounded conversation summary and local project metadata |

@@ -9,9 +9,10 @@ import {
   APP_NAME,
   AUTO,
   isProfileProvider,
-  isProviderId,
+  isOneOf,
   providerById,
   PROVIDER_IDS,
+  WORK_PROVIDER_IDS,
   type Auto,
   type ProviderId
 } from '../shared/catalog.ts';
@@ -319,7 +320,7 @@ async function writeBrief(cwd: string, brief: string): Promise<void> {
 // A tool named by the user or the window, in any case (`--to Codex`), or "auto".
 export function parseProviderChoice(value: unknown): ProviderId | Auto {
   const choice = typeof value === 'string' ? value.toLowerCase() : value;
-  if (choice !== AUTO && !isProviderId(choice)) throw new AppError('invalid_provider');
+  if (choice !== AUTO && !isOneOf(WORK_PROVIDER_IDS, choice)) throw new AppError('invalid_provider');
   return choice;
 }
 

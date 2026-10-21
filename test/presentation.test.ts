@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { describeCode, describeWindow, formatDuration, formatFreshness, hasOwnName, type FormatContext } from '../src/shared/format.ts';
+import {
+  describeCode,
+  describeWindow,
+  formatDuration,
+  formatFreshness,
+  gridTimes,
+  hasOwnName,
+  type FormatContext
+} from '../src/shared/format.ts';
 import { translator, type Language } from '../src/shared/i18n/index.ts';
 import { quotaWindow } from './helpers/fixtures.ts';
 
@@ -88,4 +96,19 @@ test('an account has a name of its own unless it only has the shared fallback', 
   assert.equal(hasOwnName({ labelKey: 'newAccount' }), true);
   assert.equal(hasOwnName({ signedInAs: 'someone@example.com' }), true);
   assert.equal(hasOwnName({ label: 'Current account' }), true, 'a typed name that reads like the fallback is still a name');
+});
+
+test('chart grid lines fall on the local clock: midnights for a week, every fourth hour for a day', () => {
+  const at = (day: number, hour: number): number => new Date(2026, 9, day, hour, 30).getTime();
+  assert.deepEqual(
+    gridTimes(at(14, 10), at(17, 9), 24),
+    [new Date(2026, 9, 15).getTime(), new Date(2026, 9, 16).getTime(), new Date(2026, 9, 17).getTime()],
+    'each local midnight inside the span, none outside'
+  );
+  assert.deepEqual(
+    gridTimes(at(16, 9), at(16, 22), 4),
+    [12, 16, 20].map(hour => new Date(2026, 9, 16, hour).getTime()),
+    'whole four-hour marks of the local clock'
+  );
+  assert.deepEqual(gridTimes(at(16, 9), at(16, 9), 4), [], 'an empty span has no lines');
 });

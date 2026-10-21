@@ -10,7 +10,7 @@ import { LOCALES, SUPPORTED_LANGUAGES, type Language } from '../../src/shared/i1
 import type { Snapshot } from '../../src/shared/types.ts';
 import { capture, isNumber, isStringList, openFixtureWindow, quiet, ROOT, run, runFor, serveFixture } from '../fixture-app.ts';
 import { isObject } from '../../src/core/files.ts';
-import { DIAGNOSTICS, history, MODELS, sessions, SMART_PREVIEW, snapshot, transitions } from './fixture.ts';
+import { DIAGNOSTICS, history, MODELS, sessions, SMART_PREVIEW, snapshot, tokenUsage, transitions } from './fixture.ts';
 import { checkHandoverOrdering } from './handover-check.ts';
 
 const OUT_DIR = path.join(ROOT, 'artifacts', 'ui-check');
@@ -128,6 +128,7 @@ serveFixture({
   smartLaunch: SMART_PREVIEW,
   sessions,
   history,
+  tokenUsage,
   transitions,
   diagnostics: () => DIAGNOSTICS,
   projectDir: '/home/me'
@@ -153,7 +154,7 @@ async function check(language: Language): Promise<string[]> {
     });
     await quiet(win);
     // History charts load when opened; open them so they are checked too.
-    await run(win, "document.querySelectorAll('details.history').forEach(details => { details.open = true; })");
+    await run(win, "document.querySelectorAll('details.history, details.tokens').forEach(details => { details.open = true; })");
     await quiet(win);
     for (const view of VIEWS) {
       for (const button of view.buttons ?? []) {

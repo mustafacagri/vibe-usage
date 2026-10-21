@@ -176,3 +176,14 @@ export function describeCode(code: string, t: Translate, params?: Params): strin
   if (hasKey(status)) return t(status, params);
   return t('error_unexpected');
 }
+
+// The times, on the local clock, of a chart's grid lines: every whole `stepHours` mark after
+// `start` and before `end` (24 gives the midnights).
+export function gridTimes(start: number, end: number, stepHours: number): number[] {
+  const times: number[] = [];
+  const cursor = new Date(start);
+  cursor.setMinutes(0, 0, 0);
+  while (cursor.getTime() <= start || cursor.getHours() % stepHours !== 0) cursor.setHours(cursor.getHours() + 1);
+  for (; cursor.getTime() < end; cursor.setHours(cursor.getHours() + stepHours)) times.push(cursor.getTime());
+  return times;
+}
