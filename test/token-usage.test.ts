@@ -230,3 +230,12 @@ test('a log untouched for longer than the window, and what was kept of it, are l
   await later.flush();
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(dataDir, 'token-usage.json'), 'utf8')), { version: 1, files: {} });
 });
+
+test('only a missing folder means there is nothing to count: any other failure to list the logs is reported', async t => {
+  const { home, usage } = await setup(t);
+  assert.deepEqual((await usage.read([claudeAccount()]))[0]?.week, NO_TOKENS, 'no profile folder at all: nothing used');
+  // A file where the folder of transcripts should be: the listing fails with ENOTDIR, not ENOENT.
+  await fs.mkdir(path.join(home, '.claude'), { recursive: true });
+  await fs.writeFile(path.join(home, '.claude', 'projects'), 'not a folder');
+  await assert.rejects(usage.read([claudeAccount()]), { code: 'ENOTDIR' });
+});
