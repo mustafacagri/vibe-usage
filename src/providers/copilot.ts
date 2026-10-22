@@ -2,6 +2,7 @@
 // environment, else the one the GitHub CLI keeps. It goes to the one Copilot endpoint, which is
 // not documented: a change on GitHub's side shows up as an invalid response, never as a guess.
 import os from 'node:os';
+import { applyEnvironment, environmentChanges } from '../core/environment.ts';
 import { ProviderError } from '../core/errors.ts';
 import { isObject } from '../core/files.ts';
 import { normalizeWindow, safePlan, safeText, type WindowInput } from '../core/model.ts';
@@ -76,15 +77,22 @@ export function createCopilotProvider(options: CopilotProviderOptions = {}): Pro
   const runProcess = options.runProcess ?? defaultRunProcess;
   const findBinary = options.findBinary ?? ((name: string) => defaultFindBinary(name, { env, home: os.homedir() }));
 
-  // The token the GitHub CLI would use: the environment's, else the one it stored.
-  async function readToken(context?: RefreshContext): Promise<string> {
+  // The token the GitHub CLI would use from the environment.
+  function environmentToken(): string | undefined {
     for (const name of TOKEN_VARIABLES) {
       const token = env[name]?.trim();
       if (token) return token;
     }
+    return undefined;
+  }
+
+  // The token the GitHub CLI stored. Without the token variables it is asked for, as it hands
+  // those back before anything it stored.
+  async function storedToken(context?: RefreshContext): Promise<string> {
     const binary = await findBinary(GITHUB_CLI);
     // `gh` fails when nobody is signed in; the process error is that answer, not a fault.
     const token = await runProcess(binary, ['auth', 'token', '--hostname', GITHUB_HOST], {
+      env: applyEnvironment(environmentChanges({ unset: TOKEN_VARIABLES })),
       timeoutMs: TOKEN_TIMEOUT_MS,
       ...context
     }).catch((error: unknown) => {
@@ -94,14 +102,25 @@ export function createCopilotProvider(options: CopilotProviderOptions = {}): Pro
     return token.trim();
   }
 
+  async function readUsage(token: string, context?: RefreshContext): Promise<FetchResult> {
+    const usage = await getJson(QUOTA_ENDPOINTS.copilot, {
+      // The `token` scheme is the one GitHub's own clients use for this endpoint; `Bearer` is not used here.
+      headers: { Authorization: `token ${token}`, Accept: MEDIA_TYPE.json, 'User-Agent': USER_AGENT },
+      timeoutMs: USAGE_TIMEOUT_MS,
+      ...context
+    });
+    return parseCopilotUsage(usage);
+  }
+
   return {
     id: 'copilot',
-    fetchTimeoutMs: TOKEN_TIMEOUT_MS + USAGE_TIMEOUT_MS,
+    // The environment's token, the CLI's after it, and a request for each.
+    fetchTimeoutMs: TOKEN_TIMEOUT_MS + 2 * USAGE_TIMEOUT_MS,
     // The account exists where a sign-in does. A reading that could not be completed (a timeout)
     // proves nothing either way.
     async discover(): Promise<Discovery> {
       try {
-        await readToken();
+        if (!environmentToken()) await storedToken();
         return {
           kind: 'complete',
           accounts: [
@@ -120,14 +139,17 @@ export function createCopilotProvider(options: CopilotProviderOptions = {}): Pro
       }
     },
     async fetch(_account, context): Promise<FetchResult> {
-      const token = await readToken(context);
-      const usage = await getJson(QUOTA_ENDPOINTS.copilot, {
-        // The `token` scheme is the one GitHub's own clients use for this endpoint; `Bearer` is not used here.
-        headers: { Authorization: `token ${token}`, Accept: MEDIA_TYPE.json, 'User-Agent': USER_AGENT },
-        timeoutMs: USAGE_TIMEOUT_MS,
-        ...context
-      });
-      return parseCopilotUsage(usage);
+      const fromEnvironment = environmentToken();
+      if (!fromEnvironment) return readUsage(await storedToken(context), context);
+      try {
+        return await readUsage(fromEnvironment, context);
+      } catch (error) {
+        if (!(error instanceof ProviderError) || error.code !== 'auth_rejected') throw error;
+        // A stale token in the environment must not hide the sign-in the GitHub CLI holds.
+        const stored = await storedToken(context).catch(() => '');
+        if (!stored || stored === fromEnvironment) throw error;
+        return readUsage(stored, context);
+      }
     }
   };
 }

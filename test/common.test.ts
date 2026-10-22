@@ -48,11 +48,23 @@ test('binaries come from an explicit override, known install folders, then PATH'
 
   // GUI apps miss the shell profile, so ~/.local/bin is searched for the agent CLIs.
   await fs.mkdir(path.join(home, '.local', 'bin'), { recursive: true });
+  await fs.writeFile(path.join(home, '.local', 'bin', executable('codex')), '');
+  assert.equal(await findBinary('codex', { ...location, env: { PATH: '' } }), path.join(home, '.local', 'bin', executable('codex')));
   await fs.writeFile(path.join(home, '.local', 'bin', executable('cursor-agent')), '');
   assert.equal(
     await findBinary('cursor-agent', { ...location, env: { PATH: '' } }),
     path.join(home, '.local', 'bin', executable('cursor-agent'))
   );
+});
+
+test('on macOS the Homebrew folder is searched, since a Dock-launched app has no shell profile', async () => {
+  const brew = '/opt/homebrew/bin/gh';
+  const present = await fs.stat(brew).then(
+    () => true,
+    () => false
+  );
+  if (!present) return;
+  assert.equal(await findBinary('gh', { home: '/nonexistent', platform: 'darwin', env: { PATH: '/usr/bin:/bin' } }), brew);
 });
 
 test('credential files are bounded, must be objects, and a missing one means signed out', async t => {

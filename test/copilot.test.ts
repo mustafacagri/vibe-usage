@@ -121,7 +121,32 @@ test('what stops a read is named: no GitHub CLI, no sign-in, a rejected token', 
   assert.equal(await code({ env: {}, findBinary: absent }), 'binary_missing');
   const signedOut: RunProcess = () => Promise.reject(new ProviderError('process_failed'));
   assert.equal(await code({ env: {}, runProcess: signedOut, findBinary: present }), 'auth_missing');
-  assert.equal(await code({}, new ProviderError('auth_rejected')), 'auth_rejected');
+  assert.equal(await code({ findBinary: absent }, new ProviderError('auth_rejected')), 'auth_rejected');
+});
+
+test('a rejected token in the environment falls back to the GitHub CLI sign-in', async () => {
+  const seen: string[] = [];
+  const getJson: GetJson = (_endpoint, options = {}) => {
+    const authorization = options.headers?.Authorization ?? '';
+    seen.push(authorization);
+    return authorization === 'token stale' ? Promise.reject(new ProviderError('auth_rejected')) : Promise.resolve(FREE);
+  };
+  const stored =
+    (token: string): RunProcess =>
+    () =>
+      Promise.resolve(`${token}\n`);
+  const copilot = (token: string, runProcess: RunProcess = stored(token)) =>
+    createCopilotProvider({ env: { GH_TOKEN: 'stale' }, getJson, runProcess, findBinary: present });
+
+  const result = await copilot('fresh').fetch(copilotAccount);
+  assert.equal(result.windows.length, 2);
+  assert.deepEqual(seen, ['token stale', 'token fresh']);
+
+  // The same token again, or no CLI sign-in, leaves the rejection as the answer.
+  const rejected = (error: unknown): unknown => (error instanceof ProviderError ? error.code : error);
+  assert.equal(await copilot('stale').fetch(copilotAccount).catch(rejected), 'auth_rejected');
+  const signedOut: RunProcess = () => Promise.reject(new ProviderError('process_failed'));
+  assert.equal(await copilot('', signedOut).fetch(copilotAccount).catch(rejected), 'auth_rejected');
 });
 
 test('the account exists when a sign-in can be found: the environment or the GitHub CLI; otherwise none', async () => {

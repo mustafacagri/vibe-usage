@@ -294,7 +294,11 @@ export const windowsAppPath = (app: DesktopApp, env: Environment, home: string):
 
 // Per-user install locations that GUI-launched apps miss: Finder/Explorer do not load the
 // shell profile that would put them on PATH.
-const HOME_BIN_TOOLS: ReadonlySet<string> = new Set([...TOOL_INSTALLS.claude.binaries, ...TOOL_INSTALLS.cursor.binaries]);
+const HOME_BIN_TOOLS: ReadonlySet<string> = new Set([
+  ...TOOL_INSTALLS.claude.binaries,
+  ...TOOL_INSTALLS.codex.binaries,
+  ...TOOL_INSTALLS.cursor.binaries
+]);
 function knownInstallLocations(name: string, env: Environment, home: string, platform: NodeJS.Platform): string[] {
   const filename = platform === 'win32' ? `${name}.exe` : name;
   const locations: string[] = [];
@@ -303,12 +307,16 @@ function knownInstallLocations(name: string, env: Environment, home: string, pla
   return locations;
 }
 
-// The directories macOS path_helper adds to PATH (missing files simply add nothing).
+// Apple Silicon Homebrew's folder: only the shell profile (`brew shellenv`) puts it on PATH, so
+// Finder- and Dock-launched apps miss it. Intel Homebrew's `/usr/local/bin` is in `/etc/paths`.
+const HOMEBREW_BIN = '/opt/homebrew/bin';
+
+// The directories macOS path_helper adds to PATH (missing files simply add nothing), and Homebrew's.
 async function macPathHelperDirectories(): Promise<string[]> {
   const extra = await fsp.readdir('/etc/paths.d').catch(() => []);
   const files = ['/etc/paths', ...extra.map(entry => path.join('/etc/paths.d', entry))];
   const contents = await Promise.all(files.map(file => fsp.readFile(file, 'utf8').catch(() => '')));
-  return contents.flatMap(text => text.split(/\r?\n/).filter(line => line.startsWith('/')));
+  return [...contents.flatMap(text => text.split(/\r?\n/).filter(line => line.startsWith('/'))), HOMEBREW_BIN];
 }
 
 // `VIBE_<NAME>_BINARY` overrides the search; otherwise known install locations, then PATH.
