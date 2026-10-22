@@ -44,6 +44,7 @@ export function snapshot(language: Language, now = Date.now()): Snapshot {
   const unmeasured = { usedPercent: null, remainingPercent: null, resetsAt: null };
   return {
     refreshing: false,
+    appVersion: '0.2.2',
     serviceIssues: [{ providerId: 'cursor', status: 'partial_outage' }],
     settings: {
       schemaVersion: 1,

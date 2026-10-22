@@ -94,6 +94,7 @@ export const tr: Messages = {
   suggestionReopenBody: '{project} oturumunu {target} hesabında yeniden aç',
   checkUpdatesLabel: "GitHub'da yeni sürümleri denetle",
   checkServiceStatusLabel: 'Araçların durum sayfalarında kesintileri denetle',
+  appVersionLabel: 'Sürüm {version}',
   serviceIssue: 'Sağlayıcı bir sorun bildiriyor: hizmeti {state}.',
   serviceDegraded: 'yavaş çalışıyor',
   servicePartial: 'kısmen çalışmıyor',

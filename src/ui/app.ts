@@ -181,6 +181,7 @@ const ui = {
   notificationsLabel: $('#notifications-label', HTMLElement),
   compareAccounts: $('#compare-accounts', HTMLInputElement),
   checkUpdates: $('#check-updates', HTMLInputElement),
+  appVersion: $('#app-version', HTMLElement),
   checkServiceStatus: $('#check-service-status', HTMLInputElement),
   lowQuota: $('#low-quota', HTMLSelectElement),
   quietHours: $('#quiet-hours', HTMLInputElement),
@@ -1619,6 +1620,9 @@ async function renderSettings(): Promise<void> {
   ui.compareAccounts.checked = settings.compareAccounts;
   ui.checkUpdates.checked = settings.checkUpdates;
   ui.checkServiceStatus.checked = settings.checkServiceStatus;
+  const { appVersion } = current();
+  ui.appVersion.hidden = !appVersion;
+  ui.appVersion.textContent = appVersion ? t('appVersionLabel', { version: appVersion }) : '';
   showAutoContinue(settings.autoContinue);
   showReturnToPrimary(settings.returnToPrimary);
   showReopenAfterRestart(settings.reopenAfterRestart);

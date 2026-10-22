@@ -97,6 +97,7 @@ export const pl: Messages = {
   suggestionReopenBody: 'Otwórz ponownie {project} na {target}',
   checkUpdatesLabel: 'Sprawdzaj nowe wersje na GitHubie',
   checkServiceStatusLabel: 'Sprawdzaj strony statusu narzędzi pod kątem awarii',
+  appVersionLabel: 'Wersja {version}',
   serviceIssue: 'Dostawca zgłasza problem: usługa — {state}.',
   serviceDegraded: 'obniżona wydajność',
   servicePartial: 'częściowa awaria',

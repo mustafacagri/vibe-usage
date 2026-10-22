@@ -94,6 +94,7 @@ export const ja: Messages = {
   suggestionReopenBody: '{project} を {target} で再び開く',
   checkUpdatesLabel: 'GitHub で新しいバージョンを確認',
   checkServiceStatusLabel: 'ツールのステータスページで障害を確認する',
+  appVersionLabel: 'バージョン {version}',
   serviceIssue: '提供元が問題を報告しています。サービスの状態: {state}。',
   serviceDegraded: '性能低下',
   servicePartial: '一部停止',

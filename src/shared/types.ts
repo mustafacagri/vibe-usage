@@ -329,6 +329,7 @@ export interface Snapshot {
   // Added by the desktop app; the service and the CLI leave them out.
   suggestions?: Suggestion[];
   serviceIssues?: ServiceIssue[];
+  appVersion?: string;
   update?: UpdateInfo;
   updateInstall?: UpdateInstall;
 }

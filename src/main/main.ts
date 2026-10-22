@@ -351,6 +351,7 @@ async function start(): Promise<void> {
   // The snapshot as the window shows it: with forecasts, suggestions and a newer release.
   const view = (): Snapshot => ({
     ...history.annotate(service.snapshot()),
+    appVersion: app.getVersion(),
     suggestions: continuity.suggestions(),
     ...(serviceIssues.length ? { serviceIssues } : {}),
     ...(update ? { update, updateInstall: installer.state() } : {})

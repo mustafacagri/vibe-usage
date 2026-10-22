@@ -96,6 +96,7 @@ export const en = {
   suggestionReopenBody: 'Reopen {project} on {target}',
   checkUpdatesLabel: 'Check GitHub for new versions',
   checkServiceStatusLabel: "Check the tools' status pages for outages",
+  appVersionLabel: 'Version {version}',
   serviceIssue: 'The provider reports a problem: its service is {state}.',
   serviceDegraded: 'running degraded',
   servicePartial: 'partly down',

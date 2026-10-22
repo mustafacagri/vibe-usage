@@ -94,6 +94,7 @@ export const ko: Messages = {
   suggestionReopenBody: '{target}에서 {project} 다시 열기',
   checkUpdatesLabel: 'GitHub에서 새 버전 확인',
   checkServiceStatusLabel: '도구의 상태 페이지에서 장애 확인',
+  appVersionLabel: '버전 {version}',
   serviceIssue: '제공업체가 문제를 알렸습니다. 서비스 상태: {state}.',
   serviceDegraded: '성능 저하',
   servicePartial: '부분 장애',

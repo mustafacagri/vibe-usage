@@ -97,6 +97,7 @@ export const ru: Messages = {
   suggestionReopenBody: 'Открыть {project} снова в {target}',
   checkUpdatesLabel: 'Проверять новые версии на GitHub',
   checkServiceStatusLabel: 'Проверять страницы статуса инструментов на сбои',
+  appVersionLabel: 'Версия {version}',
   serviceIssue: 'Поставщик сообщает о проблеме: статус сервиса — {state}.',
   serviceDegraded: 'снижение производительности',
   servicePartial: 'частичный сбой',

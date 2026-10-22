@@ -95,6 +95,7 @@ export const de: Messages = {
   suggestionReopenBody: '{project} bei {target} wieder öffnen',
   checkUpdatesLabel: 'Auf GitHub nach neuen Versionen suchen',
   checkServiceStatusLabel: 'Statusseiten der Tools auf Störungen prüfen',
+  appVersionLabel: 'Version {version}',
   serviceIssue: 'Der Anbieter meldet ein Problem: Der Dienst ist {state}.',
   serviceDegraded: 'eingeschränkt',
   servicePartial: 'teilweise ausgefallen',

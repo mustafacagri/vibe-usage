@@ -95,6 +95,7 @@ export const it: Messages = {
   suggestionReopenBody: 'Riapri {project} su {target}',
   checkUpdatesLabel: 'Cerca nuove versioni su GitHub',
   checkServiceStatusLabel: 'Controlla le pagine di stato degli strumenti',
+  appVersionLabel: 'Versione {version}',
   serviceIssue: 'Il fornitore segnala un problema: il servizio è {state}.',
   serviceDegraded: 'degradato',
   servicePartial: 'parzialmente non disponibile',

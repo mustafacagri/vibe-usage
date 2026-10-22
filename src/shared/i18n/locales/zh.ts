@@ -93,6 +93,7 @@ export const zh: Messages = {
   suggestionReopenBody: '在 {target} 上重新打开 {project}',
   checkUpdatesLabel: '在 GitHub 上检查新版本',
   checkServiceStatusLabel: '查看工具的状态页以发现故障',
+  appVersionLabel: '版本 {version}',
   serviceIssue: '服务商报告了问题：服务{state}。',
   serviceDegraded: '性能下降',
   servicePartial: '部分中断',

@@ -95,6 +95,7 @@ export const nl: Messages = {
   suggestionReopenBody: '{project} heropenen op {target}',
   checkUpdatesLabel: 'Op GitHub naar nieuwe versies zoeken',
   checkServiceStatusLabel: 'Statuspagina’s van de tools op storingen controleren',
+  appVersionLabel: 'Versie {version}',
   serviceIssue: 'De aanbieder meldt een probleem: de dienst is {state}.',
   serviceDegraded: 'verminderd',
   servicePartial: 'deels uitgevallen',
