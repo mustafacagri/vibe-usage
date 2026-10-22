@@ -1,6 +1,6 @@
 // What an account's state means for what the window shows: when signing in is the next step,
 // and the one line per account the compact view gives.
-import type { AccountStatus, MeasuredAccount, ProviderState, QuotaWindow } from './types.ts';
+import type { AccountStatus, MeasuredAccount, ProviderState, ProviderStatus, QuotaWindow } from './types.ts';
 
 // States of an account read just now with a working sign-in: quota, or none to report.
 export const HEALTHY_STATUSES: ReadonlySet<AccountStatus> = new Set(['ok', 'no_limits_reported']);
@@ -18,6 +18,11 @@ const SIGN_IN_STATUSES: ReadonlySet<AccountStatus> = new Set([
   'app_closed'
 ]);
 
+// States where the tool itself is not found: signing in cannot start without it, finding it can.
+const NOT_FOUND_STATUSES: ReadonlySet<ProviderStatus> = new Set(['binary_missing', 'invalid_binary']);
+
+export const toolNotFound = (state: { status: ProviderStatus }): boolean => NOT_FOUND_STATUSES.has(state.status);
+
 // States that pass by themselves: the next read is already on its way.
 const WAITING_STATUSES: ReadonlySet<AccountStatus> = new Set([
   'pending',
@@ -33,12 +38,12 @@ const WAITING_STATUSES: ReadonlySet<AccountStatus> = new Set([
 // Signing in helps when the source said so, or when an account was never read for a reason
 // that does not pass by itself.
 export const needsSignIn = (account: MeasuredAccount): boolean =>
-  SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status));
+  !toolNotFound(account) && (SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status)));
 
 export type KnownWindow = QuotaWindow & { remainingPercent: number };
 
 // Why a compact line shows no number.
-export type CompactNote = 'reading' | 'waiting' | 'signIn' | 'openApp' | 'noLimits' | 'noData';
+export type CompactNote = 'reading' | 'waiting' | 'signIn' | 'openApp' | 'notFound' | 'noLimits' | 'noData';
 
 export interface CompactLine {
   account: MeasuredAccount;
@@ -83,6 +88,7 @@ function limits(account: MeasuredAccount): Pick<CompactLine, 'window' | 'other' 
 function noteFor(account: MeasuredAccount): CompactNote {
   if (account.status === 'pending') return 'reading';
   if (account.status === 'app_closed') return 'openApp';
+  if (toolNotFound(account)) return 'notFound';
   if (account.status === 'no_limits_reported') return 'noLimits';
   if (WAITING_STATUSES.has(account.status)) return 'waiting';
   return needsSignIn(account) ? 'signIn' : 'noData';

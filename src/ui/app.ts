@@ -18,7 +18,15 @@ import {
   visibleProviders,
   WORK_PROVIDER_IDS
 } from '../shared/catalog.ts';
-import { compactLines, isLowQuota, needsSignIn, type CompactLine, type CompactNote, type KnownWindow } from '../shared/account-state.ts';
+import {
+  compactLines,
+  isLowQuota,
+  needsSignIn,
+  toolNotFound,
+  type CompactLine,
+  type CompactNote,
+  type KnownWindow
+} from '../shared/account-state.ts';
 import {
   describeCode,
   describeWindow,
@@ -479,6 +487,16 @@ function signInButton(
   return button;
 }
 
+// A tool that is not found cannot be signed in to: the diagnostics say where it was looked for.
+function checkInstallButton(): HTMLButtonElement {
+  const button = element('button', 'launch-button', t('checkInstallBtn'));
+  onClick(button, () => {
+    ui.diagnosticsButton.click();
+    return Promise.resolve();
+  });
+  return button;
+}
+
 // Claude Code in a terminal, signed in as `account`.
 function launchButton(
   provider: Provider,
@@ -537,6 +555,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount): HTMLElement[] 
   if (message) nodes.push(element('div', 'empty', message));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
+  else if (toolNotFound(shown)) nodes.push(checkInstallButton());
   return nodes;
 }
 
@@ -568,6 +587,7 @@ function compareActions(provider: Provider, account: MeasuredAccount): HTMLEleme
     column.append(launch);
   }
   if (needsSignIn(account)) column.append(signInButton(provider, account, t('signInAccountBtn', { name })));
+  else if (toolNotFound(account)) column.append(checkInstallButton());
   return column;
 }
 
@@ -914,6 +934,7 @@ const COMPACT_NOTES: Readonly<Record<CompactNote, MessageKey>> = {
   waiting: 'compactWaiting',
   signIn: 'compactSignIn',
   openApp: 'compactOpenApp',
+  notFound: 'compactNotFound',
   noLimits: 'compactNoLimits',
   noData: 'compactNoData'
 };
@@ -936,10 +957,15 @@ function compactSegment(provider: Provider, line: CompactLine, many: boolean): H
   const { window } = line;
   if (!window) {
     const note = line.note ?? 'noData';
-    const actionable = note === 'signIn' || note === 'openApp';
+    const actionable = note === 'signIn' || note === 'openApp' || note === 'notFound';
     const cell = element(actionable ? 'button' : 'span', `compact-note ${note}`, t(COMPACT_NOTES[note]));
     segment.title = [many ? accountName(line.account) : '', statusMessage(line.account) || t('noDataYet')].filter(Boolean).join(' · ');
-    if (actionable) onClick(cell, () => openSignIn(provider, line.account));
+    if (actionable) {
+      onClick(cell, async () => {
+        if (note === 'notFound') ui.diagnosticsButton.click();
+        else await openSignIn(provider, line.account);
+      });
+    }
     segment.append(cell);
     return segment;
   }
@@ -1083,7 +1109,11 @@ function providerCard(state: ProviderState): HTMLElement {
   if (issue) section.append(serviceIssueNote(issue));
   if (compare) section.append(...compareBody(provider, accounts));
   else if (shown) section.append(...accountBody(provider, shown));
-  else section.append(element('div', 'empty', statusMessage(state) || t('status_no_accounts')), signInButton(provider));
+  else
+    section.append(
+      element('div', 'empty', statusMessage(state) || t('status_no_accounts')),
+      toolNotFound(state) ? checkInstallButton() : signInButton(provider)
+    );
   const inView = accountsInView(accounts, compare, shown);
   const charted = inView.filter(a => chartedWindows(a).length);
   if (charted.length) section.append(historySection(charted));

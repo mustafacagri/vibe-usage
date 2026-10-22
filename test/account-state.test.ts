@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactLines, needsSignIn } from '../src/shared/account-state.ts';
+import { compactLines, needsSignIn, toolNotFound } from '../src/shared/account-state.ts';
 import type { AccountStatus, MeasuredAccount, ProviderState, QuotaWindow } from '../src/shared/types.ts';
 import { measuredAccount, quotaWindow } from './helpers/fixtures.ts';
 
@@ -26,6 +26,17 @@ test('signing in is offered when the source asks for it or a read keeps failing,
   assert.equal(never('transport_error'), false);
   assert.equal(never('pending'), false);
   assert.equal(needsSignIn(reading({ status: 'stale', windows: [limit('five_hour', 50)] })), false);
+});
+
+test('a tool that is not found is not signed in to: the window sends the user to the diagnostics', () => {
+  for (const status of ['binary_missing', 'invalid_binary'] as const) {
+    const account = reading({ status, windows: [] });
+    assert.equal(toolNotFound(account), true);
+    assert.equal(needsSignIn(account), false);
+    assert.equal(only(compactLines(tool([account]), 20)).note, 'notFound');
+  }
+  assert.equal(toolNotFound({ status: 'auth_missing' }), false);
+  assert.equal(toolNotFound({ status: 'unavailable' }), false);
 });
 
 test('each account shows its session limit, and a longer one that runs out first beside it', () => {

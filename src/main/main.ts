@@ -29,6 +29,7 @@ import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip,
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
 import { renewClaudeSignIn } from '../core/claude-renew.ts';
+import { loginShellPath, mergePath } from '../core/shell-path.ts';
 import { MEASUREMENTS_FILE } from '../core/measurements.ts';
 import { createService, type Service } from '../core/service.ts';
 import { appDataDir, inQuietHours, settingsPath } from '../core/settings.ts';
@@ -298,6 +299,11 @@ function denyPermissions(): void {
 
 async function start(): Promise<void> {
   denyPermissions();
+  // The tools are looked up on PATH, which a copy opened from the Dock or Finder has only in part.
+  if (process.platform === 'darwin') {
+    const folders = await loginShellPath();
+    if (folders.length) process.env.PATH = mergePath(folders, process.env.PATH);
+  }
   const dataDir = app.getPath('userData');
   const homeDir = os.homedir();
   // Set once the window can show a change; until then there is nothing to tell.
