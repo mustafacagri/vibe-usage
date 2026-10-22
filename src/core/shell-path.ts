@@ -1,10 +1,11 @@
 // A Finder- or Dock-launched app has no shell profile, so its PATH misses where the user installed
 // their tools (nvm, pnpm, bun, Homebrew). The folders are read once from the user's own login
 // shell, the way a terminal would have them.
-import path from 'node:path';
+import { posix as path } from 'node:path';
 import { DURATION_MS } from '../shared/catalog.ts';
 import { runProcess as defaultRunProcess, type RunProcess } from '../providers/common.ts';
 
+// The login shell is a Unix one, so its paths are read as Unix paths on every system (the tests run on Windows too).
 // Shells whose `-ilc` runs a command after reading the profile and the rc file.
 const SHELLS: ReadonlySet<string> = new Set(['zsh', 'bash']);
 // What the profile prints on its own (a greeting, a version manager's notice) surrounds the answer.
