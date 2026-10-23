@@ -20,6 +20,20 @@ export class AppError extends Error {
 // for anything else thrown.
 export const systemErrorCode = (error: unknown): unknown => (error instanceof Error && 'code' in error ? error.code : undefined);
 
+// The system refused to start a program: a security policy or an antivirus program blocks it.
+// Windows reports a denied start as EPERM, which spawn throws rather than emits.
+export const isStartRefused = (error: unknown): boolean => {
+  const code = systemErrorCode(error);
+  return code === 'EPERM' || code === 'EACCES';
+};
+
+// A system error code (ENOENT, EPERM) as reported; anything else is not shown.
+const SYSTEM_CODE = /^[A-Z][A-Z0-9_]{1,31}$/;
+export const reportableCode = (error: unknown): string | undefined => {
+  const code = systemErrorCode(error);
+  return typeof code === 'string' && SYSTEM_CODE.test(code) ? code : undefined;
+};
+
 const RETRY_AFTER_BOUNDS_SECONDS = { min: 60, max: 900 };
 
 // A failed quota read. `retryAfterSeconds` is the server's back-off hint, kept within bounds.

@@ -1,7 +1,7 @@
 // The contract between the renderer and the main process. Each method is invoked on the
 // channel `vibe:<name>`; results travel in an envelope so that error codes survive the hop.
 import type { Auto, ProfileProviderId, ProviderId } from './catalog.ts';
-import type { AccountTokens, Diagnostics, ErrorPayload, QuietHours, Settings, Snapshot, TransitionRecord } from './types.ts';
+import type { AccountTokens, Diagnostics, ErrorPayload, PassedOver, QuietHours, Settings, Snapshot, TransitionRecord } from './types.ts';
 
 export const IPC_PREFIX = 'vibe:';
 export const SNAPSHOT_EVENT = `${IPC_PREFIX}update` as const;
@@ -37,6 +37,8 @@ export interface SmartLaunchPreview {
   isFallback: boolean;
   headroomPercent: number | null;
   model: string | null;
+  // The tools ahead of it in the order and why each was passed over; every tool when unverified.
+  passedOver: PassedOver[];
 }
 
 export interface HandoverRequest {

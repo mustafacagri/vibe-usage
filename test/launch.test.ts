@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -210,6 +211,58 @@ test('Claude signs in with `claude auth login`, which works even over expired cr
   assert.ok(content.includes(`export CLAUDE_CONFIG_DIR=${shellQuote(configDir)}`));
   assert.ok(content.endsWith(`exec '${binary}' 'auth' 'login'\n`));
 });
+
+test('a program the system will not start is named, and a refused sign-in points to the own terminal', async t => {
+  const binary = path.join(await tempDir(t, 'vibe-bin-'), 'codex');
+  await fs.writeFile(binary, '');
+  process.env.VIBE_CODEX_BINARY = binary;
+  t.after(() => {
+    delete process.env.VIBE_CODEX_BINARY;
+  });
+  const dataDir = await tempDir(t, 'vibe-data-');
+  const systemError = (code: string): Error => Object.assign(new Error(`spawn ${code}`), { code, syscall: 'spawn' });
+  // Windows' refusal (EPERM) is thrown by spawn itself; other failures arrive as an event.
+  const refusing: SpawnProcess = () => {
+    throw systemError('EPERM');
+  };
+  const failing: SpawnProcess = () => {
+    const child = new EventEmitter();
+    setImmediate(() => child.emit('error', systemError('ENOENT')));
+    return Object.assign(child, { unref: () => child });
+  };
+  const terminal = { cwd: dataDir, binary, args: [], env: {}, dataDir, platform: 'win32' as const };
+  await assert.rejects(openInTerminal({ ...terminal, spawnProcess: refusing }), {
+    code: 'start_blocked',
+    params: { program: 'powershell.exe' }
+  });
+  await assert.rejects(openInTerminal({ ...terminal, spawnProcess: failing }), {
+    code: 'start_failed',
+    params: { program: 'powershell.exe', code: 'ENOENT' }
+  });
+  await assert.rejects(openSignIn({ providerId: 'codex', dataDir, cwd: dataDir, platform: 'win32', spawnProcess: refusing }), {
+    code: 'sign_in_blocked',
+    params: { program: 'powershell.exe', tool: 'Codex' }
+  });
+});
+
+test(
+  'a terminal Windows refuses to start is reported as blocked, not as an unknown failure',
+  { skip: process.platform !== 'win32' && 'Windows only' },
+  async t => {
+    const dir = await tempDir(t, 'vibe-refused-');
+    const refused = path.join(dir, 'refused.exe');
+    await fs.copyFile(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe'), refused);
+    execFileSync('icacls', [refused, '/deny', `${process.env.USERNAME ?? ''}:(X)`], { windowsHide: true });
+    process.env.VIBE_POWERSHELL_BINARY = refused;
+    t.after(() => {
+      delete process.env.VIBE_POWERSHELL_BINARY;
+    });
+    await assert.rejects(openInTerminal({ cwd: dir, binary: refused, args: [], env: {}, dataDir: dir, platform: 'win32' }), {
+      code: 'start_blocked',
+      params: { program: 'refused.exe' }
+    });
+  }
+);
 
 test('launching requires an existing folder and an account for Claude', async t => {
   const dataDir = await tempDir(t, 'vibe-data-');

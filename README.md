@@ -77,7 +77,9 @@ if you choose. Sessions you closed yourself stay closed.
 ### Smart Launch
 
 Picks the first tool in your priority order whose quota is **verified** to have room, then opens it in a new terminal
-in the project folder you choose. If no tool can be verified, it says so instead of guessing.
+in the project folder you choose. It names each tool it passed over and why (not signed in, quota spent, not read yet),
+and starts the tool on the model you prefer for it, else on the tool's own default. If no tool can be verified, it says
+so and starts nothing.
 
 </td>
 <td valign="top">
@@ -146,7 +148,8 @@ A sign-in not finished within ten minutes takes the account off again, and the n
   (off, ask, or on its own once the session is idle). **When the computer goes down**, open Claude Code sessions can
   open again where they left off.
 - **Home order and fallback priority** are separate: one is how tools are listed in the window and the tray, the other
-  which tool takes over next. **Preferred models** set the model Smart Launch and handover start each tool with.
+  which tool takes over next. **Preferred models** set the model Smart Launch and handover start each tool with; left at
+  *Default*, Smart Launch uses the tool's own default and handover the closest match to the session's model.
   The eye beside each tool in Home order hides it: it leaves the window and the tray, its quota is no longer read and it
   raises no alerts. Handover and the command line still use it. One tool always stays visible.
 - **Project preferences** (Settings): give a folder its own tool, model, account and automatic continuation. They narrow
@@ -156,8 +159,9 @@ A sign-in not finished within ten minutes takes the account off again, and the n
   (they are not sent later); quota is still read, work still continues and suggestions wait in the window.
 - **Handover history** lists each continuation with its project, route and outcome. A failed one can be tried again,
   checked against current quota first.
-- **Diagnostics** shows, per tool, whether it is installed, each account's state and freshness, and the next step.
-  **Copy report** gives a version without names, e-mail addresses or folders, ready for an issue.
+- **Diagnostics** shows, per tool, whether it is installed, each account's state and freshness, and the next step,
+  plus the latest unexpected errors (what failed and the system's error code, never the error's text). **Copy report**
+  gives a version without names, e-mail addresses or folders, ready for an issue.
 - **Backup and restore**: export, import or reset the settings. Every save keeps the previous good copy; a damaged
   settings file is restored from it (and kept aside), and a file written by a newer version is never overwritten.
 
@@ -234,6 +238,10 @@ when you click **Download**, then installs it only when you choose **Restart to 
 release page when there is a new version. Either way it lives in the system tray.
 
 Unless a release says it is signed, the app is not code-signed, so on first launch Windows SmartScreen may say **Windows protected your PC**. Click **More info**, then **Run anyway**.
+
+Claude Code and Codex are found whether they were installed with their own installers or with npm. Sign-ins and
+launches open through Windows PowerShell; if a security policy or an antivirus program does not let the app start it,
+the app says so, and you can sign in from your own terminal instead.
 
 ### macOS
 

@@ -133,6 +133,43 @@ test('provider selection follows the user order and never fabricates quota', () 
   assert.equal(selectProvider(snapshot([claude, codex], ['claude', 'codex']), { exclude: 'claude', now: NOW }).providerId, 'codex');
 });
 
+test('provider selection says why each tool ahead of the choice was passed over', () => {
+  const order: ProviderId[] = ['claude', 'codex', 'cursor', 'antigravity', 'copilot'];
+  const state = snapshot(
+    [
+      { id: 'claude:a', providerId: 'claude', primary: true, windows: [] },
+      { id: 'codex:a', providerId: 'codex', primary: true, windows: general(3, 80) },
+      { id: 'antigravity:a', providerId: 'antigravity', primary: true, windows: general(70, 70) }
+    ],
+    order
+  );
+  const claude = state.providers.find(p => p.id === 'claude')?.accounts[0];
+  assert.ok(claude);
+  Object.assign(claude, { status: 'auth_missing', messageCode: 'auth_missing' });
+  const choice = selectProvider(state, { now: NOW });
+  assert.deepEqual([choice.providerId, choice.isFallback], ['antigravity', true]);
+  assert.deepEqual(choice.passedOver, [
+    { providerId: 'claude', reason: { kind: 'status', code: 'auth_missing' } },
+    { providerId: 'codex', reason: { kind: 'low', percent: 3 } },
+    { providerId: 'cursor', reason: { kind: 'no_account' } }
+  ]);
+
+  // A reading older than a few minutes verifies nothing, so every tool is passed over.
+  const old = new Date(NOW - 10 * 60 * 1000).toISOString();
+  for (const provider of state.providers) for (const account of provider.accounts) if (account.status === 'ok') account.fetchedAt = old;
+  const none = selectProvider(state, { now: NOW });
+  assert.equal(none.verified, false);
+  assert.deepEqual(
+    none.passedOver.map(p => [p.providerId, p.reason.kind]),
+    [
+      ['claude', 'status'],
+      ['codex', 'unverified'],
+      ['cursor', 'no_account'],
+      ['antigravity', 'unverified']
+    ]
+  );
+});
+
 test('headroom is the tightest relevant limit', () => {
   assert.equal(headroomPercent(measured([...general(45, 30), quotaWindow({ id: 's', scope: 'Opus', remainingPercent: 10 })])), 10);
   assert.equal(headroomPercent(measured([quotaWindow()])), null);

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { applyEnvironment, environmentChanges } from './core/environment.ts';
 import { AppError } from './core/errors.ts';
+import { describeFault } from './core/faults.ts';
 import { executeHandover, parseProviderChoice, type LaunchContext } from './core/handover.ts';
 import { launchPlan, launchWarnings, projectDirectory } from './core/launch.ts';
 import { selectAccount } from './core/selection.ts';
@@ -27,6 +28,12 @@ import type { Snapshot } from './shared/types.ts';
 const CLEAR_SCREEN = '\x1b[2J\x1b[H';
 const EXIT_FAILURE = 1;
 const EXIT_INTERRUPTED = 130;
+
+// An error's message; one the app did not foresee also says what kind it was ("Error EPERM spawn").
+function errorMessage(error: unknown, t: Translate): string {
+  if (error instanceof AppError) return describeCode(error.code, t, error.params);
+  return `${describeCode('unexpected', t)} (${describeFault(error)})`;
+}
 
 // Strict: an unknown flag or a missing value is an error, never ignored.
 function parseFlags<T extends Record<string, { type: 'string' | 'boolean' }>>(args: string[], options: T) {
@@ -112,7 +119,7 @@ async function run(context: CliContext, [providerId, ...args]: string[], t: Tran
   const snapshot = await context.service.refresh(providerId);
   // Without an explicit --account, only an account with verified quota is used.
   const chosen = selectAccount(snapshot, providerId, { accountId: flags.account, model: flags.model });
-  if (!chosen) throw new AppError('no_verified_quota');
+  if (!chosen) throw new AppError('no_verified_account');
   const cwd = await projectDirectory(path.resolve(context.cwd, flags.cwd ?? '.'));
   const plan = await launchPlan(providerId, { account: chosen, model: flags.model });
   if (!plan) throw new AppError('no_cli', { tool: providerById(providerId).name });
@@ -175,8 +182,7 @@ export async function runCli([command = 'status', ...args]: string[], context: C
         throw new AppError('unknown_command');
     }
   } catch (error) {
-    const { code, params } = error instanceof AppError ? error : new AppError('unexpected');
-    context.printError(describeCode(code, t, params));
+    context.printError(errorMessage(error, t));
     return EXIT_FAILURE;
   }
 }
@@ -224,7 +230,7 @@ if (import.meta.main) {
         process.exitCode = code;
       },
       (error: unknown) => {
-        console.error(describeCode(error instanceof AppError ? error.code : 'unexpected', translator(DEFAULT_LANGUAGE)));
+        console.error(errorMessage(error, translator(DEFAULT_LANGUAGE)));
         process.exitCode = EXIT_FAILURE;
       }
     );

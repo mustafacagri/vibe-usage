@@ -20,11 +20,13 @@ export function assertSender(event: Sender, expectedUrl: string): void {
 }
 
 // Every result is an envelope so that error codes survive the hop; the preload script unwraps
-// it back into a resolved value or a thrown error.
-export async function envelope<T>(task: () => T): Promise<Envelope<Awaited<T>>> {
+// it back into a resolved value or a thrown error. A failure the app did not foresee crosses as
+// "unexpected" only, so `onFault` is told what it was.
+export async function envelope<T>(task: () => T, onFault?: (error: unknown) => void): Promise<Envelope<Awaited<T>>> {
   try {
     return { ok: true, value: await task() };
   } catch (error) {
+    if (!(error instanceof AppError)) onFault?.(error);
     return { ok: false, error: toErrorPayload(error) };
   }
 }

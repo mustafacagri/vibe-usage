@@ -36,6 +36,9 @@ test('a tool that is not found is not signed in to: the window sends the user to
     assert.equal(only(compactLines(tool([account]), 20)).note, 'notFound');
   }
   assert.equal(toolNotFound({ status: 'auth_missing' }), false);
+  // A program the system will not start is there: it is blocked, and that is no sign-in matter either.
+  const blocked = reading({ status: 'process_blocked', windows: [] });
+  assert.deepEqual([toolNotFound(blocked), needsSignIn(blocked), only(compactLines(tool([blocked]), 20)).note], [false, false, 'blocked']);
   assert.equal(toolNotFound({ status: 'unavailable' }), false);
 });
 

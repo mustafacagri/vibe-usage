@@ -32,7 +32,8 @@ export const SMART_LAUNCH: SmartLaunchPreview = {
   verified: true,
   isFallback: false,
   headroomPercent: 58,
-  model: 'gpt-6-luna'
+  model: 'gpt-6-luna',
+  passedOver: []
 };
 
 // `view` changes how the window shows them (accounts side by side, the compact view).
@@ -203,6 +204,7 @@ export function diagnostics(): Diagnostics {
   return {
     generatedAt: 0,
     intervalSeconds: 120,
+    faults: [],
     refreshing: false,
     providers: PROVIDER_IDS.map(id => ({
       id,

@@ -9,10 +9,11 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 import { cleanEnvironment, type Environment } from '../core/environment.ts';
-import { ProviderError, systemErrorCode } from '../core/errors.ts';
+import { isStartRefused, ProviderError, systemErrorCode } from '../core/errors.ts';
 import { isFile, isObject, type JsonObject } from '../core/files.ts';
 import { hasControlChars } from '../core/model.ts';
 import { APP_SLUG, DURATION_MS, type ProviderId } from '../shared/catalog.ts';
+import type { ProviderErrorCode } from '../shared/types.ts';
 import { getQuotaAgent } from './tls-trust.ts';
 import type { RefreshContext } from './types.ts';
 
@@ -319,25 +320,90 @@ async function macPathHelperDirectories(): Promise<string[]> {
   return [...contents.flatMap(text => text.split(/\r?\n/).filter(line => line.startsWith('/'))), HOMEBREW_BIN];
 }
 
+const binaryOverride = (name: string, env: Environment): string | undefined =>
+  env[`VIBE_${name.toUpperCase().replaceAll('-', '_')}_BINARY`];
+const pathDirectories = (env: Environment): string[] => (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
+
 // `VIBE_<NAME>_BINARY` overrides the search; otherwise known install locations, then PATH.
 export async function findBinary(
   name: string,
   { env = process.env, home = os.homedir(), platform = process.platform }: BinaryLocation = {}
 ): Promise<string> {
-  const override = env[`VIBE_${name.toUpperCase().replaceAll('-', '_')}_BINARY`];
+  const override = binaryOverride(name, env);
   if (override) {
     if (!isValidBinary(override, platform)) throw new ProviderError('invalid_binary');
     if (await isFile(override)) return override;
     throw new ProviderError('binary_missing');
   }
   const filename = platform === 'win32' ? `${name}.exe` : name;
-  const directories = (env.PATH ?? env.Path ?? '').split(path.delimiter).filter(Boolean);
+  const directories = pathDirectories(env);
   if (platform === 'darwin') directories.push(...(await macPathHelperDirectories()));
   const candidates = [...knownInstallLocations(name, env, home, platform), ...directories.map(directory => path.join(directory, filename))];
   for (const candidate of candidates) {
     if (isValidBinary(candidate, platform) && (await isFile(candidate))) return candidate;
   }
   throw new ProviderError('binary_missing');
+}
+
+// A tool's program, and the arguments that come before the tool's own: the script, when the
+// program is node.exe running a Node package.
+export interface ToolCommand {
+  binary: string;
+  args: readonly string[];
+}
+
+// Where npm installs global packages on Windows unless the user moved it (it is on PATH then).
+const npmGlobalDirectory = (env: Environment, home: string): string =>
+  path.join(env.APPDATA ?? path.join(home, 'AppData', 'Roaming'), 'npm');
+
+// An npm or pnpm shim names what it runs relative to its own folder: "%dp0%\…" (npm) or
+// "%~dp0\…" (pnpm). The node.exe it may run that with is not it.
+const SHIM_TARGET = /"%~?dp0%?\\([^"%]+)"/g;
+const SHIM_MAX_BYTES = 16 * 1024;
+const NODE_SCRIPT = /\.[cm]?js$/i;
+const NODE_EXE = 'node.exe';
+
+// What a Windows package-manager shim (`<name>.cmd`) runs, to be started directly: a batch
+// file never is (see isValidBinary). A script runs on the node.exe beside the shim, else on PATH.
+async function shimCommand(shim: string, location: BinaryLocation): Promise<ToolCommand | null> {
+  const stat = await fsp.stat(shim).catch(() => null);
+  if (!stat?.isFile() || stat.size > SHIM_MAX_BYTES) return null;
+  const text = await fsp.readFile(shim, 'utf8').catch(() => '');
+  const directory = path.dirname(shim);
+  const target = [...text.matchAll(SHIM_TARGET)]
+    .map(match => path.join(directory, ...(match[1] ?? '').split('\\')))
+    .findLast(file => path.basename(file).toLowerCase() !== NODE_EXE);
+  if (!target || !isValidBinary(target, 'win32') || !(await isFile(target))) return null;
+  if (/\.exe$/i.test(target)) return { binary: target, args: [] };
+  if (!NODE_SCRIPT.test(target)) return null;
+  const besideShim = path.join(directory, NODE_EXE);
+  const node = (await isFile(besideShim)) ? besideShim : await findBinary('node', location).catch(() => null);
+  return node ? { binary: node, args: [target] } : null;
+}
+
+// The tool's executable, or on Windows what its npm shim runs: Claude Code and Codex installed
+// with npm put only `.cmd` shims on PATH.
+export async function findCommand(name: string, location: BinaryLocation = {}): Promise<ToolCommand> {
+  const { env = process.env, home = os.homedir(), platform = process.platform } = location;
+  try {
+    return { binary: await findBinary(name, location), args: [] };
+  } catch (error) {
+    const missing = error instanceof ProviderError && error.code === 'binary_missing';
+    if (!missing || platform !== 'win32' || binaryOverride(name, env)) throw error;
+    for (const directory of [npmGlobalDirectory(env, home), ...pathDirectories(env)]) {
+      const command = await shimCommand(path.join(directory, `${name}.cmd`), location);
+      if (command) return command;
+    }
+    throw error;
+  }
+}
+
+// A program that could not be started: refused by the system (a security policy or an antivirus
+// program), not there, or `otherwise`.
+export function processStartError(error: unknown, otherwise: ProviderErrorCode = 'process_failed'): ProviderError {
+  if (isStartRefused(error)) return new ProviderError('process_blocked', { cause: error });
+  if (systemErrorCode(error) === 'ENOENT') return new ProviderError('binary_missing', { cause: error });
+  return new ProviderError(otherwise, { cause: error });
 }
 
 export interface RunOptions extends Partial<RefreshContext> {
@@ -348,6 +414,10 @@ export interface RunOptions extends Partial<RefreshContext> {
 }
 
 export type RunProcess = (binary: string, args: readonly string[], options?: RunOptions) => Promise<string>;
+
+// spawn throws some failures (Windows' refusal to start a program among them) instead of emitting them.
+const spawnPiped = (binary: string, args: readonly string[], env: Record<string, string>) =>
+  spawn(binary, args, { env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
 
 // Runs a binary without a shell and resolves with its stdout. The environment has no
 // credential overrides unless `env` is given.
@@ -367,12 +437,13 @@ export const runProcess: RunProcess = (
       reject(error instanceof Error ? error : new ProviderError('request_timeout'));
       return;
     }
-    const child = spawn(binary, args, {
-      env: env ?? cleanEnvironment({}, platform),
-      shell: false,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore']
-    });
+    let child: ReturnType<typeof spawnPiped>;
+    try {
+      child = spawnPiped(binary, args, env ?? cleanEnvironment({}, platform));
+    } catch (error) {
+      reject(processStartError(error));
+      return;
+    }
     let output = '';
     let bytes = 0;
     let failure: ProviderError | null = null;
@@ -394,10 +465,10 @@ export const runProcess: RunProcess = (
         child.kill('SIGKILL');
       } else output += chunk.toString();
     });
-    child.on('error', () => {
+    child.on('error', error => {
       clearTimeout(timer);
       context.signal?.removeEventListener('abort', abort);
-      reject(new ProviderError('process_failed'));
+      reject(processStartError(error));
     });
     child.on('close', code => {
       clearTimeout(timer);

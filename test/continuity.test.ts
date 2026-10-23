@@ -901,9 +901,11 @@ test('a stranded stop keeps a safe explicit retry when quota becomes available',
 test('simultaneous explicit retries launch once and store only safe failure codes', async t => {
   const dataDir = await tempDir(t, 'vibe-retry-race-');
   let attempts = 0;
+  const faults: unknown[] = [];
   const continuity = await createContinuity({
     homeDir: '/home',
     dataDir,
+    onFault: error => faults.push(error),
     launch: { dataDir },
     clock: () => NOW,
     findStopped: a => Promise.resolve(a.id === claudeA.id ? [session()] : []),
@@ -919,10 +921,31 @@ test('simultaneous explicit retries launch once and store only safe failure code
   assert.ok(record);
   assert.equal(record.errorCode, 'launch_failed');
   assert.equal((await fs.readFile(path.join(dataDir, 'continuity.json'), 'utf8')).includes('private transcript'), false);
+  assert.ok(faults.length > 0, 'the unforeseen failure is handed on for the diagnostics');
   const result = await Promise.allSettled([continuity.retry(record.id, current), continuity.retry(record.id, current)]);
   assert.equal(result.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(attempts, 2);
   assert.equal(continuity.transitions()[0]?.status, 'dispatched');
+});
+
+test('a failure keeps what its message names, in the notice, the record and after a restart', async t => {
+  const dataDir = await tempDir(t, 'vibe-failure-params-');
+  const options = {
+    homeDir: '/home',
+    dataDir,
+    launch: { dataDir },
+    clock: () => NOW,
+    findStopped: (a: Account) => Promise.resolve(a.id === claudeA.id ? [session()] : []),
+    start: (): Promise<ContinueResult> => Promise.reject(new AppError('start_blocked', { program: 'powershell.exe' }))
+  };
+  const continuity = await createContinuity(options);
+  const notices = await continuity.observe(snapshot([reading(claudeA, 0), reading(claudeB, 80)], 'accounts'), { low: [] });
+  const failed = notices.find(notice => notice.kind === 'failed');
+  assert.deepEqual(failed && [failed.code, failed.params], ['start_blocked', { program: 'powershell.exe' }]);
+  const record = continuity.transitions()[0];
+  assert.deepEqual(record && [record.errorCode, record.errorParams], ['start_blocked', { program: 'powershell.exe' }]);
+  const reloaded = await createContinuity(options);
+  assert.deepEqual(reloaded.transitions()[0]?.errorParams, { program: 'powershell.exe' });
 });
 
 test('a return offer revalidates recovered account quota, and a dismissed one stays dismissed', async t => {

@@ -96,7 +96,7 @@ test('run uses only an account with verified quota unless one is named', async t
   const binary = await fakeCodex(t);
   assert.match((await cli(t, ['run', 'nope'])).err, /Unknown tool/);
   const unverified = await cli(t, ['run', 'codex', '--dry-run'], [adapter('codex', { windows: [{ id: 'w', remainingPercent: 2 }] })]);
-  assert.deepEqual([unverified.code, unverified.err], [1, 'No account with verified quota. Choose one with --account.\n']);
+  assert.deepEqual([unverified.code, unverified.err], [1, 'No account of this tool has verified quota. Choose one with --account.\n']);
 
   const dryRun = await cli(t, ['run', 'codex', '--dry-run', '--model', 'gpt-6-luna']);
   assert.equal(dryRun.code, 0);

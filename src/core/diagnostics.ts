@@ -3,12 +3,13 @@
 // Accounts appear only as ordinals; nothing here carries a label, address, path or token.
 import os from 'node:os';
 import path from 'node:path';
-import { findBinary, TOOL_INSTALLS, windowsAppPath, type DesktopApp } from '../providers/common.ts';
+import { findCommand, TOOL_INSTALLS, windowsAppPath, type DesktopApp } from '../providers/common.ts';
 import { APP_NAME, DURATION_MS, PROVIDER_IDS, providerById, type ProviderId } from '../shared/catalog.ts';
 import type {
   AccountDiagnostics,
   AccountStatus,
   Diagnostics,
+  Fault,
   MeasuredAccount,
   ProviderDiagnostics,
   ProviderStatus,
@@ -28,6 +29,7 @@ const STALE_INTERVALS = 3;
 export const REMEDY_TEXT: Readonly<Record<Remedy, string>> = {
   remedyInstallTool: 'Install the tool, then refresh.',
   remedyInstallCli: "Install the tool's command-line interface, or check where it is installed.",
+  remedyAllowProgram: 'Allow Vibe Usage to start the tool in the antivirus program or security policy, then refresh.',
   remedySignIn: 'Sign in again with the tool, then refresh.',
   remedyOpenApp: 'Open the app, then refresh.',
   remedyUnlockKeychain: 'Unlock the Keychain and allow access when asked, then refresh.',
@@ -70,6 +72,7 @@ const REMEDIES: Readonly<Record<Code, Remedy | null>> = {
   binary_missing: 'remedyInstallCli',
   invalid_binary: 'remedyInstallCli',
   process_failed: 'remedyRetryLater',
+  process_blocked: 'remedyAllowProgram',
   process_timeout: 'remedyRetryLater',
   rpc_timeout: 'remedyRetryLater',
   server_closed: 'remedyRetryLater',
@@ -130,7 +133,12 @@ async function probeSafely(probe: ToolProbe, id: ProviderId): Promise<boolean | 
   }
 }
 
-export async function collectDiagnostics(snapshot: Snapshot, probe: ToolProbe, now: number): Promise<Diagnostics> {
+export async function collectDiagnostics(
+  snapshot: Snapshot,
+  probe: ToolProbe,
+  now: number,
+  faults: readonly Fault[] = []
+): Promise<Diagnostics> {
   const { settings } = snapshot;
   const staleAfterMs = STALE_INTERVALS * settings.intervalSeconds * 1000;
   const installed = await Promise.all(PROVIDER_IDS.map(id => probeSafely(probe, id)));
@@ -172,7 +180,7 @@ export async function collectDiagnostics(snapshot: Snapshot, probe: ToolProbe, n
       accounts: rows
     };
   });
-  return { generatedAt: now, intervalSeconds: settings.intervalSeconds, refreshing: snapshot.refreshing, providers };
+  return { generatedAt: now, intervalSeconds: settings.intervalSeconds, refreshing: snapshot.refreshing, providers, faults: [...faults] };
 }
 
 export interface ToolProbeOptions {
@@ -198,7 +206,7 @@ export function createToolProbe({
     return null;
   }
   async function hasBinary(name: string): Promise<boolean> {
-    return findBinary(name, { env, home: homeDir, platform }).then(
+    return findCommand(name, { env, home: homeDir, platform }).then(
       () => true,
       () => false
     );
@@ -300,5 +308,12 @@ export function renderDiagnosticsReport(diagnostics: Diagnostics, context: Repor
         .map(row => `| ${row} |`)
     );
   }
+  if (diagnostics.faults.length)
+    lines.push(
+      '',
+      '### Unexpected errors',
+      '',
+      ...diagnostics.faults.map(fault => `- ${new Date(fault.at).toISOString()} · ${fault.action} · ${fault.error}`)
+    );
   return `${redactReport(lines.join('\n'), context.homeDir)}\n`;
 }

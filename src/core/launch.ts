@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { findBinary, TOOL_INSTALLS, unpackedPath, windowsAppPath, windowsPowerShell } from '../providers/common.ts';
+import { findCommand, TOOL_INSTALLS, unpackedPath, windowsAppPath, windowsPowerShell, type ToolCommand } from '../providers/common.ts';
 import { CLAUDE_FILES, DEFAULT_ACCOUNT_ID as CLAUDE_DEFAULT_ACCOUNT_ID } from '../providers/claude.ts';
 import { findCursorAgent } from '../providers/cursor.ts';
 import {
@@ -15,6 +15,7 @@ import {
   MODEL_ID_PATTERN,
   PROFILE_DIRS,
   PROFILE_ENV,
+  providerById,
   type ClaudeEffortLevel,
   type ClaudePermissionMode,
   type ProviderId
@@ -23,7 +24,7 @@ import type { LaunchMode } from '../shared/ipc.ts';
 import type { Account, Snapshot } from '../shared/types.ts';
 import { prepareClaudeProfile } from './claude-profile.ts';
 import { applyEnvironment, environmentChanges, type Environment, type EnvironmentChanges, type EnvironmentRequest } from './environment.ts';
-import { AppError } from './errors.ts';
+import { AppError, isStartRefused, ProviderError, reportableCode } from './errors.ts';
 import { claudeLaunchWarnings, type LaunchWarning } from './selection.ts';
 import { isDirectory, isFile, readJson, writeFileAtomic } from './files.ts';
 import { hasControlChars } from './model.ts';
@@ -47,14 +48,32 @@ export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function waitForSpawn(child: SpawnedProcess): Promise<void> {
+// A program's file name, the part of its path the user knows it by.
+const programName = (file: string): string => file.split(/[\\/]/).at(-1) || file;
+
+// Why a program could not be started, naming it: refused by the system, or failed with its code.
+function startError(command: string, error: unknown): AppError {
+  const program = programName(command);
+  if (isStartRefused(error)) return new AppError('start_blocked', { program }, { cause: error });
+  return new AppError('start_failed', { program, code: reportableCode(error) ?? 'UNKNOWN' }, { cause: error });
+}
+
+// Starts a program the launch does not wait on. spawn throws some failures (Windows' refusal
+// among them) and reports others as an event; both end as the same coded error.
+function startProcess(spawnProcess: SpawnProcess, command: string, args: readonly string[], options: SpawnOptions): Promise<void> {
+  let child: SpawnedProcess;
+  try {
+    child = spawnProcess(command, args, options);
+  } catch (error) {
+    return Promise.reject(startError(command, error));
+  }
   return new Promise((resolve, reject) => {
     child.once('spawn', () => {
       child.unref();
       resolve();
     });
     child.once('error', error => {
-      reject(new AppError('launch_failed', {}, { cause: error }));
+      reject(startError(command, error));
     });
   });
 }
@@ -120,7 +139,7 @@ export async function openInTerminal({
   const changes = environmentChanges(env);
   if (platform === 'darwin') {
     const script = await writeMacLauncher({ cwd, command: [binary, ...args], changes, title, dataDir });
-    return waitForSpawn(spawnProcess(MAC_OPEN, ['-a', 'Terminal', script], DETACHED));
+    return startProcess(spawnProcess, MAC_OPEN, ['-a', 'Terminal', script], DETACHED);
   }
   if (platform === 'win32') {
     // A detached process gets no console, and PowerShell exits without one; the hidden
@@ -142,14 +161,12 @@ export async function openInTerminal({
       ...(handoff ? ['-Handoff', handoff] : []),
       '-NewWindow'
     ];
-    return waitForSpawn(
-      spawnProcess(windowsPowerShell(), psArgs, {
-        shell: false,
-        stdio: 'ignore',
-        windowsHide: true,
-        env: applyEnvironment(changes, process.env, platform)
-      })
-    );
+    return startProcess(spawnProcess, windowsPowerShell(), psArgs, {
+      shell: false,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: applyEnvironment(changes, process.env, platform)
+    });
   }
   throw new AppError('unsupported_platform');
 }
@@ -175,11 +192,11 @@ export async function openDesktopApp({
   const { app } = TOOL_INSTALLS[providerId];
   if (!app) throw new AppError('unsupported_platform');
   const project = cwd ? [cwd] : [];
-  if (platform === 'darwin') return waitForSpawn(spawnProcess(MAC_OPEN, ['-a', app.mac, ...project], DETACHED));
+  if (platform === 'darwin') return startProcess(spawnProcess, MAC_OPEN, ['-a', app.mac, ...project], DETACHED);
   if (platform === 'win32') {
     const executable = windowsAppPath(app, env, home);
     if (!(await isFile(executable))) throw new AppError('app_not_found', { app: app.mac });
-    return waitForSpawn(spawnProcess(executable, project, DETACHED));
+    return startProcess(spawnProcess, executable, project, DETACHED);
   }
   throw new AppError('unsupported_platform');
 }
@@ -219,15 +236,27 @@ const SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,127}$/;
 const optional = (flag: string, value: string | null | undefined): string[] => (value ? [flag, value] : []);
 const trailing = (value: string | undefined): string[] => (value ? [value] : []);
 
+// The tool's command-line program. One that is not installed is named, with the command, so the
+// user knows what to install.
+async function toolCommand(providerId: ProviderId, name: string): Promise<ToolCommand> {
+  return findCommand(name).catch((error: unknown) => {
+    if (error instanceof ProviderError && error.code === 'binary_missing')
+      throw new AppError('cli_not_found', { tool: providerById(providerId).name, command: name });
+    throw error;
+  });
+}
+
 // How each provider's CLI starts with an optional model and initial prompt; null when the
 // provider only exists as a desktop app.
 const LAUNCHERS: Record<ProviderId, (options: LaunchOptions) => Promise<TerminalCommand | null>> = {
   async claude({ account, model, prompt, resume, permissionMode, effort }) {
     if (!account?.configDir) throw new AppError('account_not_found');
     const env = profileEnvironment(account);
+    const command = await toolCommand('claude', 'claude');
     return {
-      binary: await findBinary('claude'),
+      binary: command.binary,
       args: [
+        ...command.args,
         ...optional('--resume', resume),
         ...optional('--model', model),
         ...optional('--permission-mode', permissionMode),
@@ -238,9 +267,10 @@ const LAUNCHERS: Record<ProviderId, (options: LaunchOptions) => Promise<Terminal
     };
   },
   async codex({ account, model, prompt }) {
+    const command = await toolCommand('codex', 'codex');
     return {
-      binary: await findBinary('codex'),
-      args: [...optional('-m', model), ...trailing(prompt)],
+      binary: command.binary,
+      args: [...command.args, ...optional('-m', model), ...trailing(prompt)],
       env: account ? profileEnvironment(account) : {}
     };
   },
@@ -346,7 +376,19 @@ export interface SignIn {
   spawnProcess?: SpawnProcess | undefined;
 }
 
-export async function openSignIn({ providerId, account, dataDir, cwd, platform = process.platform, spawnProcess }: SignIn): Promise<void> {
+// A sign-in the system would not let start can still be done in the user's own terminal, so the
+// error says that, and which program was refused.
+export async function openSignIn(signIn: SignIn): Promise<void> {
+  try {
+    await startSignIn(signIn);
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'start_blocked')
+      throw new AppError('sign_in_blocked', { ...error.params, tool: providerById(signIn.providerId).name }, { cause: error });
+    throw error;
+  }
+}
+
+async function startSignIn({ providerId, account, dataDir, cwd, platform = process.platform, spawnProcess }: SignIn): Promise<void> {
   // Cursor's quota is read from the app's sign-in, which signing in to the app updates. A Windows
   // machine that has only the Agent CLI signs in through it (its sign-in is read as well).
   if (providerId === 'cursor' && platform === 'win32') {
@@ -366,10 +408,11 @@ export async function openSignIn({ providerId, account, dataDir, cwd, platform =
   const [binaryName] = TOOL_INSTALLS[providerId].binaries;
   if (!args || !binaryName) return openDesktopApp({ providerId, platform, spawnProcess });
   const env = account ? profileEnvironment(account) : {};
+  const command = await toolCommand(providerId, binaryName);
   return openInTerminal({
     cwd,
-    binary: await findBinary(binaryName),
-    args,
+    binary: command.binary,
+    args: [...command.args, ...args],
     env,
     dataDir,
     platform,

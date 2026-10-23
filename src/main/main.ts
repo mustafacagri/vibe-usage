@@ -25,6 +25,7 @@ import electronUpdater from 'electron-updater';
 import { createContinuity, type Notice } from '../core/continuity.ts';
 import { createToolProbe } from '../core/diagnostics.ts';
 import { AppError } from '../core/errors.ts';
+import { createFaultLog } from '../core/faults.ts';
 import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip, type QuotaAlert } from '../core/glance.ts';
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
@@ -318,11 +319,16 @@ async function start(): Promise<void> {
   });
   const history = await createHistory({ dataDir });
   const tokenUsage = await createTokenUsage({ dataDir, homeDir });
+  const faults = createFaultLog();
   const continuity = await createContinuity({
     homeDir,
     dataDir,
     launch: { dataDir, homeDir, platform: process.platform },
-    getCurrentSnapshot: () => service.syncSettings()
+    getCurrentSnapshot: () => service.syncSettings(),
+    onFault: error => {
+      faults.record('continuity', error);
+      console.error('continuity', error);
+    }
   });
   quitContinuity = () => {
     continuity.quit();
@@ -557,6 +563,7 @@ async function start(): Promise<void> {
 
   const handlers = createHandlers({
     service,
+    faults,
     dataDir,
     homeDir,
     platform: process.platform,
@@ -651,10 +658,16 @@ async function start(): Promise<void> {
   });
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(`${IPC_PREFIX}${channel}`, (event, ...args: unknown[]) =>
-      envelope(() => {
-        assertSender(event, EXPECTED_URL);
-        return handler(...args);
-      })
+      envelope(
+        () => {
+          assertSender(event, EXPECTED_URL);
+          return handler(...args);
+        },
+        error => {
+          faults.record(channel, error);
+          console.error(channel, error);
+        }
+      )
     );
   }
 

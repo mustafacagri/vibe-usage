@@ -31,7 +31,12 @@ export type AppErrorCode =
   | 'app_not_found'
   | 'sender_rejected'
   | 'no_verified_quota'
+  | 'no_verified_account'
   | 'no_cli'
+  | 'cli_not_found'
+  | 'start_blocked'
+  | 'start_failed'
+  | 'sign_in_blocked'
   | 'unknown_command'
   | 'suggestion_expired'
   | 'settings_locked'
@@ -59,6 +64,7 @@ export type ProviderErrorCode =
   | 'binary_missing'
   | 'invalid_binary'
   | 'process_failed'
+  | 'process_blocked'
   | 'process_timeout'
   | 'rpc_error'
   | 'rpc_timeout'
@@ -74,10 +80,12 @@ export type ProviderErrorCode =
 
 export type ErrorCode = AppErrorCode | ProviderErrorCode;
 
+export type ErrorParams = Readonly<Record<string, string>>;
+
 // An error as it crosses the IPC boundary.
 export interface ErrorPayload {
   code: ErrorCode;
-  params: Readonly<Record<string, string>>;
+  params: ErrorParams;
 }
 
 // Money in USD cents.
@@ -231,6 +239,17 @@ export interface MeasuredAccount extends Account {
   messageCode?: StatusCode;
 }
 
+// Why a tool did not take new work: it has no account, its reading failed (the status says
+// why), its quota is not verified (no reading of the last minutes, or none that covers the
+// model), or a limit is down to the floor.
+export type PassOverReason =
+  { kind: 'no_account' } | { kind: 'status'; code: StatusCode } | { kind: 'unverified' } | { kind: 'low'; percent: number };
+
+export interface PassedOver {
+  providerId: ProviderId;
+  reason: PassOverReason;
+}
+
 export interface ProviderState {
   id: ProviderId;
   status: ProviderStatus;
@@ -265,6 +284,8 @@ export interface TransitionRecord {
   target: { providerId: ProviderId; accountId: string | null; sessionId: string | null };
   status: (typeof TRANSITION_STATUSES)[number];
   errorCode: ErrorCode | null;
+  // What the error's message names (a tool, a program, a system code).
+  errorParams?: ErrorParams;
   // A failed move the app can try again: its offer is still there. One that failed after it
   // went off (never seen running) has none.
   retryable?: boolean;
@@ -340,6 +361,7 @@ export interface Snapshot {
 export type Remedy =
   | 'remedyInstallTool'
   | 'remedyInstallCli'
+  | 'remedyAllowProgram'
   | 'remedySignIn'
   | 'remedyOpenApp'
   | 'remedyUnlockKeychain'
@@ -379,9 +401,19 @@ export interface ProviderDiagnostics {
   accounts: AccountDiagnostics[];
 }
 
+// A failure the app did not foresee: the action it broke (an IPC call), when, and the error's
+// type and system codes ("Error EPERM spawn"), never its message.
+export interface Fault {
+  at: number;
+  action: string;
+  error: string;
+}
+
 export interface Diagnostics {
   generatedAt: number;
   intervalSeconds: number;
   refreshing: boolean;
   providers: ProviderDiagnostics[];
+  // The latest unforeseen failures, newest first.
+  faults: Fault[];
 }

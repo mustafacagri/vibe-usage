@@ -1157,6 +1157,8 @@ dialog header h2 {
   box-shadow: 0 10px 35px rgba(0, 0, 0, 0.5);
   align-items: center;
   gap: 8px;
+  /* A click closes it. */
+  cursor: pointer;
 }
 
 #toast:popover-open {
@@ -1315,6 +1317,25 @@ dialog header h2 {
 .smart-value {
   color: var(--text);
   text-align: right;
+}
+
+/* Why each tool ahead in the order did not take the work */
+.smart-passed {
+  margin: 0;
+  padding: 8px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.smart-passed strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 [hidden] {

@@ -120,7 +120,7 @@ export function describeNotice(notice: Notice, context: FormatContext, accounts:
     case 'stranded':
       return { title, body: t('noticeStrandedBody') };
     case 'failed':
-      return { title, body: t(FAILED_BODIES[notice.attempt ?? 'move'], { reason: describeCode(notice.code, t) }) };
+      return { title, body: t(FAILED_BODIES[notice.attempt ?? 'move'], { reason: describeCode(notice.code, t, notice.params) }) };
   }
 }
 

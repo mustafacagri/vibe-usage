@@ -10,14 +10,16 @@ import type { QuotaWindow } from '../shared/types.ts';
 import { accountId, APP_NAME, APP_SLUG, DEFAULT_ACCOUNT_KEY, durationLabel, PROFILE_ENV } from '../shared/catalog.ts';
 import {
   APP_VERSION,
-  findBinary,
+  findCommand,
   isExpired,
   jwtClaims,
   MAX_RESPONSE_BYTES,
+  processStartError,
   readCredentialFile,
   remainingTimeout,
   type BinaryLocation,
-  type Clock
+  type Clock,
+  type ToolCommand
 } from './common.ts';
 import { defaultProfileDir, isRegularFile, profileAccountId, profileFolders, profileLabel } from './profiles.ts';
 import {
@@ -82,14 +84,19 @@ type ServerProcess = Pick<ChildProcess, 'on' | 'once' | 'kill' | 'exitCode' | 's
 export type SpawnAppServer = (binary: string, args: readonly string[], options: SpawnOptions) => ServerProcess;
 const spawnAppServer: SpawnAppServer = (binary, args, options) => spawn(binary, args, { ...options, stdio: ['pipe', 'pipe', 'ignore'] });
 
-function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAppServer, context?: RefreshContext): RpcServer {
+function startAppServer(command: ToolCommand, configDir: string, spawnProcess: SpawnAppServer, context?: RefreshContext): RpcServer {
   remainingTimeout(RPC_TIMEOUT_MS, context);
-  const child = spawnProcess(binary, ['app-server', '--listen', 'stdio://'], {
-    shell: false,
-    windowsHide: true,
-    env: cleanEnvironment({ [PROFILE_ENV.codex]: configDir }),
-    stdio: ['pipe', 'pipe', 'ignore']
-  });
+  let child: ServerProcess;
+  try {
+    child = spawnProcess(command.binary, [...command.args, 'app-server', '--listen', 'stdio://'], {
+      shell: false,
+      windowsHide: true,
+      env: cleanEnvironment({ [PROFILE_ENV.codex]: configDir }),
+      stdio: ['pipe', 'pipe', 'ignore']
+    });
+  } catch (error) {
+    throw processStartError(error, 'server_closed');
+  }
   const pending = new Map<number, Pending>();
   let buffer = '';
   let closed = false;
@@ -116,8 +123,8 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
     else item.resolve(packet.result);
   }
 
-  child.on('error', () => {
-    rejectAll();
+  child.on('error', error => {
+    rejectAll(processStartError(error, 'server_closed'));
   });
   child.on('close', () => {
     rejectAll();
@@ -200,12 +207,12 @@ function startAppServer(binary: string, configDir: string, spawnProcess: SpawnAp
 }
 
 async function probeAccount(
-  binary: string,
+  command: ToolCommand,
   configDir: string,
   spawnProcess: SpawnAppServer,
   context?: RefreshContext
 ): Promise<FetchResult> {
-  const server = startAppServer(binary, configDir, spawnProcess, context);
+  const server = startAppServer(command, configDir, spawnProcess, context);
   try {
     await server.request('initialize', {
       // The app server takes a client name as an identifier with underscores.
@@ -296,7 +303,7 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
     async fetch(account, context) {
       const configDir = account.configDir ?? defaultConfigDir;
       const signedInAs = await readLocalSignIn(configDir, options.clock, context);
-      const result = await probeAccount(await findBinary('codex', options), configDir, options.spawnProcess ?? spawnAppServer, context);
+      const result = await probeAccount(await findCommand('codex', options), configDir, options.spawnProcess ?? spawnAppServer, context);
       return signedInAs ? { ...result, signedInAs } : result;
     }
   };
