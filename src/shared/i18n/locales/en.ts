@@ -241,7 +241,7 @@ export const en = {
   turnsCount_one: '{n} turn',
   turnsCount_other: '{n} turns',
   reasonPrimary: 'Highest-priority tool with verified quota.',
-  reasonFallback: 'Tools earlier in your order cannot take new work right now:',
+  reasonFallback: 'Higher-priority tools cannot take new work right now:',
   reasonUnverified: 'No tool has verified quota right now, so none can be started:',
   quotaUnverified: 'Not verified',
   passUnverified: 'Quota not verified.',

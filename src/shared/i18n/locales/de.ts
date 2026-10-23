@@ -227,7 +227,7 @@ export const de: Messages = {
   status_invalid_binary: 'Der eingestellte CLI-Pfad ist kein gültiges Programm.',
   status_process_failed: 'Die lokale CLI wurde mit einem Fehler beendet.',
   status_process_blocked:
-    'Das System hat den Start des Programms des Tools nicht zugelassen: Eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es.',
+    'Das System hat das Programm des Tools nicht starten lassen: Eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es.',
   status_process_timeout: 'Die lokale CLI hat nicht rechtzeitig geantwortet.',
   status_rpc_error: 'Der Codex-App-Server hat mit einem Fehler geantwortet.',
   status_rpc_timeout: 'Der Codex-App-Server hat nicht rechtzeitig geantwortet.',
@@ -241,7 +241,7 @@ export const de: Messages = {
   turnsCount_one: '{n} Runde',
   turnsCount_other: '{n} Runden',
   reasonPrimary: 'Tool mit höchster Priorität und geprüftem Kontingent.',
-  reasonFallback: 'Frühere Tools in Ihrer Reihenfolge können gerade keine neue Arbeit übernehmen:',
+  reasonFallback: 'Tools mit höherer Priorität können gerade keine neue Arbeit übernehmen:',
   reasonUnverified: 'Gerade hat kein Tool ein geprüftes Kontingent, daher kann keines gestartet werden:',
   quotaUnverified: 'Nicht geprüft',
   passUnverified: 'Kontingent nicht geprüft.',
@@ -263,7 +263,7 @@ export const de: Messages = {
   warnQuotaUnverified: 'Nicht alle relevanten Limits dieses Kontos konnten geprüft werden; die Auswahl garantiert kein Kontingent.',
   warnQuotaExhausted: 'Ein relevantes Limit dieses Kontos ist aufgebraucht; Claude Code kann Anfragen stoppen.',
   chooseProjectFolder: 'Projektordner wählen',
-  error_unexpected: 'Etwas Unerwartetes ist schiefgelaufen. Versuchen Sie es erneut.',
+  error_unexpected: 'Ein unerwarteter Fehler ist aufgetreten. Versuchen Sie es erneut.',
   unexpectedDetails: 'Passiert es wieder, zeigt der Diagnosebericht in den Einstellungen, was fehlgeschlagen ist.',
   error_account_not_found: 'Konto nicht gefunden.',
   error_invalid_provider: 'Unbekanntes Tool.',
@@ -293,10 +293,10 @@ export const de: Messages = {
     'Das Gespräch dieser Sitzung seit ihrem letzten Wechsel ist nicht gespeichert; sie wurde nicht verschoben, sonst ginge es verloren. Sie läuft dort weiter.',
   error_launch_failed: 'Das Tool konnte nicht gestartet werden.',
   error_start_blocked:
-    'Das System hat den Start von {program} nicht zugelassen: Eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es. Erlauben Sie Vibe Usage, es zu starten, und versuchen Sie es erneut.',
+    'Das System hat {program} nicht starten lassen: Eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es. Erlauben Sie Vibe Usage, es zu starten, und versuchen Sie es erneut.',
   error_start_failed: '{program} konnte nicht gestartet werden (Systemfehler {code}).',
   error_sign_in_blocked:
-    'Die Anmeldung konnte nicht geöffnet werden: Das System hat den Start von {program} nicht zugelassen (eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es). Melden Sie sich stattdessen in Ihrem eigenen Terminal bei {tool} an und aktualisieren Sie dann.',
+    'Die Anmeldung konnte nicht geöffnet werden: Das System hat {program} nicht starten lassen (eine Sicherheitsrichtlinie oder ein Antivirenprogramm blockiert es). Melden Sie sich stattdessen in Ihrem eigenen Terminal bei {tool} an und aktualisieren Sie dann.',
   error_app_not_found: '{app} ist nicht am Standardort installiert.',
   error_sender_rejected: 'Anfrage abgelehnt.',
   error_no_verified_quota: 'Gerade hat kein Konto und kein Tool ein geprüftes Kontingent.',
@@ -357,7 +357,7 @@ export const de: Messages = {
   remedyInstallTool: 'Werkzeug installieren, dann aktualisieren.',
   remedyInstallCli: 'Das Kommandozeilenwerkzeug installieren oder seinen Installationsort prüfen.',
   remedyAllowProgram:
-    'Erlauben Sie Vibe Usage im Antivirenprogramm oder in der Sicherheitsrichtlinie, das Tool zu starten, und aktualisieren Sie dann.',
+    'Im Antivirenprogramm oder in der Sicherheitsrichtlinie zulassen, dass Vibe Usage das Werkzeug startet, dann aktualisieren.',
   remedySignIn: 'Im Werkzeug erneut anmelden, dann aktualisieren.',
   remedyOpenApp: 'App öffnen, dann aktualisieren.',
   remedyUnlockKeychain: 'Schlüsselbund entsperren, Zugriff erlauben, dann aktualisieren.',
