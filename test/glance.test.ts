@@ -119,6 +119,11 @@ test('a session cut off when the computer went down is offered, reported reopene
     /^A session cut off when the computer went down could not be reopened: /
   );
   assert.match(describeNotice({ kind: 'failed', from, code: 'launch_failed' }, context, [main]).body, /^Ran out/);
+  assert.match(
+    describeNotice({ kind: 'failed', from, code: 'start_blocked', params: { program: 'powershell.exe' } }, context, [main]).body,
+    /The system did not let powershell\.exe start/,
+    'the notice names what failed'
+  );
 });
 
 // A return that fails is reported from the home account, which has quota again: "ran out, but the

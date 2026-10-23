@@ -264,6 +264,7 @@ test('the report formats ages and statuses and rejects malformed context values'
     generatedAt: NOW,
     intervalSeconds: 300,
     refreshing: true,
+    faults: [{ at: NOW, action: 'signIn', error: 'Error EPERM spawn' }],
     providers: [
       {
         id: 'cursor',
@@ -313,6 +314,11 @@ test('the report formats ages and statuses and rejects malformed context values'
   assert.match(report, /- Last measured: under 1 min ago\n/);
   assert.match(report, /\| Account 1 \| yes \| yes \| stale \(rate_limited\) \| 3 d ago \| yes \| Wait a few minutes/);
   assert.match(report, /\| Account 2 \| yes \| no \| pending \| never \| no \| Wait for the current reading to finish\. \|/);
+  assert.match(
+    report,
+    /### Unexpected errors\n\n- \d{4}-\d\d-\d\dT[\d:.]+Z · signIn · Error EPERM spawn\n/,
+    'what failed, never its message'
+  );
 });
 
 test('the scrub pass removes addresses, absolute paths and the home folder anywhere', () => {

@@ -448,27 +448,35 @@ export async function listSessions(
   return listProviderSessions(providerId, cwd, sources);
 }
 
+// A new session has no earlier model to match, unlike a handover: each tool starts with the
+// model the user prefers for it, else with no model given, so it uses its own default (for
+// Cursor, Auto or the model last chosen in it), never one picked here from a tier.
+const preferredModels = (state: State): Partial<Record<ProviderId, string>> =>
+  Object.fromEntries(
+    PROVIDER_IDS.flatMap(id => {
+      const model = providerById(id).acceptsModel ? state.settings.preferredModels[id] : undefined;
+      return model ? [[id, model]] : [];
+    })
+  );
+
 // Before the folder is chosen nothing is known of the project; the launch itself applies the
 // project's preferences.
-function smartDecision(
-  state: State,
-  { dataDir, homeDir }: Pick<LaunchContext, 'dataDir' | 'homeDir'>,
-  projectDir?: string
-): { decision: ProviderChoice; models: Partial<Record<ProviderId, string>> } {
-  const models = mappedModels(state, null, { dataDir, homeDir });
+function smartDecision(state: State, projectDir?: string): { decision: ProviderChoice; models: Partial<Record<ProviderId, string>> } {
+  const models = preferredModels(state);
   const project = projectDir ? projectChoice(state, projectDir) : null;
   if (project?.tool && project.model) models[project.tool] = project.model;
   return { decision: selectProvider(state, { models, ...(project ? { prefer: project.prefer } : {}) }), models };
 }
 
-export function previewSmartLaunch(state: State, environment: Pick<LaunchContext, 'dataDir' | 'homeDir'>): SmartLaunchPreview {
-  const { decision, models } = smartDecision(state, environment);
+export function previewSmartLaunch(state: State): SmartLaunchPreview {
+  const { decision, models } = smartDecision(state);
   return {
     providerId: decision.providerId,
     verified: decision.verified,
     isFallback: decision.isFallback,
     headroomPercent: decision.headroomPercent,
-    model: decision.model ?? models[decision.providerId] ?? null
+    model: decision.model ?? models[decision.providerId] ?? null,
+    passedOver: decision.passedOver
   };
 }
 
@@ -498,7 +506,7 @@ export interface SmartLaunchResult {
 // Starts the provider that currently has verified quota, fresh (no handover brief). The
 // provider and its model are chosen together, from the quota at the time of the launch.
 export async function smartLaunch(projectDir: string, state: State, environment: LaunchContext): Promise<SmartLaunchResult> {
-  const { decision, models } = smartDecision(state, environment, projectDir);
+  const { decision, models } = smartDecision(state, projectDir);
   if (!decision.verified) throw new AppError('no_verified_quota');
   const model = decision.model ?? models[decision.providerId] ?? null;
   const { mode } = await launchTool({

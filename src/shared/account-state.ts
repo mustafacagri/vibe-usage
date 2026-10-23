@@ -23,6 +23,13 @@ const NOT_FOUND_STATUSES: ReadonlySet<ProviderStatus> = new Set(['binary_missing
 
 export const toolNotFound = (state: { status: ProviderStatus }): boolean => NOT_FOUND_STATUSES.has(state.status);
 
+// The tool is there, but the system does not let the app start it (a security policy or an
+// antivirus program): a sign-in could not start either; the diagnostics say what to allow.
+export const toolBlocked = (state: { status: ProviderStatus }): boolean => state.status === 'process_blocked';
+
+// Either way the next step is the diagnostics, not a sign-in.
+export const toolCannotStart = (state: { status: ProviderStatus }): boolean => toolNotFound(state) || toolBlocked(state);
+
 // States that pass by themselves: the next read is already on its way.
 const WAITING_STATUSES: ReadonlySet<AccountStatus> = new Set([
   'pending',
@@ -38,12 +45,12 @@ const WAITING_STATUSES: ReadonlySet<AccountStatus> = new Set([
 // Signing in helps when the source said so, or when an account was never read for a reason
 // that does not pass by itself.
 export const needsSignIn = (account: MeasuredAccount): boolean =>
-  !toolNotFound(account) && (SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status)));
+  !toolCannotStart(account) && (SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status)));
 
 export type KnownWindow = QuotaWindow & { remainingPercent: number };
 
 // Why a compact line shows no number.
-export type CompactNote = 'reading' | 'waiting' | 'signIn' | 'openApp' | 'notFound' | 'noLimits' | 'noData';
+export type CompactNote = 'reading' | 'waiting' | 'signIn' | 'openApp' | 'notFound' | 'blocked' | 'noLimits' | 'noData';
 
 export interface CompactLine {
   account: MeasuredAccount;
@@ -89,6 +96,7 @@ function noteFor(account: MeasuredAccount): CompactNote {
   if (account.status === 'pending') return 'reading';
   if (account.status === 'app_closed') return 'openApp';
   if (toolNotFound(account)) return 'notFound';
+  if (toolBlocked(account)) return 'blocked';
   if (account.status === 'no_limits_reported') return 'noLimits';
   if (WAITING_STATUSES.has(account.status)) return 'waiting';
   return needsSignIn(account) ? 'signIn' : 'noData';

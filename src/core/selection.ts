@@ -3,7 +3,7 @@
 // quota is never treated as available.
 import { DURATION_MS, normalizeProviderOrder, type ProviderId } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
-import type { Account, AutoContinue, MeasuredAccount, QuotaWindow, Snapshot } from '../shared/types.ts';
+import type { Account, AutoContinue, MeasuredAccount, PassedOver, PassOverReason, QuotaWindow, Snapshot } from '../shared/types.ts';
 import { AppError } from './errors.ts';
 import { isObject } from './files.ts';
 import { nameMatchesFamily, quotaScopeFamily } from './model-families.ts';
@@ -127,6 +127,17 @@ export function primaryAccount(state: QuotaState, providerId: ProviderId): Accou
   return configuredAccounts(state, providerId).sort(primaryFirst)[0] ?? null;
 }
 
+// Why the tool's account, its primary first, cannot take the work with `model`.
+function passOverReason(state: QuotaState, account: Account | undefined, model: string | undefined, now: number): PassOverReason {
+  if (!account) return { kind: 'no_account' };
+  const measured = measuredAccount(state, account);
+  if (measured?.messageCode) return { kind: 'status', code: measured.messageCode };
+  const tightest = isMeasurementFresh(measured, now) ? tightestWindow(measured, model) : null;
+  return tightest && tightest.remainingPercent <= QUOTA_FLOOR_PERCENT
+    ? { kind: 'low', percent: tightest.remainingPercent }
+    : { kind: 'unverified' };
+}
+
 export interface ProviderChoice {
   providerId: ProviderId;
   account: Account | null;
@@ -135,6 +146,8 @@ export interface ProviderChoice {
   verified: boolean;
   isFallback: boolean;
   headroomPercent: number | null;
+  // The tools ahead of it in the order, and why each did not take the work; every tool when none could.
+  passedOver: PassedOver[];
 }
 
 // First provider in the user's order with an eligible account. When none qualifies, the
@@ -152,8 +165,10 @@ export function selectProvider(
   const order = normalizeProviderOrder(state.settings.providerOrder).filter(
     id => id !== exclude && (!prefer.tool || id === prefer.tool || prefer.tool === exclude)
   );
+  const passedOver: PassedOver[] = [];
   for (const [index, providerId] of order.entries()) {
-    for (const account of candidates(state, providerId, prefer).sort(primaryFirst)) {
+    const accounts = candidates(state, providerId, prefer).sort(primaryFirst);
+    for (const account of accounts) {
       const usable = usableModel(measuredAccount(state, account), models[providerId], now);
       if (usable)
         return {
@@ -162,14 +177,23 @@ export function selectProvider(
           ...(usable.model ? { model: usable.model } : {}),
           verified: true,
           isFallback: index > 0,
-          headroomPercent: headroomPercent(measuredAccount(state, account), usable.model)
+          headroomPercent: headroomPercent(measuredAccount(state, account), usable.model),
+          passedOver
         };
     }
+    passedOver.push({ providerId, reason: passOverReason(state, accounts[0], models[providerId], now) });
   }
   // `exclude` removes at most one provider, so the order is never empty.
   const [first] = order;
   if (!first) throw new Error('provider order is empty');
-  return { providerId: first, account: primaryAccount(state, first), verified: false, isFallback: false, headroomPercent: null };
+  return {
+    providerId: first,
+    account: primaryAccount(state, first),
+    verified: false,
+    isFallback: false,
+    headroomPercent: null,
+    passedOver
+  };
 }
 
 // How far work may move when an account runs out: to the tool's other accounts only, or on to

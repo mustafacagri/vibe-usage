@@ -39,7 +39,16 @@ import {
   type ProviderId
 } from '../shared/catalog.ts';
 import type { LaunchMode } from '../shared/ipc.ts';
-import type { Account, AutoContinue, ErrorCode, MeasuredAccount, Snapshot, Suggestion, TransitionRecord } from '../shared/types.ts';
+import type {
+  Account,
+  AutoContinue,
+  ErrorCode,
+  ErrorParams,
+  MeasuredAccount,
+  Snapshot,
+  Suggestion,
+  TransitionRecord
+} from '../shared/types.ts';
 import {
   endClaudeSession,
   findClaudeProcess,
@@ -375,7 +384,7 @@ export type Notice =
   | { kind: 'stranded'; from: MeasuredAccount }
   // What could not be done: work moved off an account that ran out, or (`attempt`) brought back
   // to its main account, or opened again after the system went down.
-  | { kind: 'failed'; from: MeasuredAccount; code: ErrorCode; attempt?: Attempt };
+  | ({ kind: 'failed'; from: MeasuredAccount; attempt?: Attempt } & Failure);
 
 export interface Continuity {
   // Looks at the accounts (and the accounts crossing the low line in `low`) and acts.
@@ -414,6 +423,8 @@ export interface ContinuityOptions {
   clock?: () => number;
   // How many settled history records are kept.
   historyCap?: number;
+  // Told of a failure the app did not foresee; it is kept and announced as a failed launch.
+  onFault?: (error: unknown) => void;
 }
 
 interface Offer {
@@ -585,10 +596,36 @@ const SAFE_ERRORS = [
   'session_unsaved',
   'process_unknown',
   'not_picked_up',
-  'bypass_not_consented'
+  'bypass_not_consented',
+  'cli_not_found',
+  'start_blocked',
+  'start_failed'
 ] as const satisfies readonly ErrorCode[];
-const errorCode = (error: unknown): ErrorCode =>
-  error instanceof AppError && isOneOf(SAFE_ERRORS, error.code) ? error.code : 'launch_failed';
+// A failure as it is kept and announced: its code, and the params its message names (a tool, a
+// program, a system code). One the app did not foresee is kept as a failed launch.
+export interface Failure {
+  code: ErrorCode;
+  params?: ErrorParams;
+}
+const failure = (error: unknown): Failure =>
+  error instanceof AppError && isOneOf(SAFE_ERRORS, error.code)
+    ? { code: error.code, ...(Object.keys(error.params).length ? { params: error.params } : {}) }
+    : { code: 'launch_failed' };
+// Params read back from the file: a few short names, nothing else.
+const MAX_ERROR_PARAMS = 4;
+const MAX_ERROR_PARAM_LENGTH = 200;
+function errorParams(value: unknown): ErrorParams | undefined {
+  if (!isObject(value)) return undefined;
+  const all = Object.entries(value);
+  const names = all.flatMap(([key, v]) => (typeof v === 'string' && v.length <= MAX_ERROR_PARAM_LENGTH ? [[key, v] as const] : []));
+  return names.length && names.length === all.length && names.length <= MAX_ERROR_PARAMS ? Object.fromEntries(names) : undefined;
+}
+const withParams = (params: ErrorParams | undefined): { errorParams?: ErrorParams } => (params ? { errorParams: params } : {});
+function setError(record: TransitionRecord, error: Failure | null): void {
+  record.errorCode = error?.code ?? null;
+  if (error?.params) record.errorParams = error.params;
+  else delete record.errorParams;
+}
 const sameSession = (a: RecentSession, b: RecentSession): boolean =>
   a.providerId === b.providerId && a.sessionId === b.sessionId && samePath(a.projectDir, b.projectDir);
 const validSession = (value: unknown): value is RecentSession =>
@@ -646,7 +683,9 @@ async function loadState(file: string, historyCap: number): Promise<StoredState>
         source: { providerId: record.source.providerId, accountId: record.source.accountId, sessionId: record.source.sessionId },
         target: { providerId: record.target.providerId, accountId: record.target.accountId, sessionId: record.target.sessionId },
         status: record.status === 'dispatching' ? 'interrupted' : record.status,
-        errorCode: isOneOf(SAFE_ERRORS, record.errorCode) ? record.errorCode : null
+        ...(isOneOf(SAFE_ERRORS, record.errorCode)
+          ? { errorCode: record.errorCode, ...withParams(errorParams(record.errorParams)) }
+          : { errorCode: null })
       });
     }
   if (Array.isArray(document.offers))
@@ -750,9 +789,14 @@ export async function createContinuity({
   getCurrentSnapshot,
   start = continueSession,
   clock = Date.now,
-  historyCap = MAX_HANDLED_STOPS
+  historyCap = MAX_HANDLED_STOPS,
+  onFault
 }: ContinuityOptions): Promise<Continuity> {
   const file = path.join(dataDir, STATE_FILE);
+  const failed = (error: unknown): Failure => {
+    if (!(error instanceof AppError)) onFault?.(error);
+    return failure(error);
+  };
   const stored = await loadState(file, historyCap);
   const handled = new Set(stored.handled);
   const records = stored.transitions;
@@ -941,12 +985,12 @@ export async function createContinuity({
       });
   }
   const recordOf = (offer: Offer): TransitionRecord | undefined => records.find(r => r.id === offer.transitionId);
-  const status = (offer: Offer, next: TransitionRecord['status'], error: ErrorCode | null = null): void => {
+  const status = (offer: Offer, next: TransitionRecord['status'], error: Failure | null = null): void => {
     const record = recordOf(offer);
     if (record) {
       record.status = next;
       record.updatedAt = clock();
-      record.errorCode = error;
+      setError(record, error);
     }
   };
   function offer(
@@ -1115,7 +1159,7 @@ export async function createContinuity({
       try {
         result = await start(session, to, current, launch, options);
       } catch (error) {
-        status(pending, 'failed', errorCode(error));
+        status(pending, 'failed', failed(error));
         await save();
         throw error;
       }
@@ -1156,7 +1200,7 @@ export async function createContinuity({
           status(pending, 'dismissed');
           offers.delete(id);
           if (pending.reopening) interrupted.delete(pending.reopening);
-        } else status(pending, 'failed', errorCode(error));
+        } else status(pending, 'failed', failed(error));
         await save().catch(() => undefined);
       }
       throw error;
@@ -1216,7 +1260,7 @@ export async function createContinuity({
         id
       );
       const pending = offers.get(suggestion.id);
-      if (pending) status(pending, 'failed', 'no_verified_quota');
+      if (pending) status(pending, 'failed', { code: 'no_verified_quota' });
       await save();
       return [{ kind: 'stranded', from: account }];
     }
@@ -1230,7 +1274,7 @@ export async function createContinuity({
       return [{ kind: 'continued', from: account, to: pending?.to ?? to, result, projectDir: session.projectDir }];
     } catch (error) {
       if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
-      return [{ kind: 'failed', from: account, code: errorCode(error) }];
+      return [{ kind: 'failed', from: account, ...failed(error) }];
     }
   }
   // How far a stop's work may move: a project's own setting wins over the global one, `off`
@@ -1290,7 +1334,7 @@ export async function createContinuity({
     const record = records.find(r => r.id === id);
     if (record) {
       record.status = 'failed';
-      record.errorCode = code;
+      setError(record, { code });
       record.updatedAt = clock();
     }
     const from = holder ? measuredOf(snapshot, holder.id) : null;
@@ -1436,7 +1480,7 @@ export async function createContinuity({
       return from ? [{ kind: 'reopened', from, to: pending?.to ?? to, result, projectDir: session.projectDir }] : [];
     } catch (error) {
       if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
-      return [{ kind: 'failed', from: measured, code: errorCode(error), attempt: 'reopen' }];
+      return [{ kind: 'failed', from: measured, ...failed(error), attempt: 'reopen' }];
     }
   }
   // A Claude Code session moved off the tool's main account, which has room again: it goes
@@ -1509,7 +1553,7 @@ export async function createContinuity({
       return from ? [{ kind: 'returned', from, to: pending?.to ?? to, result, projectDir: session.projectDir }] : [];
     } catch (error) {
       if (error instanceof DispatchDeferred) return !quitting && offers.has(suggestion.id) ? [{ kind: 'suggested', suggestion }] : [];
-      return [{ kind: 'failed', from: measured, code: errorCode(error), attempt: 'return' }];
+      return [{ kind: 'failed', from: measured, ...failed(error), attempt: 'return' }];
     }
   }
   async function isRunning(id: string, snapshot?: Snapshot): Promise<boolean> {

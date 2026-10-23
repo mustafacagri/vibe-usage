@@ -397,17 +397,35 @@ test('smart launch starts the provider with verified quota, without a brief', as
     [{ id: 'antigravity', status: 'ok', accounts: [measured] }],
     ['cursor', 'antigravity', 'claude', 'codex']
   );
-  assert.deepEqual(previewSmartLaunch(quota, { dataDir }), {
+  assert.deepEqual(previewSmartLaunch(quota), {
     providerId: 'antigravity',
     verified: true,
     isFallback: true,
     headroomPercent: 70,
-    model: null
+    model: null,
+    passedOver: [{ providerId: 'cursor', reason: { kind: 'no_account' } }]
   });
   const calls: string[][] = [];
   const result = await smartLaunch(project, quota, { dataDir, platform: 'darwin', spawnProcess: fakeSpawn(calls) });
   assert.deepEqual(result, { to: 'antigravity', model: null, mode: 'app', verified: true });
   await assert.rejects(fs.stat(path.join(project, HANDOVER_FILE)));
+});
+
+test('smart launch starts a tool on its own default model unless the user prefers one', () => {
+  const cursor = account({ id: 'cursor:default', providerId: 'cursor' });
+  const windows = [
+    quotaWindow({ id: 'plan:auto', remainingPercent: 90 }),
+    quotaWindow({ id: 'plan:api', remainingPercent: 60, partial: true, except: ['auto'] })
+  ];
+  const quota = state(
+    [cursor],
+    [{ id: 'cursor', status: 'ok', accounts: [measuredAccount({ ...cursor, fetchedAt: new Date().toISOString(), windows })] }],
+    ['cursor', 'claude', 'codex', 'antigravity']
+  );
+  // A new session has no model to match: Cursor starts on its own default, not a tier's model on its API pool.
+  assert.equal(previewSmartLaunch(quota).model, null);
+  quota.settings.preferredModels = { cursor: 'gpt-5.6-sol' };
+  assert.equal(previewSmartLaunch(quota).model, 'gpt-5.6-sol');
 });
 
 test('the brief stays out of git status through the local exclude file, listed once', async t => {

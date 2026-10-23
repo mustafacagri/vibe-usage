@@ -286,6 +286,8 @@ export const DIAGNOSTICS: Diagnostics = {
   generatedAt: 0,
   intervalSeconds: 120,
   refreshing: false,
+  // One unforeseen failure, so its card is checked too.
+  faults: [{ at: Date.UTC(2026, 9, 23, 9, 41), action: 'signIn', error: 'Error EPERM spawn' }],
   providers: [
     {
       id: 'claude',
@@ -378,9 +380,11 @@ export const MODELS: ModelCatalog = { claude: ['opus', 'sonnet'], codex: ['gpt-6
 export const SMART_PREVIEW: SmartLaunchPreview = {
   providerId: 'codex',
   verified: true,
-  isFallback: false,
+  isFallback: true,
   headroomPercent: 89,
-  model: 'gpt-6-luna'
+  model: 'gpt-6-luna',
+  // The tool ahead in the order and why it was passed over, so the list is checked too.
+  passedOver: [{ providerId: 'claude', reason: { kind: 'low', percent: 3 } }]
 };
 
 // A week of readings: the 5-hour window filling and resetting, the weekly one climbing.

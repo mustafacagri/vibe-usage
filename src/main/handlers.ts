@@ -5,6 +5,7 @@ import type { Continuity } from '../core/continuity.ts';
 import type { Installer } from '../core/updater.ts';
 import { collectDiagnostics, renderDiagnosticsReport, type ToolProbe } from '../core/diagnostics.ts';
 import { AppError } from '../core/errors.ts';
+import type { FaultLog } from '../core/faults.ts';
 import { parseJson, pathKey, writeFileAtomic } from '../core/files.ts';
 import { executeHandover, listSessions, parseProviderChoice, previewHandover, previewSmartLaunch, smartLaunch } from '../core/handover.ts';
 import type { History } from '../core/history.ts';
@@ -76,6 +77,8 @@ export interface MainContext {
   spawnProcess?: SpawnProcess;
   // Whether each tool is installed, for diagnostics; it never starts a tool.
   probe: ToolProbe;
+  // Failures the app did not foresee, for the diagnostics.
+  faults: Pick<FaultLog, 'list'>;
   appVersion: string;
   copyText(text: string): Promise<void>;
 }
@@ -103,7 +106,7 @@ export function createHandlers(context: MainContext): Handlers {
 
   async function diagnosticsReport(): Promise<string> {
     const now = Date.now();
-    return renderDiagnosticsReport(await collectDiagnostics(context.view(), context.probe, now), {
+    return renderDiagnosticsReport(await collectDiagnostics(context.view(), context.probe, now, context.faults.list()), {
       appVersion: context.appVersion,
       platform,
       arch: process.arch,
@@ -236,7 +239,7 @@ export function createHandlers(context: MainContext): Handlers {
       if (!(await context.confirm('resetSettingsConfirm', 'resetSettings'))) return context.view();
       return changeSettings(() => service.resetSettings());
     },
-    diagnostics: () => collectDiagnostics(context.view(), context.probe, Date.now()),
+    diagnostics: () => collectDiagnostics(context.view(), context.probe, Date.now(), context.faults.list()),
     async copyDiagnostics() {
       await context.copyText(await diagnosticsReport());
     },
@@ -300,7 +303,12 @@ export function createHandlers(context: MainContext): Handlers {
       await service.syncSettings();
       return discoverModels({ homeDir, cacheDir: dataDir, accounts: settings().accounts });
     },
-    previewSmartLaunch: async () => previewSmartLaunch(await service.syncSettings(), launchContext),
+    // The quota is read first, as the launch reads it: a reading older than a few minutes is not
+    // verified, and the preview would pass over every tool read before then.
+    async previewSmartLaunch() {
+      await context.refresh();
+      return previewSmartLaunch(await service.syncSettings());
+    },
     async smartLaunch() {
       const projectDir = await context.chooseDirectory('chooseProjectFolder');
       if (!projectDir) return { status: 'canceled' };

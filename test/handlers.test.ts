@@ -150,6 +150,7 @@ async function harness(
       return Promise.resolve(directory);
     },
     probe: { installed: providerId => Promise.resolve(providerId !== 'antigravity') },
+    faults: { list: () => [] },
     appVersion: '1.2.3',
     copyText: text => {
       log.copied.push(text);
@@ -235,7 +236,8 @@ test('an account whose sign-in cannot be opened is not left waiting for it', asy
     delete process.env.VIBE_CODEX_BINARY;
   });
   const { context, timers } = await harness(t);
-  await assert.rejects(createHandlers(context).addAccount('codex'), /binary_missing/);
+  // The message names the tool and its command, so the user knows what to install.
+  await assert.rejects(createHandlers(context).addAccount('codex'), { code: 'cli_not_found', params: { tool: 'Codex', command: 'codex' } });
   assert.deepEqual(
     context.service.snapshot().settings.accounts.filter(a => a.providerId === 'codex'),
     []

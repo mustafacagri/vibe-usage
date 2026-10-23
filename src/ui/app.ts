@@ -22,7 +22,7 @@ import {
   compactLines,
   isLowQuota,
   needsSignIn,
-  toolNotFound,
+  toolCannotStart,
   type CompactLine,
   type CompactNote,
   type KnownWindow
@@ -32,6 +32,7 @@ import {
   describeWindow,
   formatAccountName,
   formatAge,
+  formatDate,
   formatDuration,
   formatFreshness,
   formatPercent,
@@ -74,6 +75,8 @@ import type {
   ProjectPreference,
   ProviderState,
   ProviderStatus,
+  Fault,
+  PassedOver,
   QuotaWindow,
   SettingsNotice,
   AccountTokens,
@@ -93,7 +96,8 @@ declare global {
   }
 }
 
-const TOAST_MS = 5000;
+// A toast stays long enough to be read (about 16 characters a second), within these bounds.
+const TOAST_MS = { min: 5000, perCharacter: 60, max: 20000 };
 const SETTINGS_MESSAGE_MS = 4000;
 // Countdowns and ages are relative to now; re-render this often between snapshots.
 const CLOCK_TICK_MS = 30 * DURATION_MS.SECOND;
@@ -133,6 +137,8 @@ const REOPEN_AFTER_RESTART_LABELS: Readonly<Record<AutomationMode, MessageKey>> 
   auto: 'reopenAfterRestartAuto'
 };
 const DEFAULT_QUIET_HOURS = { start: '22:00', end: '07:00' };
+// A field with nothing to show, in any language.
+const NO_VALUE = '—';
 const PROJECT_AUTO_CONTINUE: readonly (readonly [ProjectPreference['autoContinue'], MessageKey])[] = [
   [INHERIT, 'projectAutoInherit'],
   ...AUTO_CONTINUE.map(value => [value, AUTO_CONTINUE_LABELS[value]] as const)
@@ -249,6 +255,7 @@ const ui = {
   smartQuota: $('#sl-quota', HTMLElement),
   smartModel: $('#sl-model', HTMLElement),
   smartReason: $('#sl-reason', HTMLElement),
+  smartPassed: $('#sl-passed', HTMLUListElement),
   smartCancel: $('#sl-cancel-btn', HTMLButtonElement),
   smartConfirm: $('#sl-confirm-btn', HTMLButtonElement)
 };
@@ -319,16 +326,21 @@ function fillSelect(select: HTMLSelectElement, entries: readonly (readonly [stri
 }
 
 // A toast is a popover: shown again each time, it goes on top of the top layer, above an open
-// dialog and its backdrop, which would otherwise cover it.
+// dialog and its backdrop, which would otherwise cover it. A click closes it.
 function toast(message: string): void {
   ui.toast.textContent = message;
   if (ui.toast.matches(':popover-open')) ui.toast.hidePopover();
   ui.toast.showPopover();
   clearTimeout(toastTimer);
+  const shownMs = Math.min(TOAST_MS.max, Math.max(TOAST_MS.min, message.length * TOAST_MS.perCharacter));
   toastTimer = window.setTimeout(() => {
     ui.toast.hidePopover();
-  }, TOAST_MS);
+  }, shownMs);
 }
+ui.toast.addEventListener('click', () => {
+  clearTimeout(toastTimer);
+  ui.toast.hidePopover();
+});
 
 function showSettingsMessage(message: string): void {
   ui.settingsMessage.textContent = message;
@@ -342,12 +354,20 @@ function showSettingsMessage(message: string): void {
 const isCodedError = (error: unknown): error is { code: string; params?: Params } =>
   error instanceof Error && 'code' in error && typeof error.code === 'string';
 
+// The message of a failed action. One the app did not foresee says no more than that, so it
+// says where its details are kept.
+function errorMessage(error: unknown): string {
+  if (!isCodedError(error)) return `${describe('unexpected')} ${t('unexpectedDetails')}`;
+  const message = describe(error.code, error.params);
+  return error.code === 'unexpected' ? `${message} ${t('unexpectedDetails')}` : message;
+}
+
 // Runs a user action; a failure is shown as a toast with the error's message.
 async function action(task: () => Promise<unknown>): Promise<void> {
   try {
     await task();
   } catch (error) {
-    toast(isCodedError(error) ? describe(error.code, error.params) : describe('unexpected'));
+    toast(errorMessage(error));
   }
 }
 
@@ -487,7 +507,8 @@ function signInButton(
   return button;
 }
 
-// A tool that is not found cannot be signed in to: the diagnostics say where it was looked for.
+// A tool that is not found, or not allowed to start, cannot be signed in to: the diagnostics say
+// where it was looked for, or what to allow.
 function checkInstallButton(): HTMLButtonElement {
   const button = element('button', 'launch-button', t('checkInstallBtn'));
   onClick(button, () => {
@@ -555,7 +576,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount): HTMLElement[] 
   if (message) nodes.push(element('div', 'empty', message));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
-  else if (toolNotFound(shown)) nodes.push(checkInstallButton());
+  else if (toolCannotStart(shown)) nodes.push(checkInstallButton());
   return nodes;
 }
 
@@ -587,7 +608,7 @@ function compareActions(provider: Provider, account: MeasuredAccount): HTMLEleme
     column.append(launch);
   }
   if (needsSignIn(account)) column.append(signInButton(provider, account, t('signInAccountBtn', { name })));
-  else if (toolNotFound(account)) column.append(checkInstallButton());
+  else if (toolCannotStart(account)) column.append(checkInstallButton());
   return column;
 }
 
@@ -935,6 +956,7 @@ const COMPACT_NOTES: Readonly<Record<CompactNote, MessageKey>> = {
   signIn: 'compactSignIn',
   openApp: 'compactOpenApp',
   notFound: 'compactNotFound',
+  blocked: 'compactBlocked',
   noLimits: 'compactNoLimits',
   noData: 'compactNoData'
 };
@@ -957,12 +979,12 @@ function compactSegment(provider: Provider, line: CompactLine, many: boolean): H
   const { window } = line;
   if (!window) {
     const note = line.note ?? 'noData';
-    const actionable = note === 'signIn' || note === 'openApp' || note === 'notFound';
+    const actionable = note === 'signIn' || note === 'openApp' || note === 'notFound' || note === 'blocked';
     const cell = element(actionable ? 'button' : 'span', `compact-note ${note}`, t(COMPACT_NOTES[note]));
     segment.title = [many ? accountName(line.account) : '', statusMessage(line.account) || t('noDataYet')].filter(Boolean).join(' · ');
     if (actionable) {
       onClick(cell, async () => {
-        if (note === 'notFound') ui.diagnosticsButton.click();
+        if (note === 'notFound' || note === 'blocked') ui.diagnosticsButton.click();
         else await openSignIn(provider, line.account);
       });
     }
@@ -1112,7 +1134,7 @@ function providerCard(state: ProviderState): HTMLElement {
   else
     section.append(
       element('div', 'empty', statusMessage(state) || t('status_no_accounts')),
-      toolNotFound(state) ? checkInstallButton() : signInButton(provider)
+      toolCannotStart(state) ? checkInstallButton() : signInButton(provider)
     );
   const inView = accountsInView(accounts, compare, shown);
   const charted = inView.filter(a => chartedWindows(a).length);
@@ -1454,7 +1476,7 @@ function transitionItem(record: TransitionRecord): HTMLElement {
   const route = `${successorName(record.source.providerId, { providerId: record.source.providerId, accountId: record.source.accountId }, accounts, t)} → ${successorName(record.source.providerId, record.target, accounts, t)}`;
   const details = element('div', 'record-detail', `${route} · ${formatAge(record.updatedAt, format())}`);
   item.append(top, details);
-  if (record.errorCode) item.append(element('div', 'record-error', describe(record.errorCode)));
+  if (record.errorCode) item.append(element('div', 'record-error', describe(record.errorCode, record.errorParams)));
   // Only a failure the app can try again gets the button: one with its offer still there.
   if (record.retryable) {
     const retry = element('button', 'secondary-button gap-top-sm', t('retryTransition'));
@@ -1509,11 +1531,23 @@ function diagnosticsCard(entry: Diagnostics['providers'][number]): HTMLElement {
   return card;
 }
 
+// Failures the app did not foresee, newest first: when, in what action, and what kind of error.
+function faultsCard(faults: readonly Fault[]): HTMLElement {
+  const card = element('section', 'record-item');
+  card.append(element('strong', '', t('faultsTitle')));
+  for (const fault of faults)
+    card.append(element('div', 'record-detail', `${formatDate(new Date(fault.at), language)} · ${fault.action} · ${fault.error}`));
+  return card;
+}
+
 onClick(ui.diagnosticsButton, () => {
   ui.diagnosticsList.replaceChildren(loadingNote());
   return openDialog(ui.diagnosticsDialog, async () => {
     const diagnostics = await vibe.diagnostics();
-    ui.diagnosticsList.replaceChildren(...diagnostics.providers.map(diagnosticsCard));
+    ui.diagnosticsList.replaceChildren(
+      ...diagnostics.providers.map(diagnosticsCard),
+      ...(diagnostics.faults.length ? [faultsCard(diagnostics.faults)] : [])
+    );
   });
 });
 onClick(ui.diagnosticsCopy, async () => {
@@ -1564,7 +1598,7 @@ function accountRow(provider: Provider, account: Account): HTMLElement {
   // Without a typed name the account is named by its sign-in, so that is the placeholder.
   input.placeholder = measuredAccount(account)?.signedInAs ?? (account.labelKey ? t(account.labelKey) : t('accountLabelPlaceholder'));
   input.maxLength = 64;
-  input.setAttribute('aria-label', `${provider.name} ${t('accountLabelPlaceholder')}`);
+  input.setAttribute('aria-label', `${provider.name} · ${t('accountLabelTitle')}`);
   // Clearing a custom name restores the app-supplied one when there is one.
   onChange(input, async () => {
     const label = input.value.trim();
@@ -1576,8 +1610,9 @@ function accountRow(provider: Provider, account: Account): HTMLElement {
       })
     });
   });
-  const inputWrap = element('div', 'account-item-input-wrap');
-  inputWrap.append(input);
+  // The caption says where the name shows; the field alone does not.
+  const inputWrap = element('label', 'field account-item-input-wrap');
+  inputWrap.append(element('span', '', t('accountLabelTitle')), input);
   item.append(top, inputWrap);
   return item;
 }
@@ -1956,17 +1991,44 @@ function smartReason(preview: SmartLaunchPreview): string {
   return t(preview.isFallback ? 'reasonFallback' : 'reasonPrimary');
 }
 
+// Why a tool was passed over; a failed reading in the words its card uses.
+function passOverText({ reason }: PassedOver): string {
+  switch (reason.kind) {
+    case 'no_account':
+      return t('status_no_accounts');
+    case 'status':
+      return describe(reason.code);
+    case 'unverified':
+      return t('passUnverified');
+    case 'low':
+      return t('passLowQuota', { n: formatPercent(reason.percent, language) });
+  }
+}
+
+function passedOverItem(entry: PassedOver): HTMLElement {
+  const item = element('li');
+  item.append(element('strong', '', providerById(entry.providerId).name), ` ${passOverText(entry)}`);
+  return item;
+}
+
+// Nothing is started without verified quota, so then no tool is named and the launch is off.
 onClick(ui.smartButton, () => {
   for (const field of [ui.smartProvider, ui.smartQuota, ui.smartModel, ui.smartReason]) field.textContent = t('reading');
+  ui.smartPassed.replaceChildren();
+  ui.smartPassed.hidden = true;
+  ui.smartConfirm.disabled = true;
   return openDialog(ui.smartDialog, async () => {
     const preview = await vibe.previewSmartLaunch();
-    ui.smartProvider.textContent = providerById(preview.providerId).name;
+    ui.smartProvider.textContent = preview.verified ? providerById(preview.providerId).name : NO_VALUE;
     ui.smartQuota.textContent =
       preview.headroomPercent === null
         ? t('quotaUnverified')
         : t('percentRemaining', { n: formatPercent(preview.headroomPercent, language) });
-    ui.smartModel.textContent = preview.model ?? t('toolDefault');
+    ui.smartModel.textContent = preview.verified ? (preview.model ?? t('toolDefault')) : NO_VALUE;
     ui.smartReason.textContent = smartReason(preview);
+    ui.smartPassed.replaceChildren(...preview.passedOver.map(passedOverItem));
+    ui.smartPassed.hidden = !preview.passedOver.length;
+    ui.smartConfirm.disabled = !preview.verified;
   });
 });
 ui.smartCancel.addEventListener('click', () => {

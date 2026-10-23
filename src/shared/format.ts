@@ -49,7 +49,7 @@ export function formatDuration(ms: number, locale: string): string {
   return new Intl.DurationFormat(locale, { style }).format(parts);
 }
 
-function formatDate(date: Date, locale: string): string {
+export function formatDate(date: Date, locale: string): string {
   return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).format(
     date
   );

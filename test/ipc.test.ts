@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AppError, ProviderError } from '../src/core/errors.ts';
+import { createFaultLog } from '../src/core/faults.ts';
 import { assertSender, envelope, optionalProvider, options } from '../src/main/ipc-policy.ts';
 
 test('only the local main frame may invoke privileged actions', () => {
@@ -57,4 +58,41 @@ test('results cross IPC as envelopes; only known error codes are exposed', async
     { ok: false, error: { code: 'unexpected', params: {} } },
     'raw messages never reach the renderer'
   );
+});
+
+test('an unforeseen failure is handed to the fault log; a coded one is not', async () => {
+  const seen: unknown[] = [];
+  const unforeseen = Object.assign(new Error('spawn EPERM'), { code: 'EPERM', syscall: 'spawn' });
+  await envelope(
+    () => {
+      throw unforeseen;
+    },
+    error => seen.push(error)
+  );
+  await envelope(
+    () => {
+      throw new AppError('account_not_found');
+    },
+    error => seen.push(error)
+  );
+  assert.deepEqual(seen, [unforeseen]);
+});
+
+test('the fault log keeps the latest few as type and system codes, never the message', () => {
+  let now = 0;
+  const log = createFaultLog(() => ++now);
+  log.record('signIn', Object.assign(new Error('spawn EPERM C:\\Users\\jdoe\\secret'), { code: 'EPERM', syscall: 'spawn' }));
+  log.record('a channel with spaces', new TypeError('x is not a function'));
+  log.record('refresh', 'a thrown string');
+  assert.deepEqual(log.list(), [
+    { at: 3, action: 'refresh', error: 'non-error value' },
+    { at: 2, action: 'unknown', error: 'TypeError' },
+    { at: 1, action: 'signIn', error: 'Error EPERM spawn' }
+  ]);
+  const passedOn = new Error('handled twice');
+  log.record('continuity', passedOn);
+  log.record('continuity', passedOn);
+  assert.equal(log.list().filter(fault => fault.action === 'continuity').length, 1, 'one failure is kept once');
+  for (let i = 0; i < 20; i++) log.record('refresh', new Error('again'));
+  assert.equal(log.list().length, 10, 'only the latest are kept');
 });

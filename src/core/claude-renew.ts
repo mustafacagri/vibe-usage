@@ -11,7 +11,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { claudeOAuthSection, readClaudeCredentials } from '../providers/claude.ts';
-import { findBinary } from '../providers/common.ts';
+import { findCommand } from '../providers/common.ts';
 import type { Account } from '../shared/types.ts';
 import { applyEnvironment, environmentChanges } from './environment.ts';
 import { profileEnvironment } from './launch.ts';
@@ -88,7 +88,8 @@ export async function renewClaudeSignIn(
   if (!before?.renewable) return false;
   const cwd = path.join(dataDir, RENEW_DIR);
   await fsp.mkdir(cwd, { recursive: true });
-  await runProcess(await findBinary('claude'), RENEW_ARGS, {
+  const command = await findCommand('claude');
+  await runProcess(command.binary, [...command.args, ...RENEW_ARGS], {
     cwd,
     env: applyEnvironment(environmentChanges(profileEnvironment(account))),
     timeout: RENEW_TIMEOUT_MS,

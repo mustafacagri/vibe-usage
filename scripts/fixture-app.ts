@@ -53,7 +53,7 @@ export function serveFixture(fixture: Fixture): void {
     importSettings: () => canceled,
     resetSettings: fixture.snapshot,
     dismissSettingsNotice: fixture.snapshot,
-    diagnostics: fixture.diagnostics ?? (() => ({ generatedAt: 0, intervalSeconds: 120, refreshing: false, providers: [] })),
+    diagnostics: fixture.diagnostics ?? (() => ({ generatedAt: 0, intervalSeconds: 120, refreshing: false, providers: [], faults: [] })),
     copyDiagnostics: () => undefined,
     exportDiagnostics: () => canceled,
     restoreDismissedAccounts: fixture.snapshot,
