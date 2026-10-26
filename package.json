@@ -60,12 +60,12 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
-    "electron": "44.8.0",
-    "electron-builder": "26.15.3",
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0",
     "eslint": "10.13.0",
     "prettier": "3.9.10",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.71.2"
+    "typescript-eslint": "8.72.0"
   },
   "build": {
     "appId": "dev.vibe.usage",
@@ -153,6 +153,6 @@
     }
   },
   "dependencies": {
-    "electron-updater": "6.8.10"
+    "electron-updater": "6.8.11"
   }
 }
