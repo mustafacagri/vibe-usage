@@ -15,6 +15,13 @@ const DYNAMIC_KEY = /^(status|error)_/;
 const NON_TEXT_KEYS = new Set(['name']);
 const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
 const placeholders = (text: string): string[] => [...text.matchAll(/\{(\w+)\}/g)].map(m => m[1] ?? '').sort();
+// Languages that write words without spaces between them. Elsewhere a letter right after a
+// placeholder is a leftover the value already carries: "{time}in" showed "5 minin".
+const UNSPACED_LANGUAGES: ReadonlySet<string> = new Set(['ja', 'ko', 'zh']);
+// Endings whose form depends on how the value before them sounds (Codex'e but Claude'a; 을 or 를).
+// A value that varies takes no Turkish suffix, and both Korean forms: "{tool}을(를)".
+const TURKISH_SUFFIX = /\{\w+\}['’]\p{L}/u;
+const KOREAN_SOUND_PARTICLE = /\{\w+\}(?:[은는이가을를과와로](?!\()|으로)/u;
 const baseKey = (key: string): string => key.replace(PLURAL_SUFFIX, '');
 const tables = (): [string, Record<string, string | undefined>][] => SUPPORTED_LANGUAGES.map(language => [language, LOCALES[language]]);
 const pluralFamilies = (table: object): string[] =>
@@ -42,6 +49,23 @@ test('every language has the same placeholders as English, and no empty text', (
       const reference = en[PLURAL_SUFFIX.test(key) ? `${baseKey(key)}_other` : key] ?? '';
       assert.deepEqual(placeholders(text), placeholders(reference), `${language}.${key} placeholders differ`);
     }
+  }
+});
+
+test('no text depends on how a filled-in value ends', () => {
+  for (const [language, table] of tables()) {
+    for (const [key, text = ''] of Object.entries(table)) {
+      if (!UNSPACED_LANGUAGES.has(language)) assert.doesNotMatch(text, /\{\w+\}\p{L}/u, `${language}.${key} glues a word to a value`);
+    }
+  }
+  for (const [key, text] of Object.entries(LOCALES.tr)) assert.doesNotMatch(text, TURKISH_SUFFIX, `tr.${key}`);
+  for (const [key, text] of Object.entries(LOCALES.ko)) assert.doesNotMatch(text, KOREAN_SOUND_PARTICLE, `ko.${key}`);
+});
+
+test('each language writes one kind of apostrophe', () => {
+  for (const [language, table] of tables()) {
+    const text = Object.values(table).join('\n');
+    assert.ok(!(/\p{L}'\p{L}/u.test(text) && /\p{L}’\p{L}/u.test(text)), `${language} mixes ' and ’`);
   }
 });
 
