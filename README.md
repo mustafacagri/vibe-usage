@@ -160,7 +160,8 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 - **Handover history** lists each continuation with its project, route and outcome. A failed one can be tried again,
   checked against current quota first.
 - **Diagnostics** shows, per tool, whether it is installed, each account's state and freshness, and the next step,
-  plus the latest unexpected errors (what failed and the system's error code, never the error's text). **Copy report**
+  plus the latest unexpected errors (what failed and the system's error code, never the error's text) and each time the
+  window stopped responding for 2 seconds or more. **Copy report**
   gives a version without names, e-mail addresses or folders, ready for an issue.
 - **Backup and restore**: export, import or reset the settings. Every save keeps the previous good copy; a damaged
   settings file is restored from it (and kept aside), and a file written by a newer version is never overwritten.

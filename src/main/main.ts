@@ -25,7 +25,7 @@ import electronUpdater from 'electron-updater';
 import { createContinuity, type Notice } from '../core/continuity.ts';
 import { createToolProbe } from '../core/diagnostics.ts';
 import { AppError } from '../core/errors.ts';
-import { createFaultLog } from '../core/faults.ts';
+import { createFaultLog, type FaultLog } from '../core/faults.ts';
 import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip, type QuotaAlert } from '../core/glance.ts';
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
@@ -230,6 +230,31 @@ function setLoginItem(enabled: boolean): LoginItem {
   return loginItem();
 }
 
+// Windows starts at login the copy that turned it on. A copy run since from another folder (a
+// newer download) takes the entry over, so an old copy never starts at login again. An entry the
+// user turned off in Task Manager stays off.
+function followLoginItem(): void {
+  if (!LOGIN_ITEM_SUPPORTED || process.platform !== 'win32') return;
+  const { openAtLogin, launchItems } = app.getLoginItemSettings(LOGIN_ITEM);
+  if (!openAtLogin && launchItems.some(item => item.scope === 'user' && item.enabled)) setLoginItem(true);
+}
+
+// The main thread runs the window: blocked for 5 s, Windows reports the app as not responding.
+// Each block of 2 s or more is kept for the diagnostics. Timers stop while the system sleeps, so
+// a far longer gap is that, not a block.
+const STALL_CHECK_MS = 500;
+const STALL_REPORT_MS = 2000;
+const STALL_SLEEP_MS = 5 * DURATION_MS.MINUTE;
+function watchMainThread(faults: Pick<FaultLog, 'stall'>): void {
+  let last = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const blocked = now - last - STALL_CHECK_MS;
+    if (blocked >= STALL_REPORT_MS && blocked < STALL_SLEEP_MS) faults.stall(blocked);
+    last = now;
+  }, STALL_CHECK_MS).unref();
+}
+
 interface NotificationAction {
   text: string;
   run: () => void;
@@ -300,6 +325,9 @@ function denyPermissions(): void {
 
 async function start(): Promise<void> {
   denyPermissions();
+  followLoginItem();
+  const faults = createFaultLog();
+  watchMainThread(faults);
   // The tools are looked up on PATH, which a copy opened from the Dock or Finder has only in part.
   if (process.platform === 'darwin') {
     const folders = await loginShellPath();
@@ -319,7 +347,6 @@ async function start(): Promise<void> {
   });
   const history = await createHistory({ dataDir });
   const tokenUsage = await createTokenUsage({ dataDir, homeDir });
-  const faults = createFaultLog();
   const continuity = await createContinuity({
     homeDir,
     dataDir,

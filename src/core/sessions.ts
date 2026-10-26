@@ -35,7 +35,7 @@ import {
   jsonLines,
   newestFiles,
   readJsonSync,
-  readTailSync,
+  readTail,
   samePath,
   type JsonObject
 } from './files.ts';
@@ -750,7 +750,7 @@ const isFileSync = (file: string): boolean => attemptSync(() => fs.statSync(file
 
 export async function recentSessionModel(session: RecentSession): Promise<string> {
   // The model is in the last turns; a transcript can be hundreds of MB, so only its end is read.
-  if (session.providerId === 'claude') return claudeSessionMode(session.file).model ?? '';
+  if (session.providerId === 'claude') return (await claudeSessionMode(session.file)).model ?? '';
   if (session.providerId === 'codex') return (await readCodexFile(session.file, session.sessionId)).sessionModel;
   return session.model ?? '';
 }
@@ -810,8 +810,7 @@ function projectScan(): { feed(chunk: Buffer): void; finish(): string | null } {
   };
 }
 
-// Listing inspects many projects: read asynchronously and cache per file version, shared with
-// the targeted synchronous lookup below.
+// Read asynchronously, as every transcript is (see readTail), and cached per file version.
 async function readClaudeProject(file: string): Promise<ClaudeProject | null> {
   const version = fileVersion(file);
   const hit = claudeProjectMemo.get(file);
@@ -837,27 +836,9 @@ async function readClaudeProject(file: string): Promise<ClaudeProject | null> {
   return project;
 }
 
-export function claudeProjectDir(file: string): string | null {
-  const version = fileVersion(file);
-  const hit = claudeProjectMemo.get(file);
-  if (hit?.version === version) return hit.projectDir;
-  const project = attemptSync(() => {
-    const fd = fs.openSync(file, 'r');
-    const buffer = Buffer.alloc(SCAN_CHUNK_BYTES);
-    const scan = projectScan();
-    try {
-      for (let size = fs.readSync(fd, buffer); size; size = fs.readSync(fd, buffer)) scan.feed(Buffer.from(buffer.subarray(0, size)));
-      return { version, projectDir: scan.finish() };
-    } finally {
-      fs.closeSync(fd);
-    }
-  });
-  if (!project || fileVersion(file) !== version) return null;
-  cacheEntry(claudeProjectMemo, file, project, PROJECT_CACHE_LIMIT);
-  return project.projectDir;
-}
+export const claudeProjectDir = async (file: string): Promise<string | null> => (await readClaudeProject(file))?.projectDir ?? null;
 
-export function latestClaudeSession(root: string, identity?: SessionIdentity): RecentSession | null {
+export async function latestClaudeSession(root: string, identity?: SessionIdentity): Promise<RecentSession | null> {
   const projects = path.join(root, CLAUDE_FILES.projects);
   // A known session is found by its file name; otherwise each project's newest transcript is a
   // candidate. Profiles can hold thousands of transcripts, so no others are read.
@@ -873,7 +854,7 @@ export function latestClaudeSession(root: string, identity?: SessionIdentity): R
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .map(entry => entry.file);
   for (const file of files) {
-    const projectDir = claudeProjectDir(file);
+    const projectDir = await claudeProjectDir(file);
     if (!projectDir) continue;
     const session: RecentSession = {
       providerId: 'claude',
@@ -889,7 +870,7 @@ export function latestClaudeSession(root: string, identity?: SessionIdentity): R
 
 // A Claude Code session of the profile by its id alone, in whichever project folder it is kept
 // (a worktree's sessions are kept under its repository's folder).
-export function claudeSessionById(root: string, sessionId: string): RecentSession | null {
+export async function claudeSessionById(root: string, sessionId: string): Promise<RecentSession | null> {
   // An id is a file name, never a path.
   if (path.basename(sessionId) !== sessionId) return null;
   const projects = path.join(root, CLAUDE_FILES.projects);
@@ -897,7 +878,7 @@ export function claudeSessionById(root: string, sessionId: string): RecentSessio
     .map(dir => path.join(projects, dir.name, `${sessionId}${JSON_LINES_EXTENSION}`))
     .filter(isFileSync)
     .sort((a, b) => mtime(b) - mtime(a))[0];
-  const projectDir = file ? claudeProjectDir(file) : null;
+  const projectDir = file ? await claudeProjectDir(file) : null;
   return file && projectDir ? { providerId: 'claude', sessionId, projectDir, updatedAt: mtime(file), file } : null;
 }
 
@@ -960,25 +941,25 @@ const timestamp = (value: unknown): number => (typeof value === 'string' ? Date.
 // (overloaded, the network) clears the stop too: the session went on, and stopped on something
 // else. `headless` marks a run started by a program (`claude -p`, the Agent SDK), not a person
 // in a terminal.
-export function claudeLimitStop(file: string): { stoppedAt: number; cwd: string; headless: boolean } | null {
+export async function claudeLimitStop(file: string): Promise<{ stoppedAt: number; cwd: string; headless: boolean } | null> {
   let stop: JsonObject | null = null;
-  for (const record of jsonLines(readTailSync(file, TAIL_SCAN_BYTES))) {
+  for (const record of jsonLines(await readTail(file, TAIL_SCAN_BYTES))) {
     if (record.type !== 'assistant' || record.isSidechain || record.isMeta) continue;
     stop = record.isApiErrorMessage === true && record.apiError === CLAUDE_LIMIT_ERROR ? record : null;
   }
   const stoppedAt = timestamp(stop?.timestamp);
   if (!stop || !Number.isFinite(stoppedAt)) return null;
   const headless = typeof stop.entrypoint === 'string' && stop.entrypoint.startsWith('sdk-');
-  const cwd = claudeProjectDir(file);
+  const cwd = await claudeProjectDir(file);
   return cwd ? { stoppedAt, cwd, headless } : null;
 }
 
 // How a Claude Code session was last running, so that it goes on the same way under another
 // profile: the model it used and its permission mode. Only the end of the transcript is read.
-export function claudeSessionMode(file: string): { model?: string; permissionMode?: ClaudePermissionMode } {
+export async function claudeSessionMode(file: string): Promise<{ model?: string; permissionMode?: ClaudePermissionMode }> {
   let model: string | undefined;
   let permissionMode: ClaudePermissionMode | undefined;
-  for (const record of jsonLines(readTailSync(file, TAIL_SCAN_BYTES))) {
+  for (const record of jsonLines(await readTail(file, TAIL_SCAN_BYTES))) {
     if (record.isSidechain) continue;
     const used = field(record.message, 'model');
     if (typeof used === 'string' && used !== SYNTHETIC_MODEL && !record.isApiErrorMessage) model = used;
@@ -1097,9 +1078,9 @@ export async function claudeBackgroundTasks(file: string): Promise<BackgroundTas
 
 // When a Claude Code transcript was last written to, by its records' own times (a file's times
 // can change without a write). NaN when it holds none.
-export function claudeLastWrittenAt(file: string): number {
+export async function claudeLastWrittenAt(file: string): Promise<number> {
   let last = Number.NaN;
-  for (const record of jsonLines(readTailSync(file, TAIL_SCAN_BYTES))) {
+  for (const record of jsonLines(await readTail(file, TAIL_SCAN_BYTES))) {
     const at = timestamp(record.timestamp);
     if (Number.isFinite(at) && !(at <= last)) last = at;
   }
@@ -1115,13 +1096,13 @@ export interface TranscriptWrite {
   size: number;
 }
 const writeMemo = new Map<string, { version: string; value: TranscriptWrite }>();
-export function claudeTranscriptWrite(file: string): TranscriptWrite | null {
-  const stat = attemptSync(() => fs.statSync(file));
+export async function claudeTranscriptWrite(file: string): Promise<TranscriptWrite | null> {
+  const stat = await attempt(() => fsp.stat(file));
   if (!stat) return null;
   const version = fileVersion(file);
   const hit = writeMemo.get(file);
   if (hit?.version === version) return hit.value;
-  const value = { lastRecordAt: claudeLastWrittenAt(file), size: stat.size };
+  const value = { lastRecordAt: await claudeLastWrittenAt(file), size: stat.size };
   if (fileVersion(file) !== version) return null;
   cacheEntry(writeMemo, file, { version, value });
   return value;
@@ -1129,8 +1110,8 @@ export function claudeTranscriptWrite(file: string): TranscriptWrite | null {
 
 // Claude Code: the last main-thread message is the model's reply that ended its turn, so the
 // session waits for the user.
-export function claudeTurnEnded(file: string): boolean {
-  const messages = [...jsonLines(readTailSync(file, TAIL_SCAN_BYTES))].filter(
+export async function claudeTurnEnded(file: string): Promise<boolean> {
+  const messages = [...jsonLines(await readTail(file, TAIL_SCAN_BYTES))].filter(
     record => (record.type === 'user' || record.type === 'assistant') && !record.isSidechain && !record.isMeta
   );
   const last = messages.at(-1);
@@ -1138,10 +1119,10 @@ export function claudeTurnEnded(file: string): boolean {
 }
 
 // Codex: the last turn completed with the usage-limit error, and no turn started since.
-export function codexLimitStop(file: string): { stoppedAt: number } | null {
+export async function codexLimitStop(file: string): Promise<{ stoppedAt: number } | null> {
   if (isCompressed(file)) return null;
   let stoppedAt: number | null = null;
-  for (const record of jsonLines(readTailSync(file, TAIL_SCAN_BYTES))) {
+  for (const record of jsonLines(await readTail(file, TAIL_SCAN_BYTES))) {
     const type = record.type === 'event_msg' ? field(record.payload, 'type') : undefined;
     if (type === 'task_started') stoppedAt = null;
     if (type === 'task_complete')
@@ -1150,39 +1131,46 @@ export function codexLimitStop(file: string): { stoppedAt: number } | null {
   return stoppedAt !== null && Number.isFinite(stoppedAt) ? { stoppedAt } : null;
 }
 
+// The stop scans run on every refresh, over every session written in the last minutes. A
+// transcript still being written belongs to an agent at work, not one stopped at its limit: it is
+// read once it has been quiet this long. Reading it sooner shows no stop and costs the most, as an
+// antivirus program scans a changed file whole on each open. An unchanged one is not read again.
+export const STOP_QUIET_MS = 15 * 1000;
+const claudeStopMemo = mtimeMemo<Awaited<ReturnType<typeof claudeLimitStop>>>();
+const codexStopMemo = mtimeMemo<Awaited<ReturnType<typeof codexLimitStop>>>();
+const settled = (updatedAt: number, now: number, maxAgeMs: number): boolean =>
+  now - updatedAt <= maxAgeMs && now - updatedAt >= STOP_QUIET_MS;
+
 // Sessions of a Claude Code profile written in the last `maxAgeMs` whose agent stopped at the
 // usage limit, newest first. Headless runs are left to the program that started them: it sees
 // the error itself, and opening each one in a terminal would bury the user's own sessions.
-export function claudeLimitStops(root: string, now: number, maxAgeMs: number): StoppedSession[] {
+export async function claudeLimitStops(root: string, now: number, maxAgeMs: number): Promise<StoppedSession[]> {
   const projects = path.join(root, CLAUDE_FILES.projects);
-  return subdirectories(projects)
-    .flatMap(dir => newestFiles(path.join(projects, dir.name), JSON_LINES_EXTENSION))
-    .map(file => ({ file, updatedAt: mtime(file) }))
-    .filter(({ updatedAt }) => now - updatedAt <= maxAgeMs)
-    .flatMap(({ file, updatedAt }) => {
-      const stop = claudeLimitStop(file);
-      return stop && !stop.headless && isRecentStop(stop.stoppedAt, now, maxAgeMs)
-        ? [
-            {
-              providerId: 'claude' as const,
-              sessionId: path.basename(file, JSON_LINES_EXTENSION),
-              projectDir: stop.cwd,
-              updatedAt,
-              file,
-              stoppedAt: stop.stoppedAt
-            }
-          ]
-        : [];
-    })
-    .sort((a, b) => b.stoppedAt - a.stoppedAt);
+  const stops: StoppedSession[] = [];
+  for (const dir of subdirectories(projects))
+    for (const file of newestFiles(path.join(projects, dir.name), JSON_LINES_EXTENSION)) {
+      const updatedAt = mtime(file);
+      if (!settled(updatedAt, now, maxAgeMs)) continue;
+      const stop = await attempt(() => claudeStopMemo(file, () => claudeLimitStop(file)));
+      if (stop && !stop.headless && isRecentStop(stop.stoppedAt, now, maxAgeMs))
+        stops.push({
+          providerId: 'claude',
+          sessionId: path.basename(file, JSON_LINES_EXTENSION),
+          projectDir: stop.cwd,
+          updatedAt,
+          file,
+          stoppedAt: stop.stoppedAt
+        });
+    }
+  return stops.sort((a, b) => b.stoppedAt - a.stoppedAt);
 }
 
 export async function codexLimitStops(root: string, now: number, maxAgeMs: number): Promise<StoppedSession[]> {
   const stops: StoppedSession[] = [];
   for (const file of walkRollouts(path.join(root, CODEX_SESSIONS_DIR))) {
     const updatedAt = mtime(file);
-    if (now - updatedAt > maxAgeMs) continue;
-    const stop = codexLimitStop(file);
+    if (!settled(updatedAt, now, maxAgeMs)) continue;
+    const stop = await attempt(() => codexStopMemo(file, () => codexLimitStop(file)));
     const meta = stop && (await attempt(() => readCodexMeta(file)));
     if (
       !stop ||

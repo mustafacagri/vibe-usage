@@ -44,7 +44,7 @@ async function fixtureHome(t: TestContext, { cursorCache = true } = {}): Promise
 
 test("model lists come from each tool's own data; nothing is invented", async t => {
   const location = await fixtureHome(t);
-  const models = discoverModels(location);
+  const models = await discoverModels(location);
   assert.deepEqual(
     models.claude,
     ['opus', 'fable', 'sonnet', 'haiku', 'claude-opus-5-5', 'claude-sonnet-5-5'],
@@ -72,7 +72,7 @@ test("every account's profile folder is read, and a disabled account's is not", 
     account({ id: 'claude:spare', configDir: spare, primary: false }),
     account({ id: 'codex:spare', providerId: 'codex', configDir: codexSpare, primary: false })
   ];
-  const models = discoverModels({ ...location, accounts });
+  const models = await discoverModels({ ...location, accounts });
   assert.deepEqual(models.claude, [
     'opus',
     'fable',
@@ -85,18 +85,18 @@ test("every account's profile folder is read, and a disabled account's is not", 
   ]);
   assert.deepEqual(models.codex, ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-6-sol']);
   const disabled = accounts.map(a => ({ ...a, enabled: false }));
-  assert.deepEqual(discoverModels({ ...location, accounts: disabled }).codex, ['gpt-6-luna', 'gpt-5.6-terra']);
+  assert.deepEqual((await discoverModels({ ...location, accounts: disabled })).codex, ['gpt-6-luna', 'gpt-5.6-terra']);
 });
 
 test('without a Cursor live list only the default and the user history are offered', async t => {
   const location = await fixtureHome(t, { cursorCache: false });
-  assert.deepEqual(discoverModels(location).cursor, ['auto']);
+  assert.deepEqual((await discoverModels(location)).cursor, ['auto']);
   await fs.mkdir(path.join(location.homeDir, '.cursor'));
   await fs.writeFile(
     path.join(location.homeDir, '.cursor', 'cli-config.json'),
     JSON.stringify({ selectedModel: { modelId: 'gpt-5.6-sol-high' }, modelSelectionHistory: ['default', 'claude-opus-5-5-high'] })
   );
-  assert.deepEqual(discoverModels(location).cursor, ['auto', 'gpt-5.6-sol-high', 'claude-opus-5-5-high']);
+  assert.deepEqual((await discoverModels(location)).cursor, ['auto', 'gpt-5.6-sol-high', 'claude-opus-5-5-high']);
 });
 
 test('tiers are read from model family names only', () => {
@@ -118,24 +118,24 @@ test('handover model: preference, else the same model, else the closest tier', a
     path.join(liteCache, 'cursor-models.json'),
     JSON.stringify({ models: ['auto', 'gemini-3.8-flash-lite-high', 'gemini-3.8-flash-high'], updatedAt: 1 })
   );
-  assert.deepEqual(map('claude-opus-5-5', 'codex', { codex: 'gpt-6-luna' }), {
+  assert.deepEqual(await map('claude-opus-5-5', 'codex', { codex: 'gpt-6-luna' }), {
     tier: 'flagship',
     targetModel: 'gpt-6-luna',
     source: 'preference'
   });
-  assert.equal(map('claude-opus-5-5', 'cursor').targetModel, 'claude-opus-5-5-high', 'same model at standard effort');
-  assert.equal(map('Gemini 3.8 Flash (High)', 'cursor').targetModel, 'gemini-3.8-flash-high', 'display names map to ids');
-  assert.equal(map('claude-sonnet-5-5', 'claude').targetModel, 'claude-sonnet-5-5');
-  assert.equal(map('claude-opus-5-5', 'codex').targetModel, 'gpt-5.6-terra');
-  assert.equal(map('gpt-6-luna', 'claude').targetModel, 'sonnet');
-  assert.equal(map('claude-haiku-5-5', 'claude').targetModel, 'haiku', "the fast tier's alias");
-  assert.equal(map('claude-haiku-5-5', 'codex').targetModel, 'gpt-6-luna', 'no fast model: the nearest tier');
+  assert.equal((await map('claude-opus-5-5', 'cursor')).targetModel, 'claude-opus-5-5-high', 'same model at standard effort');
+  assert.equal((await map('Gemini 3.8 Flash (High)', 'cursor')).targetModel, 'gemini-3.8-flash-high', 'display names map to ids');
+  assert.equal((await map('claude-sonnet-5-5', 'claude')).targetModel, 'claude-sonnet-5-5');
+  assert.equal((await map('claude-opus-5-5', 'codex')).targetModel, 'gpt-5.6-terra');
+  assert.equal((await map('gpt-6-luna', 'claude')).targetModel, 'sonnet');
+  assert.equal((await map('claude-haiku-5-5', 'claude')).targetModel, 'haiku', "the fast tier's alias");
+  assert.equal((await map('claude-haiku-5-5', 'codex')).targetModel, 'gpt-6-luna', 'no fast model: the nearest tier');
   assert.equal(
-    getMappedModel('claude-sonnet-5-5', 'cursor', {}, { ...location, cacheDir: liteCache }).targetModel,
+    (await getMappedModel('claude-sonnet-5-5', 'cursor', {}, { ...location, cacheDir: liteCache })).targetModel,
     'gemini-3.8-flash-high',
     'a balanced model is not mapped to a flash-lite'
   );
-  assert.equal(map('claude-sonnet-5-5', 'antigravity').targetModel, null);
+  assert.equal((await map('claude-sonnet-5-5', 'antigravity')).targetModel, null);
 });
 
 test('Cursor models are parsed from the CLI and cached in the app data dir', async t => {

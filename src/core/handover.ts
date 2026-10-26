@@ -372,7 +372,7 @@ async function resolveHandover(
   });
   const from = context.providerId ?? (fromProvider === AUTO ? null : fromProvider);
   const project = projectChoice(state, cwd);
-  const models = mappedModels(state, context.sessionModel, { dataDir, homeDir });
+  const models = await mappedModels(state, context.sessionModel, { dataDir, homeDir });
   if (project.tool && project.model) models[project.tool] = project.model;
   // Under "auto" the target is the first tool with verified quota; otherwise the one chosen.
   const target = (): { to: ProviderId; decision: ProviderChoice | null } => {
@@ -382,7 +382,7 @@ async function resolveHandover(
     return { to: choice.providerId, decision: choice };
   };
   const { to, decision } = target();
-  const mapping = getMappedModel(context.sessionModel, to, state.settings.preferredModels, {
+  const mapping = await getMappedModel(context.sessionModel, to, state.settings.preferredModels, {
     homeDir,
     cacheDir: dataDir,
     accounts: state.settings.accounts
@@ -480,20 +480,18 @@ export function previewSmartLaunch(state: State): SmartLaunchPreview {
   };
 }
 
-export function mappedModels(
+export async function mappedModels(
   state: State,
   sourceModel: string | null,
   { dataDir, homeDir }: Pick<LaunchContext, 'dataDir' | 'homeDir'>
-): Partial<Record<ProviderId, string>> {
-  return Object.fromEntries(
-    PROVIDER_IDS.flatMap(id => {
-      const model = providerById(id).acceptsModel
-        ? getMappedModel(sourceModel, id, state.settings.preferredModels, { homeDir, cacheDir: dataDir, accounts: state.settings.accounts })
-            .targetModel
-        : null;
-      return model ? [[id, model]] : [];
-    })
+): Promise<Partial<Record<ProviderId, string>>> {
+  const location = { homeDir, cacheDir: dataDir, accounts: state.settings.accounts };
+  const mapped = await Promise.all(
+    PROVIDER_IDS.filter(id => providerById(id).acceptsModel).map(
+      async id => [id, (await getMappedModel(sourceModel, id, state.settings.preferredModels, location)).targetModel] as const
+    )
   );
+  return Object.fromEntries(mapped.flatMap(([id, model]) => (model ? [[id, model]] : [])));
 }
 
 export interface SmartLaunchResult {

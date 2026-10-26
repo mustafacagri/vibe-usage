@@ -152,7 +152,7 @@ export async function replay(timelineDir: string): Promise<{ result: MomentResul
         // that holds unsaved work, or whose end cannot be told, keeps the session), and the
         // transcript is carried as a real move carries it.
         start: async (session, to, _state, _context, options): Promise<ContinueResult> => {
-          if (options?.running && holdsUnsavedConversation(options.running, session.file)) throw new AppError('session_unsaved');
+          if (options?.running && (await holdsUnsavedConversation(options.running, session.file))) throw new AppError('session_unsaved');
           if (options?.running && (await endClaudeSession(options.running, control)) === 'unknown') throw new AppError('process_unknown');
           started.push({
             sessionId: session.sessionId,

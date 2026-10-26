@@ -23,7 +23,14 @@ import { isObject } from '../src/core/files.ts';
 import { createQuotaWatch } from '../src/core/glance.ts';
 import { RESUME_WITHOUT_QUESTION } from '../src/core/launch.ts';
 import { chooseSuccessor, type Successor } from '../src/core/selection.ts';
-import { claudeLimitStop, codexLimitStop, type BackgroundTask, type RecentSession, type StoppedSession } from '../src/core/sessions.ts';
+import {
+  claudeLimitStop,
+  codexLimitStop,
+  STOP_QUIET_MS,
+  type BackgroundTask,
+  type RecentSession,
+  type StoppedSession
+} from '../src/core/sessions.ts';
 import { defaultSettings } from '../src/core/settings.ts';
 import { PROVIDER_IDS, type ProviderId } from '../src/shared/catalog.ts';
 import type { Account, AutoContinue, MeasuredAccount, ReopenAfterRestart, ReturnToPrimary, Snapshot } from '../src/shared/types.ts';
@@ -96,13 +103,13 @@ test('a stop is read from the transcript: the tool’s own usage-limit error as 
     message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: "You've hit your session limit · resets 4pm" }] }
   };
   const prompt = { type: 'user', isSidechain: false, cwd: '/work/app', message: { role: 'user', content: 'go on' } };
-  assert.deepEqual(claudeLimitStop(await write('stopped.jsonl', [prompt, limit, { type: 'pr-link', prNumber: 1 }])), {
+  assert.deepEqual(await claudeLimitStop(await write('stopped.jsonl', [prompt, limit, { type: 'pr-link', prNumber: 1 }])), {
     stoppedAt: Date.parse('2026-10-17T11:58:00.000Z'),
     cwd: '/work/app',
     headless: false
   });
   assert.equal(
-    claudeLimitStop(await write('headless.jsonl', [prompt, { ...limit, entrypoint: 'sdk-cli' }]))?.headless,
+    (await claudeLimitStop(await write('headless.jsonl', [prompt, { ...limit, entrypoint: 'sdk-cli' }])))?.headless,
     true,
     'a run started by a program is told apart'
   );
@@ -113,18 +120,18 @@ test('a stop is read from the transcript: the tool’s own usage-limit error as 
     message: { role: 'assistant', model: 'claude-opus-5-5', content: [] }
   };
   assert.equal(
-    claudeLimitStop(await write('prompted.jsonl', [limit, prompt]))?.stoppedAt,
+    (await claudeLimitStop(await write('prompted.jsonl', [limit, prompt])))?.stoppedAt,
     Date.parse('2026-10-17T11:58:00.000Z'),
     'a prompt alone is waiting: a queued notice Claude Code takes while holding for the reset, or one not answered yet'
   );
   assert.equal(
-    claudeLimitStop(await write('resumed.jsonl', [limit, prompt, reply])),
+    await claudeLimitStop(await write('resumed.jsonl', [limit, prompt, reply])),
     null,
     'a reply after the limit means the session went on'
   );
-  assert.equal(claudeLimitStop(await write('overloaded.jsonl', [prompt, { ...limit, apiError: 'overloaded', message: {} }])), null);
+  assert.equal(await claudeLimitStop(await write('overloaded.jsonl', [prompt, { ...limit, apiError: 'overloaded', message: {} }])), null);
   assert.equal(
-    claudeLimitStop(await write('subagent.jsonl', [prompt, { ...limit, isSidechain: true }])),
+    await claudeLimitStop(await write('subagent.jsonl', [prompt, { ...limit, isSidechain: true }])),
     null,
     'only the main thread counts'
   );
@@ -135,11 +142,46 @@ test('a stop is read from the transcript: the tool’s own usage-limit error as 
     payload: { type, ...extra }
   });
   const exceeded = event('task_complete', { error: { message: 'You’ve hit your usage limit.', codex_error_info: 'usage_limit_exceeded' } });
-  assert.deepEqual(codexLimitStop(await write('codex-stopped.jsonl', [event('task_started'), exceeded])), {
+  assert.deepEqual(await codexLimitStop(await write('codex-stopped.jsonl', [event('task_started'), exceeded])), {
     stoppedAt: Date.parse('2026-10-17T11:59:00.000Z')
   });
-  assert.equal(codexLimitStop(await write('codex-resumed.jsonl', [exceeded, event('task_started')])), null);
-  assert.equal(codexLimitStop(await write('codex-done.jsonl', [exceeded, event('task_complete')])), null);
+  assert.equal(await codexLimitStop(await write('codex-resumed.jsonl', [exceeded, event('task_started')])), null);
+  assert.equal(await codexLimitStop(await write('codex-done.jsonl', [exceeded, event('task_complete')])), null);
+});
+
+// Opening a transcript can cost seconds (an antivirus program scans a changed one whole), and one
+// still being written belongs to an agent at work: the stop scans leave it until it is quiet.
+test('a transcript still being written is read for a stop once it has gone quiet', async t => {
+  const home = await tempDir(t, 'vibe-stop-quiet-');
+  for (const providerId of ['claude', 'codex'] as const) {
+    const configDir = path.join(home, providerId);
+    const holder = account({ id: `${providerId}:quiet`, providerId, configDir });
+    const id = '0199a213-81c0-7800-8aa1-bbab2a035a98';
+    const file =
+      providerId === 'claude'
+        ? path.join(configDir, 'projects', '-work-app', `${id}.jsonl`)
+        : path.join(configDir, 'sessions', `rollout-2026-10-17-${id}.jsonl`);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const timestamp = new Date(NOW - MINUTE).toISOString();
+    await fs.writeFile(
+      file,
+      providerId === 'claude'
+        ? [
+            { type: 'user', cwd: '/work/app', message: { content: 'Continue the task' } },
+            { type: 'assistant', cwd: '/work/app', timestamp, isApiErrorMessage: true, apiError: 'usage_limit_reached', message: {} }
+          ]
+            .map(record => JSON.stringify(record))
+            .join('\n')
+        : `${codexRollout({ id, cwd: '/work/app', user: ['Continue the task'] })}\n${JSON.stringify({ type: 'event_msg', timestamp, payload: { type: 'task_complete', error: { codex_error_info: 'usage_limit_exceeded' } } })}`
+    );
+    const writtenAt = async (ago: number): Promise<void> => {
+      await fs.utimes(file, new Date(NOW - ago), new Date(NOW - ago));
+    };
+    await writtenAt(STOP_QUIET_MS / 3);
+    assert.equal(await findStoppedSession(holder, home, NOW), null, `${providerId}: still being written`);
+    await writtenAt(STOP_QUIET_MS);
+    assert.equal((await findStoppedSession(holder, home, NOW))?.providerId, providerId, `${providerId}: quiet since`);
+  }
 });
 
 test('touching or restoring a transcript cannot make an ancient or future usage stop current', async t => {
@@ -176,7 +218,9 @@ test('touching or restoring a transcript cannot make an ancient or future usage 
               .join('\n')
           : `${codexRollout({ id, cwd: '/work/app', user: ['Continue the task'] })}\n${JSON.stringify({ type: 'event_msg', timestamp, payload: { type: 'task_complete', error: { codex_error_info: 'usage_limit_exceeded' } } })}`;
       await fs.writeFile(file, body);
-      await fs.utimes(file, new Date(NOW), new Date(NOW));
+      // Written moments ago and quiet since (one still being written is read once it is quiet).
+      const written = new Date(NOW - STOP_QUIET_MS);
+      await fs.utimes(file, written, written);
       assert.equal(Boolean(await findStoppedSession(holder, home, NOW)), expected, `${providerId}: event age ${age}ms, fresh file mtime`);
     }
   }
@@ -984,7 +1028,7 @@ test('real profile discovery binds the project, session and model for continuati
       .map(r => JSON.stringify(r))
       .join('\n')
   );
-  await fs.utimes(transcript, new Date(NOW), new Date(NOW));
+  await fs.utimes(transcript, new Date(NOW - STOP_QUIET_MS), new Date(NOW - STOP_QUIET_MS));
   const source = account({ configDir: profile });
   assert.equal((await findRecentSession(source, home))?.model, 'claude-opus-5-5');
   assert.equal((await findStoppedSession(source, home, NOW))?.sessionId, 'original');
@@ -1010,7 +1054,7 @@ test('real profile discovery binds the project, session and model for continuati
       })
     }\n`
   );
-  await fs.utimes(rollout, new Date(NOW), new Date(NOW));
+  await fs.utimes(rollout, new Date(NOW - STOP_QUIET_MS), new Date(NOW - STOP_QUIET_MS));
   const codexAccount = account({ providerId: 'codex', id: 'codex:work', configDir: codexRoot });
   assert.equal((await findRecentSession(codexAccount, home, { projectDir: project, sessionId: 'original-codex' }))?.model, 'gpt-6-luna');
   assert.equal((await findStoppedSession(codexAccount, home, NOW))?.sessionId, 'original-codex');
@@ -1595,10 +1639,14 @@ test('a session whose process has not saved its conversation is never moved: it 
   // A child session (unlisted) started 5 minutes ago, and the transcript's last record is older: it
   // saved nothing since. A listed process saves as it goes, whatever the file's last record says.
   const running = live({ listed: false, status: null, startedAt: NOW - 5 * MINUTE });
-  assert.equal(holdsUnsavedConversation(running, file), true);
-  assert.equal(holdsUnsavedConversation(live({ listed: false, startedAt: NOW - 20 * MINUTE }), file), false, 'written since it started');
+  assert.equal(await holdsUnsavedConversation(running, file), true);
   assert.equal(
-    holdsUnsavedConversation(live({ startedAt: NOW - 5 * MINUTE }), file),
+    await holdsUnsavedConversation(live({ listed: false, startedAt: NOW - 20 * MINUTE }), file),
+    false,
+    'written since it started'
+  );
+  assert.equal(
+    await holdsUnsavedConversation(live({ startedAt: NOW - 5 * MINUTE }), file),
     false,
     'listed: resumed without a prompt, nothing unsaved'
   );

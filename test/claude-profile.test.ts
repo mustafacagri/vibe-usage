@@ -80,7 +80,7 @@ test('a Claude Code session is read for the model and permission mode it last ra
     { type: 'assistant', isApiErrorMessage: true, message: { model: '<synthetic>', content: [] } }
   ];
   await fs.writeFile(file, records.map(r => JSON.stringify(r)).join('\n'));
-  assert.deepEqual(claudeSessionMode(file), { model: 'claude-opus-5-5', permissionMode: 'auto' });
+  assert.deepEqual(await claudeSessionMode(file), { model: 'claude-opus-5-5', permissionMode: 'auto' });
 });
 
 test('a profile set up before a newer first-run question gets the answer given in another profile', async t => {

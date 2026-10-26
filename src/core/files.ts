@@ -73,6 +73,41 @@ export function readTailSync(file: string, bytes: number): string {
   );
 }
 
+// readHeadSync, off the main thread (see readTail).
+export async function readHead(file: string, bytes: number): Promise<string> {
+  return (
+    (await attempt(async () => {
+      const handle = await fsp.open(file, 'r');
+      try {
+        const buffer = Buffer.alloc(bytes);
+        const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+        return buffer.toString('utf8', 0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    })) ?? ''
+  );
+}
+
+// readTailSync, off the main thread. Opening a file can take long: an antivirus program may scan
+// it whole first (25 s for a 41 MB transcript under Kaspersky), and the app must stay responsive.
+export async function readTail(file: string, bytes: number): Promise<string> {
+  return (
+    (await attempt(async () => {
+      const handle = await fsp.open(file, 'r');
+      try {
+        const { size } = await handle.stat();
+        const length = Math.min(bytes, size);
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await handle.read(buffer, 0, length, size - length);
+        return buffer.toString('utf8', 0, bytesRead);
+      } finally {
+        await handle.close();
+      }
+    })) ?? ''
+  );
+}
+
 // Files in `dir` with the given extension, newest first ([] when unreadable).
 export function newestFiles(dir: string, extension: string): string[] {
   return (attemptSync(() => fs.readdirSync(dir)) ?? [])

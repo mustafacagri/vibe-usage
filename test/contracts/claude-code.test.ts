@@ -117,11 +117,11 @@ test('corpus: a usage-limit stop stands while Claude Code holds the session, unt
         .map(r => JSON.stringify(r))
         .join('\n')}\n`
     );
-    assert.deepEqual(claudeLimitStop(prefix), { stoppedAt, cwd: 'C:\\work\\app', headless: false }, label);
+    assert.deepEqual(await claudeLimitStop(prefix), { stoppedAt, cwd: 'C:\\work\\app', headless: false }, label);
   }
-  assert.equal(claudeLimitStop(file), null, 'the reply after the reset means the session went on');
-  assert.equal(claudeLastWrittenAt(file), Date.parse(str(reply.timestamp)), 'the newest record time is the reply');
-  assert.deepEqual(claudeSessionMode(file), { model: 'claude-fable-5-1', permissionMode: 'auto' });
+  assert.equal(await claudeLimitStop(file), null, 'the reply after the reset means the session went on');
+  assert.equal(await claudeLastWrittenAt(file), Date.parse(str(reply.timestamp)), 'the newest record time is the reply');
+  assert.deepEqual(await claudeSessionMode(file), { model: 'claude-fable-5-1', permissionMode: 'auto' });
 });
 
 test('corpus: a fresh start writes mode, permission-mode and snapshots before the first prompt', async () => {
@@ -131,7 +131,7 @@ test('corpus: a fresh start writes mode, permission-mode and snapshots before th
     ['mode', 'permission-mode', 'file-history-snapshot', 'file-history-snapshot', 'atis-latch']
   );
   assert.equal(
-    claudeProjectDir(fixture('transcripts/fresh-start.head.jsonl')),
+    await claudeProjectDir(fixture('transcripts/fresh-start.head.jsonl')),
     'C:\\work\\app',
     'the first record with a cwd names the project'
   );
@@ -142,10 +142,10 @@ test('corpus: a turn that ended leaves an end_turn reply, then bookkeeping witho
   const seen = await records('transcripts/turn-end.tail.jsonl');
   const last = [...seen].reverse().find(r => r.type === 'user' || r.type === 'assistant');
   assert.equal((last?.message as { stop_reason?: unknown }).stop_reason, 'end_turn');
-  assert.equal(claudeTurnEnded(file), true);
+  assert.equal(await claudeTurnEnded(file), true);
   const after = seen.slice(seen.lastIndexOf(last ?? {}) + 1);
   assert.ok(after.length > 0 && after.every(r => r.type !== 'user' && r.type !== 'assistant'), 'queue-operation and system records follow');
-  const write = claudeTranscriptWrite(file);
+  const write = await claudeTranscriptWrite(file);
   assert.ok(write && Number.isFinite(write.lastRecordAt));
 });
 
@@ -154,12 +154,12 @@ test('corpus: a session relocated into a worktree belongs to it; one whose agent
   const marks = await records('transcripts/worktree-relocated.jsonl');
   const mark = marks.find(r => r.type === 'relocated');
   assert.deepEqual(Object.keys(mark ?? {}).sort(), ['relocatedCwd', 'sessionId', 'type'], 'the relocated record’s exact shape');
-  assert.equal(claudeProjectDir(relocated), 'C:\\work\\app\\.claude\\worktrees\\task');
+  assert.equal(await claudeProjectDir(relocated), 'C:\\work\\app\\.claude\\worktrees\\task');
   assert.ok(marks.some(r => r.type === 'worktree-state'));
   const wandered = fixture('transcripts/worktree-wandered.jsonl');
   const tail = (await records('transcripts/worktree-wandered.jsonl')).at(-1);
   assert.equal(tail?.cwd, 'C:\\work\\app\\.claude\\worktrees\\task', 'later records follow the agent’s shell');
-  assert.equal(claudeProjectDir(wandered), 'C:\\work\\app', 'the session is still the project’s');
+  assert.equal(await claudeProjectDir(wandered), 'C:\\work\\app', 'the session is still the project’s');
 });
 
 // A background command is named by its tool result, whether the call asked for the background
@@ -230,7 +230,7 @@ test('corpus: a subagent’s limit record is a sidechain record, never a stop of
   const seen = await records('transcripts/subagent-limit.jsonl');
   assert.ok(seen.every(r => r.isSidechain === true));
   assert.ok(seen.some(r => r.apiError === 'usage_limit_reached'));
-  assert.equal(claudeLimitStop(fixture('transcripts/subagent-limit.jsonl')), null);
+  assert.equal(await claudeLimitStop(fixture('transcripts/subagent-limit.jsonl')), null);
 });
 
 test('corpus: an idle process writes an away summary with a timestamp; it counts as written', async () => {
