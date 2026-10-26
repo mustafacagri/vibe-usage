@@ -177,7 +177,7 @@ test('relocated Claude sessions are discovered under their worktree even when re
     { type: 'assistant', cwd: path.join(worktree, 'src'), message: { content: 'Latest worktree state' } }
   ];
   await fs.writeFile(file, records.map(record => JSON.stringify(record)).join('\n'));
-  assert.equal(claudeProjectDir(file), worktree);
+  assert.equal(await claudeProjectDir(file), worktree);
   const sources = sessionSources(home);
   assert.deepEqual(await listSessions('claude', project, sources), [], 'the parent slug is not the session project');
   const listed = await listSessions('claude', worktree, sources);
@@ -194,7 +194,7 @@ test('relocated Claude sessions are discovered under their worktree even when re
     null
   );
   assert.equal(
-    latestClaudeSession(path.join(home, '.claude'))?.projectDir,
+    (await latestClaudeSession(path.join(home, '.claude')))?.projectDir,
     worktree,
     'manual and continuity discovery share project ownership'
   );
@@ -487,10 +487,14 @@ test('a known Claude session is found by its id, not by reading every transcript
   };
   await write('older', 30);
   await write('newer', 1);
-  assert.equal(latestClaudeSession(root)?.sessionId, 'newer');
-  assert.equal(latestClaudeSession(root, { projectDir: '/work/app', sessionId: 'older' })?.sessionId, 'older');
-  assert.equal(latestClaudeSession(root, { projectDir: '/work/other', sessionId: 'older' }), null, 'another project');
-  assert.equal(latestClaudeSession(root, { projectDir: '/work/app', sessionId: '../C--work-app/older' }), null, 'an id is never a path');
+  assert.equal((await latestClaudeSession(root))?.sessionId, 'newer');
+  assert.equal((await latestClaudeSession(root, { projectDir: '/work/app', sessionId: 'older' }))?.sessionId, 'older');
+  assert.equal(await latestClaudeSession(root, { projectDir: '/work/other', sessionId: 'older' }), null, 'another project');
+  assert.equal(
+    await latestClaudeSession(root, { projectDir: '/work/app', sessionId: '../C--work-app/older' }),
+    null,
+    'an id is never a path'
+  );
 });
 
 test('a Claude session belongs to the folder Claude Code attributes it to, wherever its agent went', async t => {
@@ -516,16 +520,16 @@ test('a Claude session belongs to the folder Claude Code attributes it to, where
     { type: 'assistant', cwd: worktree, message: { role: 'assistant', content: [] } },
     { ...limit, cwd: worktree }
   ]);
-  assert.equal(claudeProjectDir(wandered), project);
-  assert.equal(claudeLimitStop(wandered)?.cwd, project, 'the stop is attributed the same way');
+  assert.equal(await claudeProjectDir(wandered), project);
+  assert.equal((await claudeLimitStop(wandered))?.cwd, project, 'the stop is attributed the same way');
   // Relocated into a worktree by Claude Code itself: the worktree is its folder from then on.
   const relocated = await write('relocated.jsonl', [
     { type: 'user', cwd: project, message: { role: 'user', content: 'go' } },
     { type: 'relocated', sessionId: 'relocated', relocatedCwd: worktree },
     { ...limit, cwd: worktree }
   ]);
-  assert.equal(claudeProjectDir(relocated), worktree);
-  assert.equal(claudeProjectDir(await write('empty.jsonl', [{ type: 'summary' }])), null);
+  assert.equal(await claudeProjectDir(relocated), worktree);
+  assert.equal(await claudeProjectDir(await write('empty.jsonl', [{ type: 'summary' }])), null);
   // A relocation in the middle of a multi-megabyte transcript is found wherever the 1 MiB read
   // boundary falls, including inside the marker itself.
   const filler = { type: 'assistant', cwd: project, message: { role: 'assistant', content: [{ type: 'text', text: 'x'.repeat(1000) }] } };
@@ -533,6 +537,6 @@ test('a Claude session belongs to the folder Claude Code attributes it to, where
     const lines: Record<string, unknown>[] = [{ type: 'user', cwd: project, message: { role: 'user', content: 'go' } }];
     for (let size = 0; size < 1024 * 1024 + padding; size += 1100) lines.push(filler);
     lines.push({ type: 'relocated', sessionId: 'big', relocatedCwd: worktree }, ...Array.from({ length: 1500 }, () => filler));
-    assert.equal(claudeProjectDir(await write(`big-${padding}.jsonl`, lines)), worktree, `padding ${padding}`);
+    assert.equal(await claudeProjectDir(await write(`big-${padding}.jsonl`, lines)), worktree, `padding ${padding}`);
   }
 });

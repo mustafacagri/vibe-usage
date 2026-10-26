@@ -93,6 +93,9 @@ test('the fault log keeps the latest few as type and system codes, never the mes
   log.record('continuity', passedOn);
   log.record('continuity', passedOn);
   assert.equal(log.list().filter(fault => fault.action === 'continuity').length, 1, 'one failure is kept once');
+  log.stall(25_434);
+  const [stall] = log.list();
+  assert.deepEqual([stall?.action, stall?.error], ['mainThread', 'blocked 25.4 s'], 'how long the window froze');
   for (let i = 0; i < 20; i++) log.record('refresh', new Error('again'));
   assert.equal(log.list().length, 10, 'only the latest are kept');
 });

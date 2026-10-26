@@ -1,6 +1,7 @@
-// Failures the app did not foresee. The window can only say that something went wrong, so the
-// latest few are kept in memory for the diagnostics, which say what: the action, when, and the
-// error's type and system codes. Never its message, which may name folders or people.
+// Failures the app did not foresee, and times its main thread was blocked. The window can only
+// say that something went wrong, so the latest few are kept in memory for the diagnostics, which
+// say what: the action, when, and the error's type and system codes (or how long the thread was
+// blocked). Never an error's message, which may name folders or people.
 import type { Fault } from '../shared/types.ts';
 import { systemErrorCode } from './errors.ts';
 
@@ -17,8 +18,13 @@ export function describeFault(error: unknown): string {
     .join(' ');
 }
 
+// The main thread runs the window: blocked for 5 s, Windows reports the app as not responding.
+export const MAIN_THREAD_ACTION = 'mainThread';
+
 export interface FaultLog {
   record(action: string, error: unknown): void;
+  // The main thread did not run for `ms`.
+  stall(ms: number): void;
   // Newest first.
   list(): Fault[];
 }
@@ -27,14 +33,20 @@ export interface FaultLog {
 export function createFaultLog(clock: () => number = Date.now): FaultLog {
   const faults: Fault[] = [];
   const kept = new WeakSet<object>();
+  const keep = (fault: Fault): void => {
+    faults.unshift(fault);
+    faults.length = Math.min(faults.length, MAX_FAULTS);
+  };
   return {
+    stall(ms) {
+      keep({ at: clock(), action: MAIN_THREAD_ACTION, error: `blocked ${(ms / 1000).toFixed(1)} s` });
+    },
     record(action, error) {
       if (typeof error === 'object' && error !== null) {
         if (kept.has(error)) return;
         kept.add(error);
       }
-      faults.unshift({ at: clock(), action: TOKEN.test(action) ? action : 'unknown', error: describeFault(error) });
-      faults.length = Math.min(faults.length, MAX_FAULTS);
+      keep({ at: clock(), action: TOKEN.test(action) ? action : 'unknown', error: describeFault(error) });
     },
     list: () => faults.map(fault => ({ ...fault }))
   };

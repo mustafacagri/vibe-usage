@@ -159,7 +159,7 @@ export async function findRecentSession(account: Account, homeDir: string, ident
   let session: RecentSession | null;
   switch (account.providerId) {
     case 'claude':
-      session = latestClaudeSession(account.configDir ?? defaultProfileDir('claude', homeDir), identity);
+      session = await latestClaudeSession(account.configDir ?? defaultProfileDir('claude', homeDir), identity);
       break;
     case 'codex':
       session = await latestCodexSession(account.configDir ?? defaultProfileDir('codex', homeDir), identity);
@@ -179,7 +179,7 @@ export async function findRecentSession(account: Account, homeDir: string, ident
 export async function findStoppedSessions(account: Account, homeDir: string, now = Date.now()): Promise<StoppedSession[]> {
   let sessions: StoppedSession[] = [];
   if (account.providerId === 'claude')
-    sessions = claudeLimitStops(account.configDir ?? defaultProfileDir('claude', homeDir), now, STOP_MAX_AGE_MS);
+    sessions = await claudeLimitStops(account.configDir ?? defaultProfileDir('claude', homeDir), now, STOP_MAX_AGE_MS);
   if (account.providerId === 'codex')
     sessions = await codexLimitStops(account.configDir ?? defaultProfileDir('codex', homeDir), now, STOP_MAX_AGE_MS);
   return Promise.all(
@@ -206,8 +206,8 @@ export async function carryClaudeSession(session: RecentSession, configDir: stri
   const targetDir = path.dirname(carriedTranscript(session, configDir));
   if (samePath(sourceDir, targetDir)) return;
   const target = path.join(targetDir, path.basename(session.file));
-  const source = claudeTranscriptWrite(session.file);
-  const existing = claudeTranscriptWrite(target);
+  const source = await claudeTranscriptWrite(session.file);
+  const existing = await claudeTranscriptWrite(target);
   if (!source) throw new AppError('session_not_found');
   if (existing && isNewerWrite(existing, source)) throw new AppError('session_newer_elsewhere');
   await fsp.mkdir(targetDir, { recursive: true, mode: 0o700 });
@@ -275,9 +275,9 @@ async function pickedUp(file: string): Promise<boolean> {
 // started, ending it and going on from the file would lose what was said since. (A listed
 // process resumed without a prompt writes nothing until the user types; it has nothing unsaved.)
 const SAVED_SLACK_MS = 2_000;
-export function holdsUnsavedConversation(running: LiveClaudeSession, file: string): boolean {
+export async function holdsUnsavedConversation(running: LiveClaudeSession, file: string): Promise<boolean> {
   if (running.listed) return false;
-  const written = claudeLastWrittenAt(file);
+  const written = await claudeLastWrittenAt(file);
   return !Number.isFinite(written) || written < running.startedAt - SAVED_SLACK_MS;
 }
 
@@ -320,12 +320,12 @@ export async function continueSession(
   const { dataDir, homeDir, platform, spawnProcess } = context;
   const { prompt } = options;
   if (movesWhole(session.providerId, to.providerId) && to.account?.configDir) {
-    if (options.running && holdsUnsavedConversation(options.running, session.file)) throw new AppError('session_unsaved');
+    if (options.running && (await holdsUnsavedConversation(options.running, session.file))) throw new AppError('session_unsaved');
     await carryClaudeSession(session, to.account.configDir);
     // The session goes on as it ran: same model (unless the project picks one), permission mode
     // and effort, whatever the other profile's own settings say. The transcript sits in
     // <profile>/projects/<project>/.
-    const { model, permissionMode } = claudeSessionMode(session.file);
+    const { model, permissionMode } = await claudeSessionMode(session.file);
     // A session that skips permissions runs so only where the user consented to it in that
     // profile; Claude Code would otherwise stop at the question (or quietly run without).
     if (permissionMode === 'bypassPermissions' && !(await bypassConsented(to.account, homeDir))) throw new AppError('bypass_not_consented');
@@ -902,9 +902,9 @@ export async function createContinuity({
   // Whether the session waits for the user: as its process says, or, when the process does not
   // say, as its transcript shows (its last turn ended).
   // A session cut off by a usage limit waits too: it cannot go on where it is.
-  const cutOff = (file: string): boolean => claudeLimitStop(file) !== null;
-  const waiting = (process: LiveClaudeSession, file: string): boolean =>
-    cutOff(file) || (process.status !== null ? process.status === 'idle' : claudeTurnEnded(file));
+  const cutOff = async (file: string): Promise<boolean> => (await claudeLimitStop(file)) !== null;
+  const waiting = async (process: LiveClaudeSession, file: string): Promise<boolean> =>
+    (await cutOff(file)) || (process.status !== null ? process.status === 'idle' : await claudeTurnEnded(file));
   // An offer for a whole session the app follows (back home, or open again): it stands however
   // long the session sat idle.
   const followed = (pending: Offer): boolean => pending.returning !== undefined || pending.reopening !== undefined;
@@ -948,18 +948,18 @@ export async function createContinuity({
       if (found.kind === 'found') throw new AppError('suggestion_expired');
       if (found.kind === 'unknown') throw new AppError('process_unknown');
       const busy = interrupted.get(pending.reopening)?.busy ?? false;
-      return { prompt: busy || cutOff(session.file) ? RESTART_PROMPT : undefined, running: null };
+      return { prompt: busy || (await cutOff(session.file)) ? RESTART_PROMPT : undefined, running: null };
     }
     const found = await lookup(holder, session);
     // Not knowing whether it still runs, the session is left where it is: it could be started
     // twice otherwise.
     if (found.kind === 'unknown') throw new AppError('process_unknown');
     const process = found.kind === 'found' ? found.process : null;
-    const ending = process && (pending.stopped || waiting(process, session.file)) ? process : null;
+    const ending = process && (pending.stopped || (await waiting(process, session.file))) ? process : null;
     const tasks = await openTasks(session, ending);
     // A session cut off by a limit is told to go on, wherever it moves (back home included).
     const prompt =
-      pending.stopped || (session.providerId === 'claude' && cutOff(session.file))
+      pending.stopped || (session.providerId === 'claude' && (await cutOff(session.file)))
         ? withBackgroundTasks(RESUME_PROMPT, tasks)
         : pending.returning && tasks.length
           ? withBackgroundTasks(RETURN_PROMPT, tasks)
@@ -1033,20 +1033,20 @@ export async function createContinuity({
     return suggestion;
   }
   // The models each tool would continue the session with; the project's own model wins.
-  function modelsFor(snapshot: Snapshot, session: RecentSession): Partial<Record<ProviderId, string>> {
+  async function modelsFor(snapshot: Snapshot, session: RecentSession): Promise<Partial<Record<ProviderId, string>>> {
     const preference = projectPreference(snapshot.settings, session.projectDir);
-    const models = mappedModels(snapshot, session.model ?? null, launch);
+    const models = await mappedModels(snapshot, session.model ?? null, launch);
     return preference?.tool && preference.model ? { ...models, [preference.tool]: preference.model } : models;
   }
   // Who would take the session; work that is not stopped needs a taker above the low line.
-  function successor(
+  async function successor(
     snapshot: Snapshot,
     holder: Account,
     session: RecentSession,
     scope: ContinueScope,
     stopped: boolean
-  ): Successor | null {
-    const models = modelsFor(snapshot, session);
+  ): Promise<Successor | null> {
+    const models = await modelsFor(snapshot, session);
     const preference = projectPreference(snapshot.settings, session.projectDir);
     const to = chooseSuccessor(snapshot, holder, scope, {
       now: clock(),
@@ -1062,7 +1062,7 @@ export async function createContinuity({
     // Cut off by the system going down: it opens again from its transcript where it ran, unless
     // it is open again already.
     if (pending.reopening) {
-      const found = holder.configDir ? claudeSessionById(holder.configDir, pending.session.sessionId) : null;
+      const found = holder.configDir ? await claudeSessionById(holder.configDir, pending.session.sessionId) : null;
       if (!found || !sameSession(found, pending.session) || !interrupted.has(pending.reopening)) throw new AppError('suggestion_expired');
       return { session: { ...pending.session, file: found.file, updatedAt: found.updatedAt, accountId: holder.id }, holder };
     }
@@ -1075,7 +1075,7 @@ export async function createContinuity({
     }
     // A moved session goes back whenever its main account has room, however long it sat idle.
     if (pending.returning) {
-      const written = claudeTranscriptWrite(pending.session.file);
+      const written = await claudeTranscriptWrite(pending.session.file);
       if (!written || !moved.has(pending.returning)) throw new AppError('suggestion_expired');
       return { session: { ...pending.session, updatedAt: writtenAt(written), accountId: holder.id }, holder };
     }
@@ -1105,14 +1105,20 @@ export async function createContinuity({
       return snapshot.settings.returnToPrimary === 'auto' && accountOf(snapshot, pending.suggestion.target.accountId)?.primary === true;
     return pending.stopped && stopScope(snapshot, pending.session) !== 'off';
   }
-  function targetFor(pending: Offer, session: RecentSession, holder: Account, snapshot: Snapshot, scope: ContinueScope): Successor {
-    const models = modelsFor(snapshot, session);
+  async function targetFor(
+    pending: Offer,
+    session: RecentSession,
+    holder: Account,
+    snapshot: Snapshot,
+    scope: ContinueScope
+  ): Promise<Successor> {
+    const models = await modelsFor(snapshot, session);
     const back = accountOf(snapshot, pending.suggestion.target.accountId);
     // A session reopened goes where it was offered to, room or not: it ran there, and a limit
     // it meets there is a stop like any other.
     const to =
       pending.suggestion.kind === 'low'
-        ? successor(snapshot, holder, session, scope, pending.stopped)
+        ? await successor(snapshot, holder, session, scope, pending.stopped)
         : back && (pending.reopening || recovered(snapshot, back.id, models[back.providerId]))
           ? { providerId: back.providerId, account: back, model: pending.reopening ? null : (models[back.providerId] ?? null) }
           : null;
@@ -1128,7 +1134,7 @@ export async function createContinuity({
       if (quitting || (automatic && !automaticAllowed(pending, snapshot))) throw new DispatchDeferred();
       if (automatic && pending.stopped) scope = continueScope(stopScope(snapshot, pending.session));
       const { session, holder } = await sourceSession(pending, snapshot);
-      let to = targetFor(pending, session, holder, snapshot, scope);
+      let to = await targetFor(pending, session, holder, snapshot, scope);
       pending.to = to;
       const record = recordOf(pending);
       if (record)
@@ -1151,7 +1157,7 @@ export async function createContinuity({
       if (!sameAccountSource(holder, currentHolder) || (pending.reopening && !sameReopenProfiles(snapshot, current)))
         throw new DispatchDeferred();
       const currentScope = automatic && pending.stopped ? continueScope(stopScope(current, session)) : scope;
-      const currentTarget = targetFor(pending, session, currentHolder, current, currentScope);
+      const currentTarget = await targetFor(pending, session, currentHolder, current, currentScope);
       if (!sameTarget(to, currentTarget)) throw new DispatchDeferred();
       to = currentTarget;
       pending.to = to;
@@ -1231,7 +1237,7 @@ export async function createContinuity({
     // Moved on its own, the session's process is ended first; not knowing whether it runs, the
     // stop is left for the next look rather than marked handled.
     if (scope !== 'off' && (await lookup(account, session)).kind === 'unknown') return [];
-    const to = successor(snapshot, account, session, continueScope(scope), true);
+    const to = await successor(snapshot, account, session, continueScope(scope), true);
     // One stop owns one transition even if a low warning already offered it: that offer goes, so
     // it cannot start the session a second time. One for another session of the account stays.
     const previous = offers.get(suggestionIds.low(account.id));
@@ -1289,12 +1295,12 @@ export async function createContinuity({
   // within its scope, running low within every tool). A stop no one could take waits in the
   // history for an explicit retry and is not brought back as a card; with no one to take it now
   // an offer keeps its last target, and accepting checks again.
-  function freshen(snapshot: Snapshot, pending: Offer): void {
+  async function freshen(snapshot: Snapshot, pending: Offer): Promise<void> {
     const left = headroomPercent(measuredOf(snapshot, pending.suggestion.accountId));
     if (left !== null && !pending.stopped) pending.suggestion.remainingPercent = left;
     if (pending.suggestion.kind !== 'low' || pending.suggestion.target.accountId === null) return;
     const scope = pending.stopped ? stopScope(snapshot, pending.session) : 'tools';
-    const to = successor(snapshot, pending.holder, pending.session, continueScope(scope), pending.stopped);
+    const to = await successor(snapshot, pending.holder, pending.session, continueScope(scope), pending.stopped);
     // A stop no one in its scope can take any more is stranded again (no card, the history's retry).
     if (!to && pending.stopped) pending.suggestion.target = { providerId: pending.suggestion.providerId, accountId: null };
     if (!to) return;
@@ -1320,7 +1326,7 @@ export async function createContinuity({
   async function onDispatched(snapshot: Snapshot, id: string, dispatch: Dispatch): Promise<Notice[]> {
     const holder = accountOf(snapshot, dispatch.holderId);
     const found = holder ? await lookup(holder, { providerId: 'claude', sessionId: dispatch.sessionId }) : { kind: 'none' as const };
-    const written = claudeTranscriptWrite(dispatch.file);
+    const written = await claudeTranscriptWrite(dispatch.file);
     const seen = found.kind === 'found' || (written !== null && written.lastRecordAt >= dispatch.at - SAVED_SLACK_MS);
     if (seen) {
       dispatched.delete(id);
@@ -1355,7 +1361,7 @@ export async function createContinuity({
       ) {
         status(pending, 'dismissed');
         offers.delete(id);
-      } else freshen(snapshot, pending);
+      } else await freshen(snapshot, pending);
     }
     await track(snapshot);
     const notices: Notice[] = [];
@@ -1364,7 +1370,7 @@ export async function createContinuity({
     for (const { account, window, kind } of low) {
       if (kind !== 'low' || offers.has(suggestionIds.low(account.id)) || !accountOf(snapshot, account.id)) continue;
       const session = await recent(account, RECENT_SESSION_MS);
-      const to = session && successor(snapshot, account, session, 'tools', false);
+      const to = session && (await successor(snapshot, account, session, 'tools', false));
       if (session && to)
         notices.push({
           kind: 'suggested',
@@ -1440,7 +1446,7 @@ export async function createContinuity({
   async function onInterrupted(snapshot: Snapshot, key: string, entry: Open): Promise<Notice[]> {
     const setting = snapshot.settings.reopenAfterRestart;
     const holder = accountOf(snapshot, entry.accountId);
-    const found = holder?.configDir ? claudeSessionById(holder.configDir, entry.sessionId) : null;
+    const found = holder?.configDir ? await claudeSessionById(holder.configDir, entry.sessionId) : null;
     if (setting === 'off' || !holder || !found || clock() - entry.at > REOPEN_SUGGESTION_MS) {
       forget(key);
       return [];
@@ -1461,7 +1467,7 @@ export async function createContinuity({
     )
       return [];
     const session: RecentSession = { ...found, accountId: holder.id };
-    const target = home && recovered(snapshot, home.id, modelsFor(snapshot, session)[home.providerId]) ? home : holder;
+    const target = home && recovered(snapshot, home.id, (await modelsFor(snapshot, session))[home.providerId]) ? home : holder;
     const to = { providerId: target.providerId, account: target };
     const suggestion =
       offered?.suggestion ??
@@ -1494,7 +1500,7 @@ export async function createContinuity({
     const transcript = holder?.configDir
       ? path.join(holder.configDir, CLAUDE_FILES.projects, entry.folder, `${sessionId}${JSON_LINES_EXTENSION}`)
       : null;
-    const written = transcript ? claudeTranscriptWrite(transcript) : null;
+    const written = transcript ? await claudeTranscriptWrite(transcript) : null;
     if (clock() - entry.at > MOVED_MAX_AGE_MS || !home || !holder || !transcript || !written) {
       moved.delete(key);
       return [];
@@ -1508,7 +1514,7 @@ export async function createContinuity({
       file: transcript,
       accountId: holder.id
     };
-    if (!recovered(snapshot, home.id, modelsFor(snapshot, session)[home.providerId])) return [];
+    if (!recovered(snapshot, home.id, (await modelsFor(snapshot, session))[home.providerId])) return [];
     const id = suggestionIds.return(key);
     const to = { providerId: home.providerId, account: home };
     const ask = () =>
@@ -1526,7 +1532,7 @@ export async function createContinuity({
     const { process } = found;
     // Quiet: waiting for the user, for a while (what the process says, else what its transcript shows).
     const quiet =
-      waiting(process, transcript) &&
+      (await waiting(process, transcript)) &&
       (process.status === null || clock() - process.statusSince >= RETURN_QUIET_MS) &&
       Number.isFinite(written.lastRecordAt) &&
       clock() - written.lastRecordAt >= RETURN_QUIET_MS;
@@ -1537,7 +1543,7 @@ export async function createContinuity({
     }
     // Waiting for background commands helps only a session that can still act on them: one cut
     // off by a limit goes now and is told about them.
-    const tasks = cutOff(transcript) ? [] : await openTasks(session, process);
+    const tasks = (await cutOff(transcript)) ? [] : await openTasks(session, process);
     const since = holding.get(key) ?? clock();
     holding.set(key, since);
     if (tasks.length && clock() - since < RETURN_TASK_WAIT_MS) return [];
@@ -1572,7 +1578,7 @@ export async function createContinuity({
       const found = await lookup(pending.holder, pending.session);
       // Not knowing, the user is warned as if it ran.
       if (found.kind === 'unknown') return true;
-      if (found.kind === 'found') return !pending.stopped && !waiting(found.process, pending.session.file);
+      if (found.kind === 'found') return !pending.stopped && !(await waiting(found.process, pending.session.file));
     }
     if (pending.stopped) {
       const current = await findStopped(pending.holder).catch(() => []);

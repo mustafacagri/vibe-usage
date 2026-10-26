@@ -13,17 +13,7 @@ import type { ProviderId } from '../shared/catalog.ts';
 import type { ModelCatalog } from '../shared/ipc.ts';
 import type { Account } from '../shared/types.ts';
 import { DURATION_MS } from '../shared/catalog.ts';
-import {
-  asArray,
-  attemptSync,
-  field,
-  isObject,
-  JSON_LINES_EXTENSION,
-  jsonLines,
-  newestFiles,
-  readHeadSync,
-  readJsonSync
-} from './files.ts';
+import { asArray, attemptSync, field, isObject, JSON_LINES_EXTENSION, jsonLines, newestFiles, readHead, readJsonSync } from './files.ts';
 
 export interface ModelLocation {
   homeDir?: string | undefined;
@@ -101,29 +91,46 @@ const CODEX_LISTED_VISIBILITY = 'list';
 const CURSOR_DEFAULT_MODEL = 'auto';
 const CURSOR_UNSET_MODEL = 'default';
 
+// A transcript is only appended to, so its first records never change: each file is read once (the
+// newest is often still being written, and opening it can be slow, see readTail).
+const headModels = new Map<string, { identity: string; models: string[] }>();
+const HEAD_MODELS_LIMIT = 512;
+
+async function transcriptModels(file: string): Promise<string[]> {
+  const stat = attemptSync(() => fs.statSync(file));
+  if (!stat) return [];
+  const identity = `${stat.ino}:${stat.birthtimeMs}`;
+  const known = headModels.get(file);
+  if (known?.identity === identity) return known.models;
+  const models = [...jsonLines(await readHead(file, CLAUDE_TRANSCRIPT_HEAD_BYTES))].flatMap(record => {
+    const model = field(record.message, 'model');
+    return typeof model === 'string' && model !== SYNTHETIC_MODEL ? [model] : [];
+  });
+  headModels.delete(file);
+  headModels.set(file, { identity, models });
+  if (headModels.size > HEAD_MODELS_LIMIT) headModels.delete(headModels.keys().next().value ?? '');
+  return models;
+}
+
 // Full model names used in recent Claude Code sessions of a profile, so a pinned version stays selectable.
-function recentClaudeModels(profileDir: string): string[] {
+async function recentClaudeModels(profileDir: string): Promise<string[]> {
   const projects = path.join(profileDir, CLAUDE_FILES.projects);
   const projectDirs = (attemptSync(() => fs.readdirSync(projects, { withFileTypes: true })) ?? []).filter(d => d.isDirectory());
   const found = new Set<string>();
-  for (const dir of projectDirs) {
-    for (const file of newestFiles(path.join(projects, dir.name), JSON_LINES_EXTENSION).slice(0, CLAUDE_RECENT_SESSIONS_PER_PROJECT)) {
-      for (const record of jsonLines(readHeadSync(file, CLAUDE_TRANSCRIPT_HEAD_BYTES))) {
-        const model = field(record.message, 'model');
-        if (typeof model === 'string' && model !== SYNTHETIC_MODEL) found.add(model);
-      }
-    }
-  }
+  for (const dir of projectDirs)
+    for (const file of newestFiles(path.join(projects, dir.name), JSON_LINES_EXTENSION).slice(0, CLAUDE_RECENT_SESSIONS_PER_PROJECT))
+      for (const model of await transcriptModels(file)) found.add(model);
   return [...found];
 }
 
 // The aliases, then each profile's configured model and recently used ones.
-function claudeModels(profileDirs: readonly string[]): string[] {
-  const fromProfile = (dir: string): string[] => {
+async function claudeModels(profileDirs: readonly string[]): Promise<string[]> {
+  const fromProfile = async (dir: string): Promise<string[]> => {
     const configured = field(readJsonSync(path.join(dir, CLAUDE_FILES.settings)), 'model');
-    return [...(typeof configured === 'string' ? [configured] : []), ...recentClaudeModels(dir)];
+    return [...(typeof configured === 'string' ? [configured] : []), ...(await recentClaudeModels(dir))];
   };
-  return [...new Set([...CLAUDE_ALIASES, ...profileDirs.flatMap(fromProfile)])];
+  const profiles = await Promise.all(profileDirs.map(fromProfile));
+  return [...new Set([...CLAUDE_ALIASES, ...profiles.flat()])];
 }
 
 // The models each profile's Codex lists in its picker.
@@ -151,9 +158,9 @@ function cursorModels(homeDir: string, cacheDir: string | undefined): string[] {
 
 // Models each handover target accepts. Providers whose launch takes no model argument
 // (catalog `acceptsModel: false`) get none.
-export function discoverModels({ homeDir = os.homedir(), cacheDir, accounts = [] }: ModelLocation = {}): ModelCatalog {
+export async function discoverModels({ homeDir = os.homedir(), cacheDir, accounts = [] }: ModelLocation = {}): Promise<ModelCatalog> {
   return {
-    claude: claudeModels(accountProfileDirs('claude', homeDir, accounts)),
+    claude: await claudeModels(accountProfileDirs('claude', homeDir, accounts)),
     codex: codexModels(accountProfileDirs('codex', homeDir, accounts)),
     cursor: cursorModels(homeDir, cacheDir),
     antigravity: [],
@@ -202,16 +209,16 @@ export interface ModelMapping {
 
 // Target model for a handover: the user's preference, else the same model if the target
 // offers it, else the target's closest tier. A null model lets the tool use its default.
-export function getMappedModel(
+export async function getMappedModel(
   sourceModel: string | null | undefined,
   targetProvider: ProviderId,
   preferences: Partial<Record<ProviderId, string>> = {},
   location: ModelLocation = {}
-): ModelMapping {
+): Promise<ModelMapping> {
   const tier = resolveModelTier(sourceModel);
   const preferred = preferences[targetProvider];
   if (preferred) return { tier, targetModel: preferred, source: 'preference' };
-  const models = discoverModels(location)[targetProvider];
+  const models = (await discoverModels(location))[targetProvider];
   const id = sourceModel ? modelIdFromDisplayName(sourceModel) : '';
   const same = id ? (models.find(m => m === id) ?? models.find(m => m === `${id}${STANDARD_VARIANT}`)) : undefined;
   if (same) return { tier, targetModel: same, source: 'same' };
