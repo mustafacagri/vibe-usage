@@ -195,11 +195,12 @@ test('touching or restoring a transcript cannot make an ancient or future usage 
         ? path.join(configDir, 'projects', '-work-app', `${id}.jsonl`)
         : path.join(configDir, 'sessions', `rollout-2026-10-17-${id}.jsonl`);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    for (const [age, expected] of [
+    const cases = [
       [7 * 24 * 60 * MINUTE, false],
       [-60 * MINUTE, false],
       [2 * MINUTE, true]
-    ] as const) {
+    ] as const;
+    for (const [index, [age, expected]] of cases.entries()) {
       const timestamp = new Date(NOW - age).toISOString();
       const body =
         providerId === 'claude'
@@ -219,7 +220,9 @@ test('touching or restoring a transcript cannot make an ancient or future usage 
           : `${codexRollout({ id, cwd: '/work/app', user: ['Continue the task'] })}\n${JSON.stringify({ type: 'event_msg', timestamp, payload: { type: 'task_complete', error: { codex_error_info: 'usage_limit_exceeded' } } })}`;
       await fs.writeFile(file, body);
       // Written moments ago and quiet since (one still being written is read once it is quiet).
-      const written = new Date(NOW - STOP_QUIET_MS);
+      // Each case is a new version of the file to the scan's cache: the bodies are the same size,
+      // and on Windows two writes within one clock tick can share their change time.
+      const written = new Date(NOW - STOP_QUIET_MS - index * 1000);
       await fs.utimes(file, written, written);
       assert.equal(Boolean(await findStoppedSession(holder, home, NOW)), expected, `${providerId}: event age ${age}ms, fresh file mtime`);
     }
