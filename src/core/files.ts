@@ -137,11 +137,19 @@ export const isDirectory = (file: string): Promise<boolean> =>
     () => false
   );
 
+// Where an atomic write puts the text first, beside `file`, before renaming it over `file`.
+export const temporaryPath = (file: string): string =>
+  path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+const TEMPORARY_NAME = /^\..+\.[0-9a-f]{16}\.tmp$/;
+// A write cut short by a crash or power loss leaves its temporary file. One untouched for this
+// long is no write still under way, by the app or by its CLI, which writes to the same folder.
+const ABANDONED_WRITE_MS = DURATION_MS.HOUR;
+
 // Writes the app's own data atomically and private to the user: a crash mid-write never
 // leaves a truncated file.
 export async function writeFileAtomic(file: string, text: string): Promise<void> {
   await fsp.mkdir(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+  const temporary = temporaryPath(file);
   try {
     const handle = await fsp.open(temporary, 'wx', 0o600);
     try {
@@ -191,7 +199,7 @@ export function createDebouncedSaver(file: string, serialize: () => string): Deb
 // The same, for the moment the app quits, when nothing asynchronous is waited for.
 export function writeFileAtomicSync(file: string, text: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+  const temporary = temporaryPath(file);
   try {
     const handle = fs.openSync(temporary, 'wx', 0o600);
     try {
@@ -203,6 +211,18 @@ export function writeFileAtomicSync(file: string, text: string): void {
     fs.renameSync(temporary, file);
   } finally {
     fs.rmSync(temporary, { force: true });
+  }
+}
+
+// Removes from `dir` the temporary files of writes cut short. Best effort: one that cannot be
+// removed now is tried again at the next start.
+export async function removeAbandonedWrites(dir: string): Promise<void> {
+  const names = (await attempt(() => fsp.readdir(dir))) ?? [];
+  const now = Date.now();
+  for (const name of names.filter(entry => TEMPORARY_NAME.test(entry))) {
+    const file = path.join(dir, name);
+    const stat = await attempt(() => fsp.lstat(file));
+    if (stat?.isFile() && now - stat.mtimeMs >= ABANDONED_WRITE_MS) await attempt(() => fsp.rm(file));
   }
 }
 

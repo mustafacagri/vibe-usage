@@ -26,6 +26,7 @@ import { createContinuity, type Notice } from '../core/continuity.ts';
 import { createToolProbe } from '../core/diagnostics.ts';
 import { AppError } from '../core/errors.ts';
 import { createFaultLog, type FaultLog } from '../core/faults.ts';
+import { removeAbandonedWrites } from '../core/files.ts';
 import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip, type QuotaAlert } from '../core/glance.ts';
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
@@ -334,6 +335,8 @@ async function start(): Promise<void> {
     if (folders.length) process.env.PATH = mergePath(folders, process.env.PATH);
   }
   const dataDir = app.getPath('userData');
+  // Writes cut short by a crash or power loss leave their temporary files behind.
+  void removeAbandonedWrites(dataDir);
   const homeDir = os.homedir();
   // Set once the window can show a change; until then there is nothing to tell.
   let changed = (): void => undefined;

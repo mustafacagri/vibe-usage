@@ -66,6 +66,7 @@ import {
   isObject,
   JSON_LINES_EXTENSION,
   readJson,
+  removeAbandonedWrites,
   samePath,
   writeFileAtomic,
   writeFileAtomicSync,
@@ -793,6 +794,8 @@ export async function createContinuity({
   onFault
 }: ContinuityOptions): Promise<Continuity> {
   const file = path.join(dataDir, STATE_FILE);
+  // The handoff files for tabs are written atomically too.
+  void removeAbandonedWrites(path.join(dataDir, TABS_DIR));
   const failed = (error: unknown): Failure => {
     if (!(error instanceof AppError)) onFault?.(error);
     return failure(error);
