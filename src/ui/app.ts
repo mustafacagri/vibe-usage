@@ -1236,6 +1236,7 @@ function render(snapshot: Snapshot, focused: Element | null = document.activeEle
   ui.updateText.textContent = snapshot.update ? t('updateAvailable', { version: snapshot.update.version }) : '';
   renderUpdateInstall(snapshot.updateInstall, snapshot.update);
   ui.overallStatus.textContent = snapshot.refreshing ? t('readingQuotas') : t('servicesOnDevice', { n: providers.length });
+  ui.overallStatus.classList.toggle('refreshing', snapshot.refreshing);
   ui.refresh.disabled = snapshot.refreshing;
   ui.pin.setAttribute('aria-pressed', String(snapshot.settings.pinned));
   ui.compactButton.setAttribute('aria-pressed', String(compact));
