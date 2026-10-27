@@ -220,6 +220,11 @@ main {
   border-radius: 50%;
   background: var(--green);
   box-shadow: 0 0 8px var(--green);
+}
+
+/* The dot pulses only while quotas are read. A pulse that never stops has the window draw new
+   frames all day while it sits on screen: about 5% of a CPU core for nothing that changes. */
+#overall-status.refreshing::before {
   animation: pulse-dot 2.5s infinite;
 }
 

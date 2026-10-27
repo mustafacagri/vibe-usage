@@ -106,6 +106,15 @@ function inspectDialog(minTarget: number): string[] {
   return problems;
 }
 
+// Runs in the page: animations that never end. While one runs, the window draws a new frame
+// many times a second for as long as it is on screen, though nothing in it changes.
+function endlessAnimations(): string[] {
+  return document
+    .getAnimations()
+    .filter(animation => animation.effect?.getComputedTiming().iterations === Infinity)
+    .map(animation => (animation instanceof CSSAnimation ? animation.animationName : animation.id));
+}
+
 // Runs in the page: the window height that shows everything. An open dialog is capped at the
 // viewport (its CSS max-height follows 100vh), so the viewport grows by what the dialog would
 // scroll; without one, the page's own height.
@@ -166,6 +175,9 @@ async function check(language: Language): Promise<string[]> {
       "document.querySelectorAll('.history-tab').forEach(tab => { if (tab.getAttribute('aria-selected') === 'false') tab.click(); })"
     );
     await quiet(win);
+    // The fixture is not refreshing: an idle window shows nothing moving.
+    const endless = await runFor(win, `(${endlessAnimations.toString()})()`, isStringList);
+    problems.push(...endless.map(name => `endless animation while idle: ${name}`));
     for (const view of VIEWS) {
       for (const button of view.buttons ?? []) {
         await run(win, `document.querySelector(${JSON.stringify(button)}).click()`);
