@@ -219,8 +219,9 @@ fallback target: the app starts nothing in it.
   limits, percentages, reset times and plan, shown as stale after a restart until a fresh read), and `continuity.json`
   the handover history: project folders, tool and account ids, session ids and outcomes, never conversation text,
   tokens or e-mails. Settings can include account email labels and local paths. The local
-  `settings.json.lock.sqlite` coordinates writes from the desktop app and CLI. A handover brief contains redacted
-  conversation text; review it because unknown secret formats cannot be guaranteed to be removed.
+  `settings.json.lock.sqlite` coordinates writes from the desktop app and CLI. A save cut short by a crash or power cut
+  can leave a temporary `.<file>.<id>.tmp` beside its file; the app removes these when it starts. A handover brief
+  contains redacted conversation text; review it because unknown secret formats cannot be guaranteed to be removed.
 - **A locked-down app.** The window is sandboxed with a strict CSP, cannot navigate or open other windows, and only
   answers its own page. Electron fuses disable `runAsNode`, `NODE_OPTIONS` and the inspector, and enforce ASAR
   integrity.

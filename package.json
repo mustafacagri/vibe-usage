@@ -1,6 +1,6 @@
 {
   "name": "vibe-usage-cli",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Track the quota left on Claude Code, Codex, Cursor, Antigravity and GitHub Copilot from the Windows tray, the macOS menu bar or the terminal",
   "author": "Mustafa Çağrı Güven",
   "license": "MIT",
