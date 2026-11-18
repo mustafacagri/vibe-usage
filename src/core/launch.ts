@@ -389,20 +389,14 @@ export async function openSignIn(signIn: SignIn): Promise<void> {
 }
 
 async function startSignIn({ providerId, account, dataDir, cwd, platform = process.platform, spawnProcess }: SignIn): Promise<void> {
-  // Cursor's quota is read from the app's sign-in, which signing in to the app updates. A Windows
-  // machine that has only the Agent CLI signs in through it (its sign-in is read as well).
-  if (providerId === 'cursor' && platform === 'win32') {
-    const opened = await openDesktopApp({ providerId, platform, spawnProcess }).then(
-      () => true,
-      (error: unknown) => {
-        if (error instanceof AppError && error.code === 'app_not_found') return false;
-        throw error;
-      }
-    );
-    if (opened) return;
-    const agent = await findCursorAgent();
-    if (!agent) throw new AppError('app_not_found', { app: 'Cursor' });
-    return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
+  // Recent Cursor Desktop builds encrypt their stored token with safeStorage, so when the
+  // Agent CLI is installed we sign in with `cursor-agent login`, whose session can be read;
+  // otherwise we fall back to opening the Cursor desktop app.
+  if (providerId === 'cursor') {
+    const agent = await findCursorAgent(process.env, os.homedir(), platform);
+    if (agent)
+      return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
+    return openDesktopApp({ providerId, platform, spawnProcess });
   }
   const args = LOGIN_ARGS[providerId];
   const [binaryName] = TOOL_INSTALLS[providerId].binaries;

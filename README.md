@@ -186,9 +186,9 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 Model lists come from each tool's own data: Claude Code aliases and the models you used, the Codex model cache, and
 `cursor-agent --list-models` (cached for 24 hours).
 
-Cursor's quota is read from the Cursor app's own sign-in on macOS and Windows; on Windows the sign-in the Cursor Agent CLI
-keeps (`%APPDATA%\Cursor\auth.json`) is read too, and used when the app's has run out. **Sign in** opens the app, or on a
-Windows machine with only the CLI runs `cursor-agent login`.
+Cursor's quota is read from the Cursor app's database when unencrypted and from the Cursor Agent CLI's session (macOS
+Keychain or `~/.cursor/auth.json` on macOS, `%APPDATA%\Cursor\auth.json` on Windows). **Sign in** runs `cursor-agent login`
+when the CLI is installed, or opens the Cursor app otherwise.
 
 GitHub Copilot's quota is read with the token the GitHub CLI uses: `GH_TOKEN` or `GITHUB_TOKEN` when set, otherwise
 `gh auth token`. The token goes only to `api.github.com/copilot_internal/user`. GitHub does not document that

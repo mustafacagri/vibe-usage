@@ -118,6 +118,17 @@ interface TokenSource {
 
 const TOKEN_KEY = 'cursorAuth/accessToken';
 const APP_STORE = 'User/globalStorage/state.vscdb';
+const SAFE_STORAGE_PREFIX = 'cursor-safe-storage:';
+const KEYCHAIN_ACCOUNT = 'cursor-user';
+const KEYCHAIN_SERVICE = 'cursor-access-token';
+
+// Recent Cursor Desktop builds encrypt tokens in state.vscdb with Electron safeStorage
+// (`cursor-safe-storage:v1:...`); skip unreadable ciphertext so CLI sessions can stand in.
+function unencryptedToken(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const token = value.trim();
+  return !token || token.startsWith(SAFE_STORAGE_PREFIX) ? undefined : token;
+}
 
 // The token the Cursor app keeps in its own database, read without taking part in its writes.
 // This is a live WAL database: read-only mode includes committed WAL frames, whereas immutable
@@ -137,40 +148,71 @@ async function readAppStoreToken(file: string, context?: RefreshContext): Promis
   }
 }
 
-// The signed-in sessions this machine holds, most authoritative first. On Windows that is the
-// app's own sign-in, then the one the Cursor Agent CLI keeps in auth.json: either can be the
-// only one present, and either can be the one that is still valid.
-async function readAccessTokens({ home, platform, env, runProcess }: TokenSource, context?: RefreshContext): Promise<unknown[]> {
-  if (platform === 'win32') {
-    const roaming = env.APPDATA ?? path.join(home, 'AppData/Roaming');
-    const reads = [
-      () => readAppStoreToken(path.join(roaming, 'Cursor', APP_STORE), context),
-      async () => (await readCredentialFile(path.join(roaming, 'Cursor/auth.json'), context)).accessToken
-    ];
-    const tokens: unknown[] = [];
-    let failure: ProviderError | undefined;
-    for (const read of reads) {
-      try {
-        tokens.push(await read());
-      } catch (error) {
-        // A missing store is the normal state of a machine that never used it.
-        if (!(error instanceof ProviderError)) throw error;
-        if (error.code !== 'auth_missing') failure ??= error;
-      }
-    }
-    if (!tokens.length && failure) throw failure;
-    return tokens;
-  }
-  if (platform !== 'darwin') throw new ProviderError('unsupported_platform');
-  const uri = pathToFileURL(path.join(home, 'Library/Application Support/Cursor', APP_STORE));
+async function readMacAppStoreToken(home: string, runProcess: RunProcess, context?: RefreshContext): Promise<unknown> {
+  const file = path.join(home, 'Library/Application Support/Cursor', APP_STORE);
+  const uri = pathToFileURL(file);
   uri.searchParams.set('mode', 'ro');
   const query = `SELECT value FROM ItemTable WHERE key = '${TOKEN_KEY}' LIMIT 1;`;
   try {
-    return [(await runProcess('/usr/bin/sqlite3', ['-readonly', uri.href, query], { timeoutMs: SQLITE_TIMEOUT_MS, ...context })).trim()];
+    return (await runProcess('/usr/bin/sqlite3', ['-readonly', uri.href, query], { timeoutMs: SQLITE_TIMEOUT_MS, ...context })).trim();
   } catch (error) {
+    if (error instanceof ProviderError && error.code === 'request_timeout') throw error;
+    if (runProcess === defaultRunProcess && !(await isFile(file))) throw new ProviderError('auth_missing', { cause: error });
     if (error instanceof ProviderError) throw error;
     throw new ProviderError('process_failed', { cause: error });
   }
+}
+
+// The Cursor Agent CLI keeps its macOS sign-in in the login keychain (`security` exits 44 when absent).
+async function readMacKeychainToken(runProcess: RunProcess, context?: RefreshContext): Promise<unknown> {
+  try {
+    return await runProcess('/usr/bin/security', ['find-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w'], {
+      timeoutMs: SQLITE_TIMEOUT_MS,
+      ...context
+    });
+  } catch (error) {
+    if (error instanceof ProviderError && error.code === 'request_timeout') throw error;
+    throw new ProviderError('auth_missing', { cause: error });
+  }
+}
+
+function tokenReaders({ home, platform, env, runProcess }: TokenSource, context?: RefreshContext): (() => Promise<unknown>)[] {
+  if (platform === 'win32') {
+    const roaming = env.APPDATA ?? path.join(home, 'AppData/Roaming');
+    return [
+      () => readAppStoreToken(path.join(roaming, 'Cursor', APP_STORE), context),
+      async () => (await readCredentialFile(path.join(roaming, 'Cursor/auth.json'), context)).accessToken
+    ];
+  }
+  if (platform === 'darwin') {
+    return [
+      () => readMacAppStoreToken(home, runProcess, context),
+      () => readMacKeychainToken(runProcess, context),
+      async () => (await readCredentialFile(path.join(home, '.cursor/auth.json'), context)).accessToken
+    ];
+  }
+  throw new ProviderError('unsupported_platform');
+}
+
+// The signed-in sessions this machine holds, most authoritative first: the app's own sign-in
+// when stored unencrypted, then the Cursor Agent CLI's session (macOS Keychain or ~/.cursor/auth.json,
+// or %APPDATA%\Cursor\auth.json on Windows).
+async function readAccessTokens(source: TokenSource, context?: RefreshContext): Promise<string[]> {
+  const tokens: string[] = [];
+  let failure: ProviderError | undefined;
+  for (const read of tokenReaders(source, context)) {
+    try {
+      const token = unencryptedToken(await read());
+      if (token) tokens.push(token);
+    } catch (error) {
+      // A missing store is the normal state of a machine that never used it.
+      if (!(error instanceof ProviderError)) throw error;
+      if (error.code === 'request_timeout') throw error;
+      if (error.code !== 'auth_missing') failure ??= error;
+    }
+  }
+  if (!tokens.length && failure) throw failure;
+  return tokens;
 }
 
 const COOKIE_USER = /^[A-Za-z0-9._-]+$/;
@@ -217,12 +259,16 @@ export async function findWindowsCursorAgent(env: Environment = process.env, hom
 }
 
 // The Cursor Agent CLI; null when not installed.
-export async function findCursorAgent(env: Environment = process.env, home = os.homedir()): Promise<CursorAgentCommand | null> {
+export async function findCursorAgent(
+  env: Environment = process.env,
+  home = os.homedir(),
+  platform: NodeJS.Platform = process.platform
+): Promise<CursorAgentCommand | null> {
   for (const name of TOOL_INSTALLS.cursor.binaries) {
-    const binary = await findBinary(name, { env, home }).catch(() => null);
+    const binary = await findBinary(name, { env, home, platform }).catch(() => null);
     if (binary) return { binary, args: [] };
   }
-  return process.platform === 'win32' ? findWindowsCursorAgent(env, home) : null;
+  return platform === 'win32' ? findWindowsCursorAgent(env, home) : null;
 }
 
 export interface CursorProviderOptions {
@@ -258,7 +304,6 @@ export function createCursorProvider(options: CursorProviderOptions = {}): Provi
       let failure: Error = new ProviderError('auth_missing');
       let reason = false;
       for (const token of tokens) {
-        if (typeof token !== 'string' || !token.trim()) continue;
         try {
           cookie = sessionCookie(token, options.clock);
           break;

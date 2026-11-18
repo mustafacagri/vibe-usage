@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createService } from '../src/core/service.ts';
+import { ProviderError } from '../src/core/errors.ts';
 import { getJson, type GetJsonOptions, type RunProcess } from '../src/providers/common.ts';
 import { createCursorProvider, findWindowsCursorAgent, type CursorProviderOptions } from '../src/providers/cursor.ts';
 import { account, tempDir } from './helpers/fixtures.ts';
@@ -17,9 +18,10 @@ const valid = jwt({ sub: 'auth0|user_123', exp: NOW / 1000 + 3600 });
 const cursorAccount = account({ id: 'cursor:default', providerId: 'cursor' });
 const summary = { membershipType: 'pro', individualUsage: { plan: { autoPercentUsed: 10, apiPercentUsed: 0, totalPercentUsed: 5 } } };
 
-// The macOS token store answers through sqlite3; `token` is what the query prints.
+// The macOS token store answers through sqlite3 (and the CLI through security); `token` is what sqlite3 prints.
 function macProvider(token: string, requests: GetJsonOptions[] = [], extra: CursorProviderOptions = {}) {
   const runProcess: RunProcess = (binary, args) => {
+    if (binary === '/usr/bin/security') return Promise.resolve('');
     assert.equal(binary, '/usr/bin/sqlite3');
     assert.ok(args.includes('-readonly'), 'the database is opened read-only');
     assert.match(args[1] ?? '', /\?mode=ro$/);
@@ -88,7 +90,8 @@ test('the macOS read-only URI sees a new token committed only to the live SQLite
   const requests: GetJsonOptions[] = [];
   const provider = macProvider(valid, requests, {
     home,
-    runProcess: (_binary, args) => {
+    runProcess: (binary, args) => {
+      if (binary === '/usr/bin/security') return Promise.resolve('');
       const uri = new URL(args[1] ?? '');
       assert.equal(uri.searchParams.get('mode'), 'ro');
       assert.equal(uri.searchParams.has('immutable'), false, 'a mutable WAL database is never opened as immutable');
@@ -208,6 +211,79 @@ test('on Windows the Cursor app’s own sign-in is read, then the CLI’s, and t
     writer.prepare('UPDATE ItemTable SET value = ?').run(expired);
     await fs.writeFile(path.join(cursor, 'auth.json'), JSON.stringify({ accessToken: expired }));
     await assert.rejects(read(), /auth_expired/, 'both have run out');
+  } finally {
+    writer.close();
+  }
+});
+
+test('encrypted app storage is skipped so CLI sessions on macOS and Windows are used', async t => {
+  const expired = jwt({ sub: 'auth0|user_123', exp: NOW / 1000 - 10 });
+  const keychainValid = jwt({ sub: 'github|user_456', exp: NOW / 1000 + 7200 });
+  const encrypted = 'cursor-safe-storage:v1:ciphertext';
+
+  // macOS: Keychain first, then ~/.cursor/auth.json; missing/expired reported accurately.
+  const home = await tempDir(t, 'vibe-cursor-mac-encrypted-');
+  const macRequests: GetJsonOptions[] = [];
+  let keychainToken: string | null = null;
+  const readMac = (): Promise<unknown> =>
+    createCursorProvider({
+      platform: 'darwin',
+      home,
+      clock: () => NOW,
+      runProcess: (binary, args) => {
+        if (binary === '/usr/bin/sqlite3') return Promise.resolve(`${encrypted}\n`);
+        assert.equal(binary, '/usr/bin/security');
+        assert.deepEqual(args, ['find-generic-password', '-a', 'cursor-user', '-s', 'cursor-access-token', '-w']);
+        if (keychainToken === null) return Promise.reject(new ProviderError('process_failed'));
+        return Promise.resolve(`${keychainToken}\n`);
+      },
+      getJson: (_endpoint, options = {}) => {
+        macRequests.push(options);
+        return Promise.resolve(summary);
+      }
+    }).fetch(cursorAccount);
+
+  await assert.rejects(readMac(), /auth_missing/, 'encrypted store alone is not reported as auth_invalid');
+  const authDir = path.join(home, '.cursor');
+  await fs.mkdir(authDir, { recursive: true });
+  await fs.writeFile(path.join(authDir, 'auth.json'), JSON.stringify({ accessToken: expired }));
+  await assert.rejects(readMac(), /auth_expired/, 'expired ~/.cursor/auth.json is reported when keychain is empty');
+  await fs.writeFile(path.join(authDir, 'auth.json'), JSON.stringify({ accessToken: valid }));
+  await readMac();
+  assert.equal(macRequests.at(-1)?.headers?.Cookie, `WorkosCursorSessionToken=user_123%3A%3A${valid}`, '~/.cursor/auth.json stands in');
+  await fs.writeFile(path.join(authDir, 'auth.json'), JSON.stringify({ accessToken: expired }));
+  keychainToken = keychainValid;
+  await readMac();
+  assert.equal(
+    macRequests.at(-1)?.headers?.Cookie,
+    `WorkosCursorSessionToken=user_456%3A%3A${keychainValid}`,
+    'macOS Keychain session takes priority over ~/.cursor/auth.json'
+  );
+
+  // Windows: encrypted state.vscdb is skipped; %APPDATA%/Cursor/auth.json stands in.
+  const appData = await tempDir(t, 'vibe-cursor-win-encrypted-');
+  const cursor = path.join(appData, 'Cursor');
+  const store = path.join(cursor, 'User/globalStorage/state.vscdb');
+  await fs.mkdir(path.dirname(store), { recursive: true });
+  const winRequests: GetJsonOptions[] = [];
+  const readWin = (): Promise<unknown> =>
+    createCursorProvider({
+      platform: 'win32',
+      env: { APPDATA: appData },
+      clock: () => NOW,
+      getJson: (_endpoint, options = {}) => {
+        winRequests.push(options);
+        return Promise.resolve(summary);
+      }
+    }).fetch(cursorAccount);
+  const writer = new DatabaseSync(store);
+  try {
+    writer.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT);');
+    writer.prepare('INSERT INTO ItemTable VALUES (?, ?)').run('cursorAuth/accessToken', encrypted);
+    await assert.rejects(readWin(), /auth_missing/, 'encrypted store without auth.json reports auth_missing');
+    await fs.writeFile(path.join(cursor, 'auth.json'), JSON.stringify({ accessToken: valid }));
+    await readWin();
+    assert.equal(winRequests.at(-1)?.headers?.Cookie, `WorkosCursorSessionToken=user_123%3A%3A${valid}`);
   } finally {
     writer.close();
   }
