@@ -318,10 +318,8 @@ test('a session the app resumes gets no resume question; a fresh start keeps Cla
 test('on macOS and Windows, Cursor signs in through the Agent CLI when installed, or opens its app', async t => {
   const dataDir = await tempDir(t, 'vibe-data-');
   const binDir = await tempDir(t, 'vibe-cursor-bin-');
-  const winBinary = path.join(binDir, 'cursor-agent.exe');
-  const macBinary = path.join(binDir, 'cursor-agent');
-  await fs.writeFile(winBinary, '');
-  await fs.writeFile(macBinary, '');
+  const binary = path.join(binDir, 'cursor-agent.exe');
+  await fs.writeFile(binary, '');
   const saved = {
     agent: process.env.VIBE_CURSOR_AGENT_BINARY,
     other: process.env.VIBE_AGENT_BINARY,
@@ -363,14 +361,13 @@ test('on macOS and Windows, Cursor signs in through the Agent CLI when installed
   assert.equal((await signIn('win32'))[0], app, 'Windows opens the app when only the app is installed');
 
   // With the Agent CLI installed, both platforms run `cursor-agent login` in a terminal.
-  process.env.VIBE_CURSOR_AGENT_BINARY = winBinary;
+  process.env.VIBE_CURSOR_AGENT_BINARY = binary;
   const winCli = await signIn('win32');
-  assert.equal(winCli[winCli.indexOf('-Executable') + 1], winBinary);
+  assert.equal(winCli[winCli.indexOf('-Executable') + 1], binary);
   assert.equal(Buffer.from(winCli[winCli.indexOf('-ArgumentsBase64') + 1] ?? '', 'base64').toString('utf8'), 'login');
 
-  process.env.VIBE_CURSOR_AGENT_BINARY = macBinary;
   const macCli = await signIn('darwin');
   assert.deepEqual(macCli.slice(0, 3), ['/usr/bin/open', '-a', 'Terminal']);
   const script = await fs.readFile(macCli[3] ?? '', 'utf8');
-  assert.ok(script.endsWith(`exec '${macBinary}' 'login'\n`));
+  assert.ok(script.endsWith(`exec '${binary}' 'login'\n`));
 });

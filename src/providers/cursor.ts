@@ -259,16 +259,12 @@ export async function findWindowsCursorAgent(env: Environment = process.env, hom
 }
 
 // The Cursor Agent CLI; null when not installed.
-export async function findCursorAgent(
-  env: Environment = process.env,
-  home = os.homedir(),
-  platform: NodeJS.Platform = process.platform
-): Promise<CursorAgentCommand | null> {
+export async function findCursorAgent(env: Environment = process.env, home = os.homedir()): Promise<CursorAgentCommand | null> {
   for (const name of TOOL_INSTALLS.cursor.binaries) {
-    const binary = await findBinary(name, { env, home, platform }).catch(() => null);
+    const binary = await findBinary(name, { env, home }).catch(() => null);
     if (binary) return { binary, args: [] };
   }
-  return platform === 'win32' ? findWindowsCursorAgent(env, home) : null;
+  return process.platform === 'win32' ? findWindowsCursorAgent(env, home) : null;
 }
 
 export interface CursorProviderOptions {

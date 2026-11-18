@@ -393,7 +393,7 @@ async function startSignIn({ providerId, account, dataDir, cwd, platform = proce
   // Agent CLI is installed we sign in with `cursor-agent login`, whose session can be read;
   // otherwise we fall back to opening the Cursor desktop app.
   if (providerId === 'cursor') {
-    const agent = await findCursorAgent(process.env, os.homedir(), platform);
+    const agent = await findCursorAgent();
     if (agent)
       return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
     return openDesktopApp({ providerId, platform, spawnProcess });
