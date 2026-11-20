@@ -16,7 +16,9 @@ try {
     $programs = Join-Path $env:LOCALAPPDATA 'Programs'
     $appServer = Join-Path $programs 'Antigravity\resources\bin\language_server.exe'
     $ideRoot = (Join-Path $programs 'Antigravity IDE\resources\app\extensions\antigravity\bin') + '\'
-    $processes = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%' OR Name LIKE 'language-server%'")
+    # Current builds run the language server as `agy.exe --hub`, started by the IDE or the CLI.
+    $agyServer = Join-Path $env:USERPROFILE '.gemini\bin\agy.exe'
+    $processes = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'language_server%' OR Name LIKE 'language-server%' OR Name = 'agy.exe'")
     $servers = New-Object System.Collections.Generic.List[object]
     $candidateFound = $false
     foreach ($entry in $processes) {
@@ -26,7 +28,10 @@ try {
         $isApp = [string]::Equals($executable, $appServer, [StringComparison]::OrdinalIgnoreCase)
         $isIDE = $executable.StartsWith($ideRoot, [StringComparison]::OrdinalIgnoreCase) -and
             [IO.Path]::GetFileName($executable) -match '^language[-_]server(?:[-_][a-zA-Z0-9]+)*\.exe$'
-        if (-not $isApp -and -not $isIDE) { continue }
+        # Only the hub process carries the quota service; one-shot `agy` runs have no --hub flag.
+        $isAgy = [string]::Equals($executable, $agyServer, [StringComparison]::OrdinalIgnoreCase) -and
+            [string]$entry.CommandLine -match '(?:^|\s)--hub(?:=|\s|$)'
+        if (-not $isApp -and -not $isIDE -and -not $isAgy) { continue }
         # A matching installation path alone does not establish ownership.
         # Never inspect another Windows user's CSRF capability or sockets.
         $owner = Invoke-CimMethod -InputObject $entry -MethodName GetOwnerSid -ErrorAction SilentlyContinue

@@ -217,6 +217,29 @@ test('Windows discovery rejects a foreign-user fixture before reading its ports'
   assert.deepEqual(discovery.servers[0]?.ports, [3333, 8888]);
 });
 
+test('Windows discovery accepts only the hub process of the user-profile agy.exe', { skip: process.platform !== 'win32' }, async () => {
+  const scriptPath = DISCOVERY_SCRIPT.replaceAll("'", "''");
+  const harness = [
+    '$global:fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+    "$global:agy = Join-Path $env:USERPROFILE '.gemini\\bin\\agy.exe'",
+    "function Get-CimInstance { param($ClassName, $Filter) $rows = @( [pscustomobject]@{ ProcessId=1; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=hub-token' }, [pscustomobject]@{ ProcessId=2; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe chat --csrf_token=no-hub' }, [pscustomobject]@{ ProcessId=3; ExecutablePath='C:\\Temp\\agy.exe'; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=other-path' }); if ($Filter -match 'ProcessId = (\\d+)') { $rows | Where-Object { $_.ProcessId -eq [int]$Matches[1] } } else { $rows } }",
+    'function Invoke-CimMethod { param($InputObject, $MethodName) [pscustomobject]@{ ReturnValue=0; Sid=$global:fixtureSid } }',
+    'function Get-NetTCPConnection { param($State, $OwningProcess, $ErrorAction) [pscustomobject]@{ LocalAddress="127.0.0.1"; LocalPort=(5000 + $OwningProcess) } }',
+    `. '${scriptPath}'`
+  ].join('\n');
+  const output = await runProcess(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', harness], {
+    timeoutMs: 8000
+  });
+  const discovery = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? '{}') as { outcome?: string; servers?: { pid: number; ports: number[] }[] };
+  assert.equal(discovery.outcome, 'success');
+  assert.deepEqual(
+    discovery.servers?.map(server => server.pid),
+    [1]
+  );
+  const [hub] = discovery.servers ?? [];
+  assert.deepEqual(hub?.ports, [5001]);
+});
+
 test('macOS process discovery rejects unrelated servers and binds lsof to the PID', async () => {
   const calls: { binary: string; args: readonly string[] }[] = [];
   const servers = await discoverAntigravityServers({
