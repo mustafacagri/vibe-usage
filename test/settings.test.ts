@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { appDataDir, defaultSettings, loadSettings, saveSettings, validateSettings } from '../src/core/settings.ts';
+import {
+  appDataDir,
+  defaultSettings,
+  loadSettings,
+  loadSettingsWithRecovery,
+  saveSettings,
+  validateSettings
+} from '../src/core/settings.ts';
 import { tempDir } from './helpers/fixtures.ts';
 
 const base = { pinned: false, intervalSeconds: 120, accounts: [] };
@@ -77,6 +84,20 @@ test('a settings file from an earlier version is read without the settings that 
   assert.throws(() => validateSettings({ ...base, madeUp: true }), /unknown_setting/, 'an unknown setting is still refused');
 });
 
+test('legacy fallbackOrder migrates to providerOrder without a damage warning', async t => {
+  const settings = validateSettings({ ...base, fallbackOrder: ['cursor', 'claude'], accounts: [account()] });
+  assert.deepEqual(settings.providerOrder, ['cursor', 'claude']);
+  assert.equal(settings.accounts[0]?.label, 'A');
+  assert.equal('fallbackOrder' in settings, false);
+  const file = path.join(await tempDir(t, 'vibe-legacy-settings-'), 'settings.json');
+  await fs.writeFile(file, JSON.stringify({ ...base, fallbackOrder: ['cursor', 'claude'], accounts: [account()] }));
+  const loaded = await loadSettingsWithRecovery(file);
+  assert.equal(loaded.notice, undefined);
+  assert.deepEqual(loaded.settings, settings);
+  assert.throws(() => validateSettings({ ...base, fallbackOrder: ['madeUp'] }), /invalid_provider_order/);
+  assert.throws(() => validateSettings({ ...base, schemaVersion: 1, fallbackOrder: ['cursor'] }), /unknown_setting/);
+});
+
 test('a typed account name keeps the app-supplied key beside it, so clearing the name brings it back', () => {
   const keyed = validateSettings({ ...base, accounts: [account({ label: undefined, labelKey: 'accountA' })] }).accounts[0];
   assert.equal(keyed?.labelKey, 'accountA');
@@ -112,7 +133,7 @@ test('atomic round trip persists only public settings', async t => {
   assert.deepEqual(await loadSettings(file), settings);
   assert.deepEqual((await fs.readdir(dir)).sort(), ['settings.json', 'settings.json.lock.sqlite']);
   await assert.rejects(saveSettings(file, { ...settings, token: 'secret' }), /unknown_setting/);
-  await fs.writeFile(file, JSON.stringify({ ...base, fallbackOrder: ['cursor'] }));
+  await fs.writeFile(file, JSON.stringify({ ...base, madeUp: ['cursor'] }));
   await assert.rejects(loadSettings(file), /unknown_setting/);
   await fs.writeFile(file, '{ not json');
   await assert.rejects(loadSettings(file), /invalid_settings: malformed_file/);

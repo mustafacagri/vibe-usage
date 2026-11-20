@@ -302,9 +302,15 @@ const isFutureDocument = (document: unknown): boolean =>
 const RETIRED_SETTINGS = ['globalShortcut'];
 
 export function validateSettings(document: unknown): Settings {
-  const input = isObject(document)
+  let input = isObject(document)
     ? Object.fromEntries(Object.entries(document).filter(([key]) => !RETIRED_SETTINGS.includes(key)))
     : document;
+  // Before schema versioning the work order was named fallbackOrder. Recognize only
+  // that legacy shape; arbitrary unknown settings still indicate an invalid file.
+  if (isObject(input) && input.schemaVersion === undefined && Object.hasOwn(input, 'fallbackOrder') && input.providerOrder === undefined) {
+    const { fallbackOrder, ...legacy } = input;
+    input = { ...legacy, providerOrder: fallbackOrder };
+  }
   assertShape(input, SETTINGS_KEYS, 'unknown_setting');
   check(!isFutureDocument(input), 'unsupported_schema');
   check(input.schemaVersion === undefined || input.schemaVersion === SETTINGS_SCHEMA_VERSION, 'invalid_schema_version');
