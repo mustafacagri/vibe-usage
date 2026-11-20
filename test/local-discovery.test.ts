@@ -230,7 +230,10 @@ test('Windows discovery accepts only the hub process of the user-profile agy.exe
   const output = await runProcess(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', harness], {
     timeoutMs: 8000
   });
-  const discovery = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? '{}') as { outcome?: string; servers?: { pid: number; ports: number[] }[] };
+  const discovery = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? '{}') as {
+    outcome?: string;
+    servers?: { pid: number; ports: number[] }[];
+  };
   assert.equal(discovery.outcome, 'success');
   assert.deepEqual(
     discovery.servers?.map(server => server.pid),
