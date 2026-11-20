@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const ja: Messages = {
+  claudeFreePlanDetail: 'Free プランでは Claude Code のサブスクリプション利用枠は使えません。',
   name: '日本語',
   liveTracker: 'ライブトラッカー',
   pinWindow: 'ウィンドウを固定',

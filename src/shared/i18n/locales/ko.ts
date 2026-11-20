@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const ko: Messages = {
+  claudeFreePlanDetail: 'Free 플랜에서는 Claude Code 구독 할당량을 사용할 수 없습니다.',
   name: '한국어',
   liveTracker: '실시간 모니터',
   pinWindow: '창 고정',

@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const de: Messages = {
+  claudeFreePlanDetail: 'Free-Tarif; kein Abonnementkontingent für Claude Code verfügbar.',
   name: 'Deutsch',
   liveTracker: 'Live-Tracker',
   pinWindow: 'Fenster anheften',

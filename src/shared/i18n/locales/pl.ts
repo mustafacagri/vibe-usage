@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const pl: Messages = {
+  claudeFreePlanDetail: 'Plan Free; limit subskrypcji Claude Code jest niedostępny.',
   name: 'Polski',
   liveTracker: 'Monitor na żywo',
   pinWindow: 'Przypnij okno',

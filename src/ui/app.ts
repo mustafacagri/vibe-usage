@@ -442,8 +442,8 @@ function spendingDetails(rows: readonly HTMLElement[]): HTMLElement {
 }
 
 // `label` replaces the window's name, e.g. with the account's when accounts are compared.
-function quotaCell(window: QuotaWindow, fullWidth: boolean, label?: string): HTMLElement {
-  const view = describeWindow(window, format());
+function quotaCell(window: QuotaWindow, fullWidth: boolean, label?: string, account?: MeasuredAccount): HTMLElement {
+  const view = describeWindow(window, { ...format(), ...(account ? { account } : {}) });
   const low = isLowQuota(view.percent, current().settings.lowQuotaPercent);
   const cell = element('div', ['quota', low ? 'low' : '', fullWidth ? 'span-full' : ''].filter(Boolean).join(' '));
   cell.append(quotaLine(label ?? view.label, view.value));
@@ -456,13 +456,14 @@ function quotaCell(window: QuotaWindow, fullWidth: boolean, label?: string): HTM
     cell.append(node);
   }
   const runsOutInMs = window.exhaustsAt ? Date.parse(window.exhaustsAt) - Date.now() : NaN;
-  if (runsOutInMs > 0) cell.append(element('div', 'quota-forecast', t('forecastRunsOut', { time: formatDuration(runsOutInMs, language) })));
+  if (view.percent !== null && runsOutInMs > 0)
+    cell.append(element('div', 'quota-forecast', t('forecastRunsOut', { time: formatDuration(runsOutInMs, language) })));
   return cell;
 }
 
-function quotaGrid(windows: readonly QuotaWindow[]): HTMLElement {
+function quotaGrid(windows: readonly QuotaWindow[], account: MeasuredAccount): HTMLElement {
   const grid = element('div', 'quota-grid');
-  grid.append(...windows.map(window => quotaCell(window, windows.length === 1)));
+  grid.append(...windows.map(window => quotaCell(window, windows.length === 1, undefined, account)));
   return grid;
 }
 
@@ -569,10 +570,13 @@ function accountBody(provider: Provider, shown: MeasuredAccount): HTMLElement[] 
   const nodes: HTMLElement[] = [];
   const groups = groupWindows(shown.windows);
   // Account-wide limits first; per-model scopes follow under their own headings.
-  if (groups.general.length) nodes.push(quotaGrid(groups.general));
-  for (const [scope, scoped] of groups.scopes) nodes.push(element('div', 'scope-title', scope), quotaGrid(scoped));
-  if (groups.details.length) nodes.push(spendingDetails(groups.details.map(w => quotaCell(w, true))));
-  const message = statusMessage(shown) || (shown.windows.length ? '' : t('noDataYet'));
+  if (groups.general.length) nodes.push(quotaGrid(groups.general, shown));
+  for (const [scope, scoped] of groups.scopes) nodes.push(element('div', 'scope-title', scope), quotaGrid(scoped, shown));
+  if (groups.details.length) nodes.push(spendingDetails(groups.details.map(w => quotaCell(w, true, undefined, shown))));
+  const message =
+    provider.id === 'claude' && shown.plan === 'free' && shown.status === 'no_limits_reported'
+      ? t('claudeFreePlanDetail')
+      : statusMessage(shown) || (shown.windows.length ? '' : t('noDataYet'));
   if (message) nodes.push(element('div', 'empty', message));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
@@ -587,9 +591,11 @@ function compareRow(sample: QuotaWindow, accounts: readonly MeasuredAccount[]): 
   columns.append(
     ...accounts.map(account => {
       const window = account.windows.find(w => w.id === sample.id);
-      if (window) return quotaCell(window, false, pickerName(account));
+      if (window) return quotaCell(window, false, pickerName(account), account);
       const cell = element('div', 'quota missing');
-      cell.append(quotaLine(pickerName(account), t('noData')));
+      cell.append(
+        quotaLine(pickerName(account), account.plan === 'free' && account.status === 'no_limits_reported' ? 'FREE' : t('noData'))
+      );
       return cell;
     })
   );
@@ -601,7 +607,11 @@ function compareRow(sample: QuotaWindow, accounts: readonly MeasuredAccount[]): 
 function compareActions(provider: Provider, account: MeasuredAccount): HTMLElement {
   const column = element('div', 'compare-action');
   const name = accountName(account);
-  const message = statusMessage(account);
+  if (account.plan) column.append(element('div', 'account-pill', `${pickerName(account)} · ${account.plan.toUpperCase()}`));
+  const message =
+    provider.id === 'claude' && account.plan === 'free' && account.status === 'no_limits_reported'
+      ? t('claudeFreePlanDetail')
+      : statusMessage(account);
   if (message) column.append(element('div', 'empty', message));
   if (canLaunch(provider, account)) {
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
@@ -612,14 +622,14 @@ function compareActions(provider: Provider, account: MeasuredAccount): HTMLEleme
   return column;
 }
 
-// Every limit any account reports, once, in the order the accounts report them. An account
-// without any (signed out, not read yet) gets no column, only its status and next step.
+// Every limit any account reports, once. Keep every account in the same column even
+// when it has no quota, so a Free or signed-out account cannot shift the other columns.
 function compareBody(provider: Provider, accounts: readonly MeasuredAccount[]): HTMLElement[] {
   const measured = accounts.filter(a => a.windows.length);
   const samples = new Map<string, QuotaWindow>();
   for (const window of measured.flatMap(a => a.windows)) if (!samples.has(window.id)) samples.set(window.id, window);
   const groups = groupWindows([...samples.values()]);
-  const rows = (windows: readonly QuotaWindow[]): HTMLElement[] => windows.map(w => compareRow(w, measured));
+  const rows = (windows: readonly QuotaWindow[]): HTMLElement[] => windows.map(w => compareRow(w, accounts));
   const nodes = rows(groups.general);
   for (const [scope, scoped] of groups.scopes) nodes.push(element('div', 'scope-title', scope), ...rows(scoped));
   if (groups.details.length) nodes.push(spendingDetails(rows(groups.details)));

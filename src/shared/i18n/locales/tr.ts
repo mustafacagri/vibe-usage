@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const tr: Messages = {
+  claudeFreePlanDetail: 'Free plan; Claude Code abonelik kotası kullanılamaz.',
   name: 'Türkçe',
   liveTracker: 'Canlı izleyici',
   pinWindow: 'Pencereyi sabitle',

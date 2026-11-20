@@ -9,7 +9,7 @@ import { cleanEnvironment } from '../src/core/environment.ts';
 import { readClaudeKeychain } from '../src/providers/claude-keychain.ts';
 import { claudeProfile, createClaudeProvider, discoverClaudeAccounts, parseClaudeUsage } from '../src/providers/claude.ts';
 import { codexProfile, createCodexProvider, parseCodexRateLimits } from '../src/providers/codex.ts';
-import { getJson, runProcess, type QuotaEndpoint, type RunProcess } from '../src/providers/common.ts';
+import { getJson, runProcess, QUOTA_ENDPOINTS, type QuotaEndpoint, type RunProcess } from '../src/providers/common.ts';
 import { parseCursorUsage } from '../src/providers/cursor.ts';
 import type { QuotaWindow } from '../src/shared/types.ts';
 import { account, tempDir } from './helpers/fixtures.ts';
@@ -173,6 +173,7 @@ test('Claude adapter passes the existing token only to the usage GET and never r
     platform: 'win32',
     clock: () => 100000,
     getJson: (url, options) => {
+      if (url === QUOTA_ENDPOINTS.claudeProfile) return Promise.resolve({});
       calls++;
       assert.equal(url, 'https://api.anthropic.com/api/oauth/usage');
       assert.equal(options?.headers?.Authorization, 'Bearer fixture-token');
@@ -187,6 +188,41 @@ test('Claude adapter passes the existing token only to the usage GET and never r
   await fs.writeFile(credential, JSON.stringify({ claudeAiOauth: { accessToken: 'fixture-token', expiresAt: 1 } }));
   await assert.rejects(provider.fetch(account({ configDir: dir })), /auth_expired/);
   assert.equal(calls, 1);
+});
+
+test('Claude live Free profile overrides old Pro credentials and skips subscription usage', async () => {
+  const calls: string[] = [];
+  const provider = createClaudeProvider({
+    readCredentials: () => Promise.resolve({ claudeAiOauth: { accessToken: 'fixture', subscriptionType: 'pro' } }),
+    getJson: (url, options) => {
+      calls.push(url);
+      assert.equal(options?.headers?.Authorization, 'Bearer fixture');
+      if (url === 'https://api.anthropic.com/api/oauth/profile')
+        return Promise.resolve({
+          account: { uuid: 'account' },
+          organization: { uuid: 'org', organization_type: 'claude_free', subscription_status: 'canceled' }
+        });
+      throw new Error('Free accounts must not request paid subscription usage');
+    }
+  });
+  const result = await provider.fetch(account());
+  assert.equal(result.plan, 'free');
+  assert.equal(result.status, 'no_limits_reported');
+  assert.deepEqual(result.windows, []);
+  assert.equal(calls.length, 1);
+});
+
+test('Claude falls back to quota when profile lookup fails, without claiming Free', async () => {
+  const provider = createClaudeProvider({
+    readCredentials: () => Promise.resolve({ claudeAiOauth: { accessToken: 'fixture', subscriptionType: 'pro' } }),
+    getJson: url =>
+      url === 'https://api.anthropic.com/api/oauth/profile'
+        ? Promise.reject(new Error('offline'))
+        : Promise.resolve({ five_hour: { utilization: 10 }, seven_day: { utilization: 20 } })
+  });
+  const result = await provider.fetch(account());
+  assert.equal(result.plan, 'pro');
+  assert.equal(result.windows.length, 2);
 });
 
 test('empty responses are invalid while limit-free schemas report no limits', () => {

@@ -2,6 +2,7 @@ import type { AppErrorCode, StatusCode } from '../../types.ts';
 
 // The reference language: every other locale defines exactly these keys.
 export const en = {
+  claudeFreePlanDetail: 'Free plan; Claude Code subscription quota is unavailable.',
   name: 'English',
   liveTracker: 'Live Tracker',
   pinWindow: 'Pin window',

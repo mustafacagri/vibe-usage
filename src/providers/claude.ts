@@ -259,18 +259,44 @@ export function createClaudeProvider(options: ClaudeProviderOptions = {}): Provi
       const oauth = oauthCredentials(await readCredentials(account, context));
       if (!oauth) throw new ProviderError('auth_missing');
       if (isExpired(oauth.expiresAt, options.clock)) throw new ProviderError('auth_expired');
+      const headers = {
+        Authorization: `Bearer ${oauth.accessToken}`,
+        'anthropic-beta': OAUTH_BETA,
+        'User-Agent': USER_AGENT,
+        Accept: MEDIA_TYPE.json
+      };
+      // Subscription metadata in the credentials can outlive a cancellation. Read the
+      // current profile independently of the paid usage endpoint, which may reject Free.
+      const profile = await getJson(QUOTA_ENDPOINTS.claudeProfile, {
+        ...context,
+        timeoutMs: 5000,
+        headers: { ...headers, 'Cache-Control': 'no-cache' }
+      }).catch(() => null);
+      const organization =
+        isObject(profile) &&
+        isObject(profile.account) &&
+        typeof profile.account.uuid === 'string' &&
+        isObject(profile.organization) &&
+        typeof profile.organization.uuid === 'string'
+          ? profile.organization
+          : null;
+      const plans: Readonly<Record<string, string>> = {
+        claude_free: 'free',
+        claude_pro: 'pro',
+        claude_max: 'max',
+        claude_team: 'team',
+        claude_enterprise: 'enterprise'
+      };
+      const plan = (organization ? plans[safeText(organization.organization_type)] : undefined) ?? safePlan(oauth.subscriptionType);
+      const signedInAs = await readSignedInEmail(account, options);
+      remainingTimeout(25000, context);
+      if (plan === 'free' && organization?.organization_type === 'claude_free')
+        return { windows: [], completeness: 'complete', status: 'no_limits_reported', plan, ...(signedInAs ? { signedInAs } : {}) };
       const usage = await getJson(QUOTA_ENDPOINTS.claude, {
         ...context,
-        headers: {
-          Authorization: `Bearer ${oauth.accessToken}`,
-          'anthropic-beta': OAUTH_BETA,
-          'User-Agent': USER_AGENT,
-          Accept: MEDIA_TYPE.json
-        }
+        headers
       });
       const result = parseClaudeUsage(usage);
-      const plan = safePlan(oauth.subscriptionType);
-      const signedInAs = await readSignedInEmail(account, options);
       remainingTimeout(25000, context);
       return { ...result, ...(plan ? { plan } : {}), ...(signedInAs ? { signedInAs } : {}) };
     }

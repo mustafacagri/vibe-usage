@@ -586,7 +586,7 @@ export async function createService({
     const { accounts } = provider;
     const allHealthy = accounts.length > 0 && accounts.every(isHealthy);
     provider.status = allHealthy ? 'ok' : accounts.some(a => a.fetchedAt) ? 'stale' : (accounts[0]?.status ?? 'unavailable');
-    if (allHealthy || accounts.some(a => a.status === 'ok')) provider.fetchedAt = stamp();
+    if (accounts.some(isHealthy)) provider.fetchedAt = stamp();
     if (accounts.length) delete provider.messageCode;
     else provider.messageCode = 'no_accounts';
   }

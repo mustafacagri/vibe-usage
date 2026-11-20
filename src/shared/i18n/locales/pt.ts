@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const pt: Messages = {
+  claudeFreePlanDetail: 'Plano Free; a cota de assinatura do Claude Code está indisponível.',
   name: 'Português',
   liveTracker: 'Monitor em tempo real',
   pinWindow: 'Fixar janela',

@@ -81,6 +81,34 @@ test('retained data after a failed refresh is labelled stale', () => {
   assert.equal(formatFreshness(undefined, 'ok', context()), 'Not measured yet');
 });
 
+test('expired retained quota is unknown rather than full or resetting now', () => {
+  const view = describeWindow(quotaWindow({ remainingPercent: 100, resetsAt: '2026-10-15T20:00:00Z' }), {
+    ...context(),
+    account: { status: 'stale', fetchedAt: '2026-10-15T19:00:00Z' }
+  });
+  assert.equal(view.value, 'No data');
+  assert.equal(view.percent, null);
+  assert.equal(view.reset, '');
+  assert.match(view.detail, /Stale data/);
+});
+
+test('retained quota without an expired reset shows its age without an availability bar', () => {
+  const view = describeWindow(quotaWindow({ remainingPercent: 75, resetsAt: '2026-10-17T20:00:00Z' }), {
+    ...context(),
+    account: { status: 'stale', fetchedAt: '2026-10-16T19:56:00Z' }
+  });
+  assert.equal(view.value, '75% remaining');
+  assert.equal(view.percent, null);
+  assert.match(view.detail, /Stale data · 4m ago/);
+});
+
+test('an individually stale expired window is unknown even on a successful account', () => {
+  const view = describeWindow(quotaWindow({ remainingPercent: 100, stale: true, resetsAt: '2026-10-15T20:00:00Z' }), context());
+  assert.equal(view.value, 'No data');
+  assert.equal(view.percent, null);
+  assert.equal(view.reset, '');
+});
+
 test('codes resolve to app errors, then provider statuses, then a generic message', () => {
   const t = translator('en');
   assert.equal(describeCode('session_not_found', t), 'The selected session was not found.');

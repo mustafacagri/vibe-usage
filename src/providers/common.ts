@@ -37,6 +37,7 @@ const TOKEN_EXPIRY_SKEW_MS = DURATION_MS.MINUTE;
 // The only remote endpoints the app may call. Everything else is rejected before a request.
 export const QUOTA_ENDPOINTS = {
   claude: 'https://api.anthropic.com/api/oauth/usage',
+  claudeProfile: 'https://api.anthropic.com/api/oauth/profile',
   cursor: 'https://cursor.com/api/usage-summary',
   copilot: 'https://api.github.com/copilot_internal/user'
 } as const;

@@ -17,6 +17,19 @@ const reading = (fields: Partial<MeasuredAccount>): MeasuredAccount =>
   measuredAccount({ id: 'claude:a', status: 'ok', fetchedAt: '2026-10-17T12:00:00.000Z', windows: [], ...fields });
 const tool = (accounts: MeasuredAccount[]): ProviderState => ({ id: 'claude', status: 'ok', accounts });
 
+test('compact view does not advertise retained quota after its reset has passed', () => {
+  const now = Date.parse('2026-11-09T12:00:00Z');
+  const account = reading({
+    status: 'stale',
+    windows: [limit('five_hour', 100, { resetsAt: '2026-11-04T08:30:00Z' })]
+  });
+  const line = only(compactLines(tool([account]), 20, now));
+  assert.equal(line.window, null);
+  assert.equal(line.low, false);
+  assert.equal(line.stale, true);
+  assert.ok(line.note);
+});
+
 test('signing in is offered when the source asks for it or a read keeps failing, not while waiting', () => {
   const never = (status: AccountStatus) => needsSignIn(reading({ status, windows: [] }));
   assert.equal(never('auth_expired'), true);
@@ -26,6 +39,11 @@ test('signing in is offered when the source asks for it or a read keeps failing,
   assert.equal(never('transport_error'), false);
   assert.equal(never('pending'), false);
   assert.equal(needsSignIn(reading({ status: 'stale', windows: [limit('five_hour', 50)] })), false);
+  assert.equal(
+    needsSignIn(reading({ status: 'no_limits_reported', plan: 'free', windows: [] })),
+    false,
+    'a verified Free account is already signed in'
+  );
 });
 
 test('a tool that is not found is not signed in to: the window sends the user to the diagnostics', () => {

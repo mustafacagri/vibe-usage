@@ -45,7 +45,9 @@ const WAITING_STATUSES: ReadonlySet<AccountStatus> = new Set([
 // Signing in helps when the source said so, or when an account was never read for a reason
 // that does not pass by itself.
 export const needsSignIn = (account: MeasuredAccount): boolean =>
-  !toolCannotStart(account) && (SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status)));
+  !toolCannotStart(account) &&
+  !HEALTHY_STATUSES.has(account.status) &&
+  (SIGN_IN_STATUSES.has(account.status) || (!account.windows.length && !WAITING_STATUSES.has(account.status)));
 
 export type KnownWindow = QuotaWindow & { remainingPercent: number };
 
@@ -103,11 +105,12 @@ function noteFor(account: MeasuredAccount): CompactNote {
 }
 
 // One line per account of the tool, its main account first.
-export function compactLines(state: ProviderState, lowQuotaPercent: number): CompactLine[] {
+export function compactLines(state: ProviderState, lowQuotaPercent: number, now = Date.now()): CompactLine[] {
   return [...state.accounts]
     .sort((a, b) => Number(b.primary) - Number(a.primary))
     .map(account => {
-      const measured = account.status === 'ok' || (account.status === 'stale' && Boolean(account.fetchedAt));
+      const expired = account.windows.some(w => w.resetsAt && Date.parse(w.resetsAt) <= now && w.section !== 'details');
+      const measured = account.status === 'ok' || (account.status === 'stale' && Boolean(account.fetchedAt) && !expired);
       const { window, other, tighter } = measured ? limits(account) : { window: null, other: null, tighter: null };
       const isLow = (limit: KnownWindow | null): boolean => isLowQuota(limit?.remainingPercent ?? null, lowQuotaPercent);
       return {

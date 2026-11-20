@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const nl: Messages = {
+  claudeFreePlanDetail: 'Free-abonnement; geen abonnementsquotum voor Claude Code beschikbaar.',
   name: 'Nederlands',
   liveTracker: 'Livetracker',
   pinWindow: 'Venster vastpinnen',

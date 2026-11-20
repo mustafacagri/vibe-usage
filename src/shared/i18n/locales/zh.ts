@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const zh: Messages = {
+  claudeFreePlanDetail: 'Free 套餐无法使用 Claude Code 订阅配额。',
   name: '简体中文',
   liveTracker: '实时用量监控',
   pinWindow: '固定窗口',

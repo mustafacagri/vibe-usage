@@ -1,6 +1,7 @@
 import type { Messages } from '../messages.ts';
 
 export const ru: Messages = {
+  claudeFreePlanDetail: 'План Free; квота подписки Claude Code недоступна.',
   name: 'Русский',
   liveTracker: 'Монитор квот',
   pinWindow: 'Закрепить окно',

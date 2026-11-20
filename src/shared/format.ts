@@ -10,6 +10,7 @@ export interface FormatContext {
   t: Translate;
   locale: string;
   now?: number;
+  account?: Pick<MeasuredAccount, 'status' | 'fetchedAt'>;
 }
 
 // Countdown granularity: coarser as the distance grows (42m · 3h 11m · 49h · 4d 5h).
@@ -100,16 +101,21 @@ export interface WindowView {
   resetAt: string;
 }
 
-export function describeWindow(window: QuotaWindow, { t, locale, now = Date.now() }: FormatContext): WindowView {
+export function describeWindow(window: QuotaWindow, context: FormatContext): WindowView {
+  const { t, locale, now = Date.now(), account } = context;
   const resetDate = window.resetsAt ? new Date(window.resetsAt) : null;
   const resetMs = resetDate?.getTime();
   const hasReset = resetDate !== null && isNumber(resetMs);
-  const reset = hasReset ? (resetMs - now <= 0 ? t('resetsNow') : t('resetsIn', { time: formatDuration(resetMs - now, locale) })) : '';
+  const stale = window.stale === true || account?.status === 'stale';
+  const expired = stale && hasReset && resetMs <= now;
+  const reset =
+    hasReset && !expired ? (resetMs - now <= 0 ? t('resetsNow') : t('resetsIn', { time: formatDuration(resetMs - now, locale) })) : '';
+  const freshness = account?.status === 'stale' ? formatFreshness(account.fetchedAt, 'stale', context) : '';
   return {
     label: windowLabel(window, t),
-    value: windowValue(window, t, locale),
-    percent: isPassive(window) || window.amounts || window.valueKey ? null : clampPercent(window.remainingPercent),
-    detail: windowDetail(window, t, locale),
+    value: expired ? t('noData') : windowValue(window, t, locale),
+    percent: stale || isPassive(window) || window.amounts || window.valueKey ? null : clampPercent(window.remainingPercent),
+    detail: [freshness, windowDetail(window, t, locale)].filter(Boolean).join(' · '),
     reset,
     resetAt: hasReset ? t('resetsAt', { date: formatDate(resetDate, locale) }) : ''
   };
