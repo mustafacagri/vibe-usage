@@ -80,7 +80,7 @@ Vibe Usage 读取你电脑上已经登录的会话，把所有额度并排展示
 
 ### 多账户
 
-Claude 和 Codex 每个配置文件文件夹保存一个登录。**添加账户** 会新建一个文件夹并在其中打开该工具的登录；你自己创建的 `~/.claude-*` 和 `~/.codex-*` 文件夹也会被自动发现。每个账户都以其登录邮箱显示，每个已登录的 Antigravity 账户也会分别跟踪。你可以选择主账户、用指定账户启动 Claude Code，并为每个工具设置备用顺序和首选模型。十分钟内未完成登录，该账户会被再次移除，下一个账户会复用它的文件夹。
+Claude、Codex 和 Antigravity 每个配置文件文件夹保存一个登录。**添加账户** 会新建一个文件夹并在其中打开该工具的登录（`~/.claude-*`、`~/.codex-*` 以及通过 `agy --gemini_dir` 隔离的 `~/.antigravity-*` 配置文件）；你自己创建的文件夹也会被自动发现。每个账户都以其登录邮箱显示。对于 Antigravity，你可以手动将设备当前活动的登录切换到任意隔离配置文件：切换前会先在系统凭据库中备份原登录并可随时恢复，`agy --hub` 会自动重启，重启 IDE 后即可生效；额度不足时的继续建议也始终需要你明确确认。你可以选择主账户、用指定账户启动 Claude Code，并为每个工具设置备用顺序和首选模型。十分钟内未完成登录，该账户会被再次移除，下一个账户会复用它的文件夹。
 
 </td>
 <td valign="top">
@@ -123,13 +123,13 @@ Claude 和 Codex 每个配置文件文件夹保存一个登录。**添加账户*
 | Claude Code | 配置文件的 OAuth 用量接口（macOS 上使用钥匙串）  | `~/.claude/projects`                    | 用所选配置文件运行 `claude` CLI  |
 | Codex       | 已安装 CLI 的 app-server 速率限制方法            | `~/.codex/sessions`                     | `codex` CLI                      |
 | Cursor      | 已登录会话的用量摘要                             | Cursor Agent CLI 对话（`~/.cursor/chats`） | `cursor-agent`，否则使用应用  |
-| Antigravity | 正在运行的应用的本地服务（验证进程和端口归属）   | `~/.gemini/antigravity-ide`             | Antigravity 应用                 |
+| Antigravity | 本地 `agy --hub` 服务（验证进程和端口归属）以及隔离 `~/.antigravity-*` 配置的 `cloudcode-pa` | `~/.gemini/antigravity`、`antigravity-cli`、`antigravity-ide` 与隔离配置 | Antigravity 应用（手动切换账号） |
 
 模型列表来自各工具自身的数据：Claude Code 的别名和你用过的模型、Codex 的模型缓存，以及 `cursor-agent --list-models`（缓存 24 小时）。
 
 ## 隐私与安全
 
-现有凭据会在内存中读取，文档可能同时包含访问令牌和刷新令牌。应用检查刷新令牌是否存在，但不会将其保存到自身数据中。续期由 Claude Code 完成。
+现有凭据会在内存中读取，文档可能同时包含访问令牌和刷新令牌。应用检查刷新令牌是否存在，但不会将其保存到自身数据中。续期由 Claude Code 以及（隔离的 Antigravity 配置文件）`agy` 完成。手动切换 Antigravity 账号前会先在系统凭据存储中备份先前的登录。
 
 设置、账号标签、路径、额度历史和最近测量结果保存在本地磁盘。使用另一账号继续时会复制完整对话。`VIBE_HANDOVER.md` 包含经过遮盖的对话上下文，但无法保证识别所有秘密格式。移交前请检查预览。Git 已跟踪的文件或 Git 排除失败会阻止移交。Cursor 保留自身的信任确认。
 

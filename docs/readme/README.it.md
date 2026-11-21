@@ -91,11 +91,14 @@ Scegli una sessione Claude Code, Codex, Cursor Agent o Antigravity. `VIBE_HANDOV
 
 ### Più account
 
-Claude e Codex conservano un accesso per cartella del profilo. **Aggiungi account** crea una nuova cartella e vi apre
-l'accesso dello strumento; le cartelle `~/.claude-*` e `~/.codex-*` create da te vengono trovate automaticamente. Ogni
-account è mostrato con l'e-mail con cui ha effettuato l'accesso, e anche ogni account Antigravity connesso viene seguito
-separatamente. Scegli l'account principale, avvia Claude Code con un account specifico e imposta l'ordine di riserva e
-il modello preferito per ogni strumento.
+Claude, Codex e Antigravity conservano un accesso per cartella del profilo. **Aggiungi account** crea una nuova cartella
+e vi apre l'accesso dello strumento (`~/.claude-*`, `~/.codex-*` e profili isolati `~/.antigravity-*` tramite
+`agy --gemini_dir`); le cartelle create da te vengono trovate automaticamente. Ogni account è mostrato con l'e-mail con
+cui ha effettuato l'accesso. Per Antigravity puoi passare manualmente l'accesso attivo del dispositivo a qualsiasi
+profilo isolato: la voce precedente nel gestore credenziali di sistema viene prima salvata in backup e resta
+ripristinabile in ogni momento, `agy --hub` si riavvia e l'IDE applica il cambio al riavvio; i suggerimenti per
+continuare attendono sempre la tua conferma esplicita. Scegli l'account principale, avvia Claude Code con un account
+specifico e imposta l'ordine di riserva e il modello preferito per ogni strumento.
 Un accesso non completato entro dieci minuti rimuove di nuovo l'account, e l'account successivo ne riusa la cartella.
 
 </td>
@@ -139,14 +142,14 @@ Un accesso non completato entro dieci minuti rimuove di nuovo l'account, e l'acc
 | Claude Code | Endpoint di utilizzo OAuth del profilo (Portachiavi su macOS)              | `~/.claude/projects`                           | CLI `claude` con il profilo scelto       |
 | Codex       | Metodi dei limiti dell'app-server della CLI installata                     | `~/.codex/sessions`                            | CLI `codex`                              |
 | Cursor      | Riepilogo di utilizzo della sessione connessa                              | Chat di Cursor Agent CLI (`~/.cursor/chats`)   | `cursor-agent`, altrimenti l'app         |
-| Antigravity | Servizio locale dell'app in esecuzione (processo e porta verificati)       | `~/.gemini/antigravity-ide`                    | App Antigravity                          |
+| Antigravity | Servizio locale `agy --hub` (processo e porta verificati) e `cloudcode-pa` per i profili isolati `~/.antigravity-*` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` e profili isolati | App Antigravity (cambio account manuale) |
 
 Gli elenchi dei modelli vengono dai dati di ogni strumento: gli alias di Claude Code e i modelli che hai usato, la cache
 dei modelli di Codex e `cursor-agent --list-models` (in cache per 24 ore).
 
 ## Privacy e sicurezza
 
-Le credenziali esistenti vengono lette in memoria; i documenti possono contenere token di accesso e aggiornamento. L’app verifica la presenza del token di aggiornamento, senza salvarlo nei propri dati. Il rinnovo viene eseguito da Claude Code.
+Le credenziali esistenti vengono lette in memoria; i documenti possono contenere token di accesso e aggiornamento. L’app verifica la presenza del token di aggiornamento, senza salvarlo nei propri dati. Il rinnovo viene eseguito da Claude Code e, per i profili Antigravity isolati, da `agy`. Il cambio manuale dell’account Antigravity esegue prima il backup dell’accesso precedente nel gestore credenziali di sistema.
 
 Impostazioni, etichette degli account, percorsi, cronologia delle quote e ultime misurazioni restano sul disco locale. Continuare su un altro account copia l’intera conversazione. `VIBE_HANDOVER.md` contiene contesto ripulito, ma non è possibile riconoscere ogni formato di segreto. Controlla l’anteprima prima del trasferimento. Un file già tracciato da Git o un’esclusione fallita bloccano il trasferimento. Cursor conserva le proprie richieste di fiducia.
 

@@ -91,11 +91,14 @@ Elige una sesión de Claude Code, Codex, Cursor Agent o Antigravity. `VIBE_HANDO
 
 ### Varias cuentas
 
-Claude y Codex guardan una sesión por carpeta de perfil. **Añadir cuenta** crea una carpeta nueva y abre allí el inicio
-de sesión de la herramienta; las carpetas `~/.claude-*` y `~/.codex-*` que hayas creado tú se detectan automáticamente.
-Cada cuenta se muestra con el correo con el que inició sesión, y cada cuenta de Antigravity con sesión iniciada también
-se sigue por separado. Elige la cuenta principal, abre Claude Code con una cuenta concreta y define el orden de respaldo
-y el modelo preferido de cada herramienta.
+Claude, Codex y Antigravity guardan una sesión por carpeta de perfil. **Añadir cuenta** crea una carpeta nueva y abre
+allí el inicio de sesión de la herramienta (`~/.claude-*`, `~/.codex-*` y perfiles aislados `~/.antigravity-*` mediante
+`agy --gemini_dir`); las carpetas creadas por ti se detectan automáticamente. Cada cuenta se muestra con el correo con el
+que inició sesión. En Antigravity puedes cambiar manualmente la sesión activa del dispositivo a cualquier perfil aislado:
+la entrada previa del almacén de credenciales se respalda primero y se puede restaurar en cualquier momento, `agy --hub`
+se reinicia y la IDE aplica el cambio tras reiniciarla; las sugerencias para continuar siempre requieren tu confirmación
+explícita. Elige la cuenta principal, abre Claude Code con una cuenta concreta y define el orden de respaldo y el modelo
+preferido de cada herramienta.
 Si el inicio de sesión no termina en diez minutos, la cuenta se quita de nuevo y la siguiente reutiliza su carpeta.
 
 </td>
@@ -139,14 +142,14 @@ Si el inicio de sesión no termina en diez minutos, la cuenta se quita de nuevo 
 | Claude Code | Endpoint de uso OAuth del perfil (Llavero en macOS)                       | `~/.claude/projects`                           | CLI `claude` con el perfil elegido     |
 | Codex       | Métodos de límites del app-server de la CLI instalada                     | `~/.codex/sessions`                            | CLI `codex`                            |
 | Cursor      | Resumen de uso de la sesión iniciada                                      | Chats de Cursor Agent CLI (`~/.cursor/chats`)  | `cursor-agent`; si no, la app          |
-| Antigravity | Servicio local de la app en ejecución (proceso y puerto verificados)      | `~/.gemini/antigravity-ide`                    | App de Antigravity                     |
+| Antigravity | Servicio local `agy --hub` (proceso y puerto verificados) y `cloudcode-pa` para perfiles aislados `~/.antigravity-*` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` y perfiles aislados | App de Antigravity (cambio manual de cuenta) |
 
 Las listas de modelos salen de los datos de cada herramienta: los alias de Claude Code y los modelos que has usado, la
 caché de modelos de Codex y `cursor-agent --list-models` (en caché durante 24 horas).
 
 ## Privacidad y seguridad
 
-Las credenciales existentes se leen en memoria; sus documentos pueden contener tokens de acceso y actualización. La app comprueba si existe un token de actualización, pero no lo guarda en sus propios datos. Claude Code realiza la renovación.
+Las credenciales existentes se leen en memoria; sus documentos pueden contener tokens de acceso y actualización. La app comprueba si existe un token de actualización, pero no lo guarda en sus propios datos. Claude Code y `agy` (para perfiles aislados de Antigravity) realizan la renovación. Al cambiar manualmente de cuenta de Antigravity se respalda primero la sesión anterior en el almacén de credenciales del sistema.
 
 Los ajustes, etiquetas de cuentas, rutas, historial de cuota y últimas mediciones se guardan localmente. Continuar en otra cuenta copia la conversación completa. `VIBE_HANDOVER.md` contiene contexto con datos sensibles ocultos; no se garantiza detectar todos los formatos de secretos. Revisa la vista previa antes de transferir. Un archivo ya rastreado por Git o una exclusión fallida impiden la transferencia. Cursor conserva sus propias preguntas de confianza.
 

@@ -67,8 +67,10 @@ on the same tool's account with the most quota left, then, if you allow it, on t
 Opt in and it happens on its own; otherwise it is one click. The trigger is the tool's own "usage limit reached"
 record, never a percentage, so two agents never work on the same folder at once. A Claude Code session moves to your
 other Claude account **whole** and goes on by itself; other tools get a handover brief (kept out of `git status`).
-An account running low offers the same move early, and warns if its session is still running. When the first account
-has quota again, bringing the work back is one click.
+An account running low offers the same move early, and warns if its session is still running. Antigravity accounts running
+low also offer continuing on the sibling account with the most remaining quota (or the next fallback tool) with a handover
+brief, always waiting for your explicit confirmation — Antigravity logins are never rotated silently. When the first
+Claude account has quota again, bringing the work back is one click.
 
 If the computer goes down (a restart, a crash, a power cut) while Claude Code sessions are open, they open again where
 they left off, on the account they belong to, and a turn that was cut off goes on. Suggested by default, or on its own
@@ -113,10 +115,13 @@ or a failed Git exclusion stop the handover. Cursor keeps its own project-trust 
 
 ### Multiple accounts
 
-Claude and Codex keep one sign-in per profile folder. **Add account** creates a new folder and opens the tool's sign-in
-there; `~/.claude-*` and `~/.codex-*` folders you made yourself are found automatically. Each account is shown by the
-e-mail it is signed in with, and every signed-in Antigravity account is tracked separately too. Pick the primary
-account, launch Claude Code with a specific account, and set the fallback order and the preferred model per tool.
+Claude, Codex and Antigravity keep one sign-in per profile folder. **Add account** creates a new folder and opens the
+tool's sign-in there (`~/.claude-*`, `~/.codex-*`, and isolated `~/.antigravity-*` folders via `agy --gemini_dir`);
+folders you made yourself are found automatically. Each account is shown by the e-mail it is signed in with. For
+Antigravity, you can manually switch the active device login to any isolated profile — the previous OS-keyring entry is
+backed up first and can be restored anytime, `agy --hub` restarts automatically, and Antigravity IDE picks up the new
+account after you restart it. Pick the primary account, launch Claude Code with a specific account, and set the fallback
+order and the preferred model per tool.
 A sign-in not finished within ten minutes takes the account off again, and the next account reuses its folder.
 
 </td>
@@ -180,7 +185,7 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 | Claude Code | The profile's OAuth usage endpoint (Keychain on macOS)                  | `~/.claude/projects`                    | `claude` CLI with the chosen profile   |
 | Codex       | The installed CLI's app-server rate-limit methods                       | `~/.codex/sessions`                     | `codex` CLI                            |
 | Cursor      | The signed-in session's usage summary                                   | Cursor Agent CLI chats (`~/.cursor/chats`) | `cursor-agent`, otherwise the app      |
-| Antigravity | The running app's local service (process and port ownership verified)   | `~/.gemini/antigravity-ide`             | Antigravity app                        |
+| Antigravity | Local `agy --hub` service (process and port ownership verified) and `cloudcode-pa` for isolated `~/.antigravity-*` profiles | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` & isolated profiles | Antigravity app (manual account switch) |
 | GitHub Copilot | GitHub's Copilot usage endpoint, with the GitHub CLI's sign-in       | none                                    | none: only its quota is shown          |
 
 Model lists come from each tool's own data: Claude Code aliases and the models you used, the Codex model cache, and
@@ -199,15 +204,19 @@ fallback target: the app starts nothing in it.
 ## Privacy and safety
 
 - **Your sign-ins stay as they are.** It uses the sessions that already exist. It never asks for a password, never
-  stores refresh tokens in its own data, never signs you out, and never interrupts busy work. Existing credential
-  documents are read in memory; the renewal check inspects whether a refresh token exists. When work may move between
-  accounts on its own, an expired Claude Code sign-in is renewed by Claude Code itself: one minimal Haiku request (one
-  word, no tools, nothing saved), at most every 30 minutes per account. Continuing a Claude Code session on
-  another account copies its transcript into that account's profile folder; the original is left as it is.
-- **Few endpoints.** Quota requests go only to the Anthropic, Cursor and GitHub Copilot usage endpoints, with TLS
-  verification on (and the renewal above goes through Claude Code). Every five minutes the app reads the status pages of
-  Claude, OpenAI, Cursor and GitHub (public JSON, no sign-in sent); Settings → General turns this off.
-  Codex and Antigravity are read locally. Once a day the app asks GitHub for its latest release (Settings → General
+  stores refresh tokens in its own data, never signs you out silently, and never interrupts busy work. Existing
+  credential documents are read in memory; the renewal check inspects whether a refresh token exists. When work may move
+  between accounts on its own, an expired Claude Code sign-in is renewed by Claude Code itself: one minimal Haiku request
+  (one word, no tools, nothing saved), at most every 30 minutes per account. Expired isolated Antigravity profiles
+  (`~/.antigravity-*`) are renewed by `agy --gemini_dir=<profile> models` (at most every 30 minutes). Manually switching
+  the active Antigravity login backs up the previous OS-keyring entry first so you can restore it anytime. Continuing a
+  Claude Code session on another account copies its transcript into that account's profile folder; the original is left
+  as it is.
+- **Few endpoints.** Quota requests go only to the Anthropic, Cursor, GitHub Copilot and (for isolated Antigravity
+  profiles) `cloudcode-pa.googleapis.com` usage endpoints, with TLS verification on (and the renewals above go through
+  Claude Code and `agy`). Every five minutes the app reads the status pages of Claude, OpenAI, Cursor and GitHub (public
+  JSON, no sign-in sent); Settings → General turns this off. Codex and the active Antigravity sign-in (`agy --hub`) are
+  read locally. Once a day the app asks GitHub for its latest release (Settings → General
   turns this off). An installed Windows copy then downloads a new version itself, only from this repository's
   releases, checks it against the release's SHA-512 checksums (and, for a signed release, its publisher), and installs
   it only when you click **Restart to update**.
@@ -321,8 +330,8 @@ npm run build:win      # or build:mac
 | `src/core`, `src/providers`, `src/main`, `src/cli.ts` | Node/Electron | service, provider adapters, main process, CLI          |
 | `test`, `scripts`                                     | Node          | type-checked only, never compiled                      |
 
-`VIBE_DATA_DIR` moves the settings folder. `VIBE_CLAUDE_BINARY`, `VIBE_CODEX_BINARY` and `VIBE_CURSOR_AGENT_BINARY`
-point at specific CLI binaries. Tests never start a real tool or read real accounts.
+`VIBE_DATA_DIR` moves the settings folder. `VIBE_CLAUDE_BINARY`, `VIBE_CODEX_BINARY`, `VIBE_CURSOR_AGENT_BINARY` and
+`VIBE_AGY_BINARY` point at specific CLI binaries. Tests never start a real tool or read real accounts.
 
 ## Limitations
 

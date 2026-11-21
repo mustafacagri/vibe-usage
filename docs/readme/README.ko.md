@@ -80,7 +80,7 @@ Claude Code, Codex, Cursor Agent, Antigravity 세션을 선택하세요. `VIBE_H
 
 ### 여러 계정
 
-Claude와 Codex는 프로필 폴더마다 하나의 로그인을 보관합니다. **계정 추가**는 새 폴더를 만들고 그곳에서 도구의 로그인을 엽니다. 직접 만든 `~/.claude-*`와 `~/.codex-*` 폴더도 자동으로 찾습니다. 각 계정은 로그인한 이메일로 표시되며, 로그인된 모든 Antigravity 계정도 따로 추적합니다. 기본 계정을 고르고, 특정 계정으로 Claude Code를 실행하고, 도구별 대체 순서와 선호 모델을 설정할 수 있습니다. 10분 안에 로그인이 끝나지 않으면 계정은 다시 제거되고, 다음 계정이 그 폴더를 사용합니다.
+Claude, Codex, Antigravity는 프로필 폴더마다 하나의 로그인을 보관합니다. **계정 추가**는 새 폴더를 만들고 그곳에서 도구의 로그인을 엽니다(`~/.claude-*`, `~/.codex-*` 및 `agy --gemini_dir`를 통한 격리된 `~/.antigravity-*` 프로필). 직접 만든 폴더도 자동으로 찾습니다. 각 계정은 로그인한 이메일로 표시됩니다. Antigravity에서는 기기의 활성 로그인을 원하는 격리 프로필로 수동 전환할 수 있으며, 전환 전 기존 OS 자격 증명 저장소 항목을 먼저 백업해 언제든 복원할 수 있고 `agy --hub`가 다시 시작되며 IDE를 다시 시작하면 적용됩니다(이어하기 제안도 항상 명시적 확인을 거칩니다). 기본 계정을 고르고, 특정 계정으로 Claude Code를 실행하고, 도구별 대체 순서와 선호 모델을 설정할 수 있습니다. 10분 안에 로그인이 끝나지 않으면 계정은 다시 제거되고, 다음 계정이 그 폴더를 사용합니다.
 
 </td>
 <td valign="top">
@@ -123,13 +123,13 @@ Claude와 Codex는 프로필 폴더마다 하나의 로그인을 보관합니다
 | Claude Code | 프로필의 OAuth 사용량 엔드포인트 (macOS에서는 키체인)      | `~/.claude/projects`                          | 선택한 프로필로 `claude` CLI       |
 | Codex       | 설치된 CLI app-server의 사용량 한도 메서드                 | `~/.codex/sessions`                           | `codex` CLI                        |
 | Cursor      | 로그인된 세션의 사용량 요약                                | Cursor Agent CLI 채팅 (`~/.cursor/chats`)     | `cursor-agent`, 없으면 앱          |
-| Antigravity | 실행 중인 앱의 로컬 서비스 (프로세스와 포트 소유자 확인)   | `~/.gemini/antigravity-ide`                   | Antigravity 앱                     |
+| Antigravity | 로컬 `agy --hub` 서비스(프로세스와 포트 소유자 확인) 및 격리된 `~/.antigravity-*` 프로필용 `cloudcode-pa` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` 및 격리 프로필 | Antigravity 앱 (수동 계정 전환) |
 
 모델 목록은 각 도구의 자체 데이터에서 가져옵니다: Claude Code 별칭과 사용한 모델, Codex 모델 캐시, `cursor-agent --list-models`(24시간 캐시).
 
 ## 개인정보 보호와 안전
 
-기존 인증 문서를 메모리에서 읽으며, 문서에는 액세스 토큰과 갱신 토큰이 포함될 수 있습니다. 앱은 갱신 토큰의 존재 여부를 확인하지만 자체 데이터에는 저장하지 않습니다. 갱신은 Claude Code가 수행합니다.
+기존 인증 문서를 메모리에서 읽으며, 문서에는 액세스 토큰과 갱신 토큰이 포함될 수 있습니다. 앱은 갱신 토큰의 존재 여부를 확인하지만 자체 데이터에는 저장하지 않습니다. 갱신은 Claude Code와(격리된 Antigravity 프로필의 경우) `agy`가 수행합니다. Antigravity 계정을 수동으로 전환할 때는 먼저 이전 로그인을 OS 자격 증명 저장소에 백업합니다.
 
 설정, 계정 이름, 경로, 할당량 기록과 마지막 측정값은 로컬 디스크에 저장됩니다. 다른 계정에서 계속하면 전체 대화가 복사됩니다. `VIBE_HANDOVER.md`에는 민감한 정보를 가린 대화 맥락이 포함되지만 모든 비밀 형식의 탐지는 보장되지 않습니다. 인계 전 미리보기를 확인하세요. Git이 추적하는 파일이나 Git 제외 실패는 인계를 중단합니다. Cursor 자체의 신뢰 확인은 유지됩니다.
 

@@ -90,11 +90,14 @@ Escolha uma sessão do Claude Code, Codex, Cursor Agent ou Antigravity. `VIBE_HA
 
 ### Várias contas
 
-O Claude e o Codex guardam uma sessão por pasta de perfil. **Adicionar conta** cria uma pasta nova e abre nela o início
-de sessão da ferramenta; as pastas `~/.claude-*` e `~/.codex-*` que você mesmo criou são encontradas automaticamente.
-Cada conta aparece com o e-mail da sua sessão, e cada conta conectada do Antigravity também é acompanhada separadamente.
-Escolha a conta principal, abra o Claude Code com uma conta específica e defina a ordem de reserva e o modelo preferido
-de cada ferramenta.
+Claude, Codex e Antigravity guardam uma sessão por pasta de perfil. **Adicionar conta** cria uma pasta nova e abre nela o
+início de sessão da ferramenta (`~/.claude-*`, `~/.codex-*` e perfis isolados `~/.antigravity-*` via `agy --gemini_dir`);
+as pastas criadas por você são encontradas automaticamente. Cada conta aparece com o e-mail da sua sessão. No
+Antigravity você pode trocar manualmente o login ativo do dispositivo para qualquer perfil isolado: a entrada anterior no
+cofre de credenciais do sistema é salva em backup primeiro e pode ser restaurada a qualquer momento, o `agy --hub` é
+reiniciado e a IDE aplica a troca após ser reiniciada; sugestões para continuar sempre aguardam sua confirmação
+explícita. Escolha a conta principal, abra o Claude Code com uma conta específica e defina a ordem de reserva e o modelo
+preferido de cada ferramenta.
 Um login não concluído em dez minutos remove a conta outra vez, e a próxima conta reutiliza a pasta dela.
 
 </td>
@@ -138,14 +141,14 @@ Um login não concluído em dez minutos remove a conta outra vez, e a próxima c
 | Claude Code | Endpoint de uso OAuth do perfil (Keychain no macOS)                        | `~/.claude/projects`                           | CLI `claude` com o perfil escolhido      |
 | Codex       | Métodos de limite do app-server da CLI instalada                           | `~/.codex/sessions`                            | CLI `codex`                              |
 | Cursor      | Resumo de uso da sessão conectada                                          | Chats do Cursor Agent CLI (`~/.cursor/chats`)  | `cursor-agent`; senão, o app             |
-| Antigravity | Serviço local do app em execução (processo e porta verificados)            | `~/.gemini/antigravity-ide`                    | App Antigravity                          |
+| Antigravity | Serviço local `agy --hub` (processo e porta verificados) e `cloudcode-pa` para perfis isolados `~/.antigravity-*` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` e perfis isolados | App Antigravity (troca manual de conta) |
 
 As listas de modelos vêm dos dados de cada ferramenta: os apelidos do Claude Code e os modelos que você usou, o cache
 de modelos do Codex e `cursor-agent --list-models` (em cache por 24 horas).
 
 ## Privacidade e segurança
 
-As credenciais existentes são lidas na memória; os documentos podem conter tokens de acesso e atualização. O app verifica se existe um token de atualização, mas não o salva nos próprios dados. A renovação é feita pelo Claude Code.
+As credenciais existentes são lidas na memória; os documentos podem conter tokens de acesso e atualização. O app verifica se existe um token de atualização, mas não o salva nos próprios dados. A renovação é feita pelo Claude Code e, para perfis isolados do Antigravity, pelo `agy`. A troca manual de conta do Antigravity faz backup primeiro do login anterior no cofre de credenciais do sistema.
 
 Configurações, nomes de contas, caminhos, histórico de cotas e últimas medições ficam no disco local. Continuar em outra conta copia a conversa inteira. `VIBE_HANDOVER.md` contém contexto com informações sensíveis ocultadas, mas não é possível garantir a detecção de todos os formatos de segredos. Confira a prévia antes da transferência. Um arquivo já rastreado pelo Git ou uma falha de exclusão do Git impede a transferência. O Cursor mantém suas próprias perguntas de confiança.
 

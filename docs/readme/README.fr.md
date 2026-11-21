@@ -91,11 +91,14 @@ Choisissez une session Claude Code, Codex, Cursor Agent ou Antigravity. `VIBE_HA
 
 ### Plusieurs comptes
 
-Claude et Codex gardent une connexion par dossier de profil. **Ajouter un compte** crée un nouveau dossier et y ouvre la
-connexion de l'outil ; les dossiers `~/.claude-*` et `~/.codex-*` que vous avez créés vous-même sont détectés
-automatiquement. Chaque compte est affiché avec l'e-mail de sa connexion, et chaque compte Antigravity connecté est
-aussi suivi séparément. Choisissez le compte principal, lancez Claude Code avec un compte précis, et définissez l'ordre
-de repli et le modèle préféré de chaque outil.
+Claude, Codex et Antigravity gardent une connexion par dossier de profil. **Ajouter un compte** crée un nouveau dossier
+et y ouvre la connexion de l'outil (`~/.claude-*`, `~/.codex-*` et profils isolés `~/.antigravity-*` via
+`agy --gemini_dir`) ; les dossiers créés par vous-même sont détectés automatiquement. Chaque compte est affiché avec
+l'e-mail de sa connexion. Pour Antigravity, vous pouvez basculer manuellement la connexion active de l'appareil vers un
+profil isolé : l'entrée précédente du trousseau système est sauvegardée d'abord et reste restaurable à tout moment,
+`agy --hub` redémarre et l'IDE prend le changement après redémarrage ; les suggestions de poursuite attendent toujours
+votre confirmation explicite. Choisissez le compte principal, lancez Claude Code avec un compte précis, et définissez
+l'ordre de repli et le modèle préféré de chaque outil.
 Une connexion non terminée en dix minutes retire de nouveau le compte, et le compte suivant réutilise son dossier.
 
 </td>
@@ -139,14 +142,14 @@ Une connexion non terminée en dix minutes retire de nouveau le compte, et le co
 | Claude Code | Point d'accès d'usage OAuth du profil (Trousseau sur macOS)               | `~/.claude/projects`                          | CLI `claude` avec le profil choisi     |
 | Codex       | Méthodes de limites de l'app-server de la CLI installée                   | `~/.codex/sessions`                           | CLI `codex`                            |
 | Cursor      | Résumé d'usage de la session connectée                                    | Discussions Cursor Agent CLI (`~/.cursor/chats`) | `cursor-agent`, sinon l'application |
-| Antigravity | Service local de l'application en cours (processus et port vérifiés)      | `~/.gemini/antigravity-ide`                   | Application Antigravity                |
+| Antigravity | Service local `agy --hub` (processus et port vérifiés) et `cloudcode-pa` pour les profils isolés `~/.antigravity-*` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` et profils isolés | Application Antigravity (changement manuel) |
 
 Les listes de modèles viennent des données propres à chaque outil : les alias de Claude Code et les modèles que vous avez
 utilisés, le cache de modèles de Codex et `cursor-agent --list-models` (mis en cache 24 heures).
 
 ## Confidentialité et sécurité
 
-Les identifiants existants sont lus en mémoire ; leurs documents peuvent contenir des jetons d’accès et d’actualisation. L’app vérifie la présence d’un jeton d’actualisation sans l’enregistrer dans ses propres données. Le renouvellement est effectué par Claude Code.
+Les identifiants existants sont lus en mémoire ; leurs documents peuvent contenir des jetons d’accès et d’actualisation. L’app vérifie la présence d’un jeton d’actualisation sans l’enregistrer dans ses propres données. Le renouvellement est effectué par Claude Code et, pour les profils Antigravity isolés, par `agy`. Le changement manuel de compte Antigravity sauvegarde d’abord la connexion précédente dans le trousseau du système.
 
 Les réglages, noms de comptes, chemins, historique des quotas et dernières mesures restent sur le disque local. Continuer sur un autre compte copie la conversation complète. `VIBE_HANDOVER.md` contient du contexte expurgé ; tous les formats de secrets ne peuvent pas être reconnus. Vérifiez l’aperçu avant le transfert. Un fichier déjà suivi par Git ou un échec d’exclusion bloque le transfert. Cursor conserve ses propres demandes de confiance.
 

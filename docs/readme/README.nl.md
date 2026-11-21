@@ -91,11 +91,14 @@ Kies een sessie uit Claude Code, Codex, Cursor Agent of Antigravity. `VIBE_HANDO
 
 ### Meerdere accounts
 
-Claude en Codex bewaren één aanmelding per profielmap. **Account toevoegen** maakt een nieuwe map en opent daar de
-aanmelding van de tool; `~/.claude-*`- en `~/.codex-*`-mappen die je zelf hebt gemaakt, worden automatisch gevonden. Elk
-account wordt getoond met het e-mailadres waarmee het is aangemeld, en ook elk aangemeld Antigravity-account wordt apart
-gevolgd. Kies het hoofdaccount, start Claude Code met een bepaald account en stel per tool de terugvalvolgorde en het
-voorkeursmodel in.
+Claude, Codex en Antigravity bewaren één aanmelding per profielmap. **Account toevoegen** maakt een nieuwe map en opent
+daar de aanmelding van de tool (`~/.claude-*`, `~/.codex-*` en geïsoleerde `~/.antigravity-*`-profielen via
+`agy --gemini_dir`); mappen die je zelf hebt gemaakt worden automatisch gevonden. Elk account wordt getoond met het
+e-mailadres waarmee het is aangemeld. Voor Antigravity kun je de actieve apparaataanmelding handmatig omschakelen naar
+een geïsoleerd profiel: de vorige vermelding in de sleutelhanger/referentiebeheer wordt eerst geback-upt en blijft
+altijd herstelbaar, `agy --hub` herstart en de IDE neemt de wijziging over na een herstart; voorstellen om door te gaan
+wachten altijd op je expliciete bevestiging. Kies het hoofdaccount, start Claude Code met een bepaald account en stel per
+tool de terugvalvolgorde en het voorkeursmodel in.
 Een aanmelding die niet binnen tien minuten klaar is, haalt het account weer weg; het volgende account hergebruikt de map.
 
 </td>
@@ -139,14 +142,14 @@ Een aanmelding die niet binnen tien minuten klaar is, haalt het account weer weg
 | Claude Code | OAuth-gebruiksendpoint van het profiel (Sleutelhanger op macOS)           | `~/.claude/projects`                           | `claude` CLI met het gekozen profiel     |
 | Codex       | Limietmethoden van de app-server van de geïnstalleerde CLI                | `~/.codex/sessions`                            | `codex` CLI                              |
 | Cursor      | Gebruiksoverzicht van de aangemelde sessie                                | Cursor Agent CLI-chats (`~/.cursor/chats`)     | `cursor-agent`, anders de app            |
-| Antigravity | Lokale dienst van de draaiende app (proces en poort geverifieerd)         | `~/.gemini/antigravity-ide`                    | Antigravity-app                          |
+| Antigravity | Lokale `agy --hub`-dienst (proces en poort geverifieerd) en `cloudcode-pa` voor geïsoleerde `~/.antigravity-*`-profielen | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` & geïsoleerde profielen | Antigravity-app (handmatige accountwissel) |
 
 Modellijsten komen uit de eigen gegevens van elke tool: Claude Code-aliassen en de modellen die je gebruikte, de
 modelcache van Codex en `cursor-agent --list-models` (24 uur gecachet).
 
 ## Privacy en veiligheid
 
-Bestaande aanmeldgegevens worden in het geheugen gelezen; de documenten kunnen toegangs- en vernieuwingstokens bevatten. De app controleert of er een vernieuwingstoken is, maar slaat het niet op in eigen gegevens. Claude Code voert de vernieuwing uit.
+Bestaande aanmeldgegevens worden in het geheugen gelezen; de documenten kunnen toegangs- en vernieuwingstokens bevatten. De app controleert of er een vernieuwingstoken is, maar slaat het niet op in eigen gegevens. Claude Code en (voor geïsoleerde Antigravity-profielen) `agy` voeren de vernieuwing uit. Bij handmatig wisselen van Antigravity-account wordt de vorige aanmelding eerst geback-upt in de referentieopslag van het besturingssysteem.
 
 Instellingen, accountlabels, paden, quotumgeschiedenis en laatste metingen blijven op de lokale schijf. Doorgaan met een ander account kopieert het volledige gesprek. `VIBE_HANDOVER.md` bevat opgeschoonde gesprekscontext; niet elk geheim formaat kan worden herkend. Bekijk de voorvertoning vóór de overdracht. Een bestand dat Git al volgt of een mislukte Git-uitsluiting stopt de overdracht. Cursor behoudt zijn eigen vertrouwensvragen.
 

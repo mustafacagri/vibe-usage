@@ -91,11 +91,14 @@ Wähle eine Sitzung aus Claude Code, Codex, Cursor Agent oder Antigravity. `VIBE
 
 ### Mehrere Konten
 
-Claude und Codex speichern eine Anmeldung pro Profilordner. **Konto hinzufügen** legt einen neuen Ordner an und öffnet
-dort die Anmeldung des Tools; selbst angelegte `~/.claude-*`- und `~/.codex-*`-Ordner werden automatisch gefunden. Jedes
-Konto wird mit der E-Mail-Adresse seiner Anmeldung angezeigt, und auch jedes angemeldete Antigravity-Konto wird getrennt
-verfolgt. Wähle das Hauptkonto, starte Claude Code mit einem bestimmten Konto und lege die Ausweichreihenfolge sowie das
-bevorzugte Modell pro Tool fest.
+Claude, Codex und Antigravity speichern eine Anmeldung pro Profilordner. **Konto hinzufügen** legt einen neuen Ordner an
+und öffnet dort die Anmeldung des Tools (`~/.claude-*`, `~/.codex-*` sowie isolierte `~/.antigravity-*`-Profile über
+`agy --gemini_dir`); selbst angelegte Ordner werden automatisch gefunden. Jedes Konto wird mit der E-Mail-Adresse seiner
+Anmeldung angezeigt. Für Antigravity lässt sich die aktive Geräteanmeldung manuell auf ein isoliertes Profil umstellen:
+Die vorherige Anmeldung im Anmeldeinformationsspeicher wird zuerst gesichert und bleibt jederzeit wiederherstellbar,
+`agy --hub` startet neu, und ein Neustart der IDE übernimmt das neue Konto; Vorschläge zum Weitermachen erfordern immer
+eine ausdrückliche Bestätigung. Wähle das Hauptkonto, starte Claude Code mit einem bestimmten Konto und lege die
+Ausweichreihenfolge sowie das bevorzugte Modell pro Tool fest.
 Eine Anmeldung, die nicht innerhalb von zehn Minuten abgeschlossen ist, entfernt das Konto wieder; das nächste Konto verwendet seinen Ordner.
 
 </td>
@@ -139,14 +142,14 @@ Eine Anmeldung, die nicht innerhalb von zehn Minuten abgeschlossen ist, entfernt
 | Claude Code | OAuth-Nutzungsendpunkt des Profils (unter macOS aus dem Schlüsselbund)  | `~/.claude/projects`                          | `claude` CLI mit dem gewählten Profil |
 | Codex       | Ratenlimit-Methoden des App-Servers der installierten CLI               | `~/.codex/sessions`                           | `codex` CLI                           |
 | Cursor      | Nutzungsübersicht der angemeldeten Sitzung                              | Cursor-Agent-CLI-Chats (`~/.cursor/chats`)    | `cursor-agent`, sonst die App         |
-| Antigravity | Lokaler Dienst der laufenden App (Prozess- und Port-Besitz geprüft)     | `~/.gemini/antigravity-ide`                   | Antigravity-App                       |
+| Antigravity | Lokaler `agy --hub`-Dienst (Prozess- und Port-Besitz geprüft) und `cloudcode-pa` für isolierte `~/.antigravity-*`-Profile | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` & isolierte Profile | Antigravity-App (manueller Kontowechsel) |
 
 Modelllisten stammen aus den eigenen Daten jedes Tools: Claude-Code-Aliasse und die von dir genutzten Modelle, der
 Codex-Modellcache und `cursor-agent --list-models` (24 Stunden zwischengespeichert).
 
 ## Datenschutz und Sicherheit
 
-Vorhandene Anmeldedaten werden im Speicher gelesen; die Dokumente können Zugriffs- und Refresh-Tokens enthalten. Die App prüft, ob ein Refresh-Token vorhanden ist, speichert es aber nicht in ihren eigenen Daten. Die Erneuerung übernimmt Claude Code.
+Vorhandene Anmeldedaten werden im Speicher gelesen; die Dokumente können Zugriffs- und Refresh-Tokens enthalten. Die App prüft, ob ein Refresh-Token vorhanden ist, speichert es aber nicht in ihren eigenen Daten. Die Erneuerung übernehmen Claude Code und (für isolierte Antigravity-Profile) `agy`. Ein manueller Antigravity-Kontowechsel sichert die vorherige Anmeldung zuerst im Betriebssystem-Schlüsselbund.
 
 Einstellungen, Kontobezeichnungen, Pfade, Kontingentverlauf und letzte Messungen bleiben lokal auf der Festplatte. Beim Kontowechsel wird das vollständige Gespräch kopiert. `VIBE_HANDOVER.md` enthält bereinigten Gesprächskontext; unbekannte Geheimnisformate können unerkannt bleiben. Prüfe die Vorschau vor der Übergabe. Bereits von Git verfolgte Dateien oder ein fehlgeschlagener Git-Ausschluss stoppen die Übergabe. Cursor behält seine Vertrauensabfragen.
 

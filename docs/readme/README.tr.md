@@ -90,10 +90,13 @@ Claude Code, Codex, Cursor Agent veya Antigravity’den bir oturum seç. `VIBE_H
 
 ### Çoklu hesap
 
-Claude ve Codex her profil klasöründe bir oturum tutar. **Hesap ekle** yeni bir klasör oluşturur ve aracın girişini
-orada açar; kendi oluşturduğun `~/.claude-*` ve `~/.codex-*` klasörleri de otomatik bulunur. Her hesap giriş yaptığı
-e-postayla gösterilir; oturum açılmış her Antigravity hesabı da ayrı izlenir. Ana hesabı seç, Claude Code'u belirli bir
-hesapla başlat, yedek araç sırasını ve her araç için tercih edilen modeli belirle.
+Claude, Codex ve Antigravity her profil klasöründe bir oturum tutar. **Hesap ekle** yeni bir klasör oluşturur ve aracın
+girişini orada açar (`~/.claude-*`, `~/.codex-*` ve `agy --gemini_dir` ile izole `~/.antigravity-*` profilleri); kendi
+oluşturduğun klasörler de otomatik bulunur. Her hesap giriş yaptığı e-postayla gösterilir. Antigravity’de etkin cihaz
+oturumunu manuel olarak başka bir izole profile geçirebilirsin: önceki sistem anahtarlığı girişi önce yedeklenir ve her
+zaman geri yüklenebilir, `agy --hub` yeniden başlatılır ve IDE yeniden başlatıldığında yeni hesaba geçer; kota
+azaldığında devam etme önerisi yalnızca açık onayınızla çalışır. Ana hesabı seç, Claude Code’u belirli bir hesapla
+başlat, yedek araç sırasını ve her araç için tercih edilen modeli belirle.
 On dakika içinde tamamlanmayan bir giriş hesabı yeniden kaldırır; sonraki hesap onun klasörünü kullanır.
 
 </td>
@@ -137,14 +140,14 @@ On dakika içinde tamamlanmayan bir giriş hesabı yeniden kaldırır; sonraki h
 | Claude Code | Profilin OAuth kullanım yanıtı (macOS'ta Keychain)                   | `~/.claude/projects`                         | Seçilen profille `claude` CLI    |
 | Codex       | Kurulu CLI'nin app-server kota metotları                             | `~/.codex/sessions`                          | `codex` CLI                      |
 | Cursor      | Açık oturumun kullanım özeti                                         | Cursor Agent CLI sohbetleri (`~/.cursor/chats`) | `cursor-agent`, yoksa uygulama |
-| Antigravity | Çalışan uygulamanın yerel servisi (süreç ve port sahipliği doğrulanır) | `~/.gemini/antigravity-ide`                  | Antigravity uygulaması           |
+| Antigravity | Yerel `agy --hub` servisi (süreç ve port sahipliği doğrulanır) ve izole `~/.antigravity-*` profilleri için `cloudcode-pa` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` ve izole profiller | Antigravity uygulaması (manuel hesap geçişi) |
 
 Model listeleri her aracın kendi verisinden gelir: Claude Code takma adları ve kullandığın modeller, Codex model
 önbelleği ve `cursor-agent --list-models` (24 saat önbelleklenir).
 
 ## Gizlilik ve güvenlik
 
-Var olan kimlik bilgileri bellekte okunur; bu belgeler erişim ve yenileme token’ları içerebilir. Uygulama yenileme token’ının varlığını kontrol eder, kendi verilerine kaydetmez; yenilemeyi Claude Code yapar.
+Var olan kimlik bilgileri bellekte okunur; bu belgeler erişim ve yenileme token’ları içerebilir. Uygulama yenileme token’ının varlığını kontrol eder, kendi verilerine kaydetmez; yenilemeyi Claude Code ve izole Antigravity profillerinde `agy` yapar. Manuel Antigravity hesap geçişi, değiştirmeden önce mevcut oturumu işletim sisteminin kimlik bilgisi deposunda yedekler.
 
 Ayarlar, hesap etiketleri ve yollar; kota geçmişi ve son ölçümler yerel diskte tutulur. Hesaplar arasında devam ederken tam konuşma kopyalanır. `VIBE_HANDOVER.md` ise temizlenmiş konuşma bağlamı içerir; bilinmeyen sır biçimleri için garanti yoktur. Devir öncesi önizlemeyi incele. Git’in izlediği dosyalar veya başarısız Git hariç tutma işlemi devri durdurur; Cursor kendi güven sorularını korur.
 

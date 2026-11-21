@@ -92,11 +92,14 @@ Wybierz sesję Claude Code, Codex, Cursor Agent lub Antigravity. `VIBE_HANDOVER.
 
 ### Wiele kont
 
-Claude i Codex przechowują jedno logowanie na folder profilu. **Dodaj konto** tworzy nowy folder i otwiera w nim
-logowanie narzędzia; foldery `~/.claude-*` i `~/.codex-*` utworzone samodzielnie są wykrywane automatycznie. Każde konto
-jest pokazywane z adresem e-mail, którym się zalogowano, a każde zalogowane konto Antigravity również jest śledzone
-osobno. Wybierz konto główne, uruchom Claude Code z konkretnym kontem i ustaw kolejność zapasową oraz preferowany model
-dla każdego narzędzia.
+Claude, Codex i Antigravity przechowują jedno logowanie na folder profilu. **Dodaj konto** tworzy nowy folder i otwiera
+w nim logowanie narzędzia (`~/.claude-*`, `~/.codex-*` oraz odizolowane profile `~/.antigravity-*` przez
+`agy --gemini_dir`); foldery utworzone samodzielnie są wykrywane automatycznie. Każde konto jest pokazywane z adresem
+e-mail, którym się zalogowano. W Antigravity możesz ręcznie przełączyć aktywne logowanie na tym urządzeniu na dowolny
+odizolowany profil: poprzedni wpis w magazynie poświadczeń systemu jest najpierw zapisywany jako kopia zapasowa i można
+go przywrócić w dowolnym momencie, `agy --hub` uruchamia się ponownie, a IDE przejmuje nowe konto po ponownym
+uruchomieniu; propozycje kontynuacji zawsze wymagają wyraźnego potwierdzenia. Wybierz konto główne, uruchom Claude Code z
+konkretnym kontem i ustaw kolejność zapasową oraz preferowany model dla każdego narzędzia.
 Logowanie nieukończone w ciągu dziesięciu minut ponownie usuwa konto, a następne konto używa jego folderu.
 
 </td>
@@ -140,14 +143,14 @@ Logowanie nieukończone w ciągu dziesięciu minut ponownie usuwa konto, a nast�
 | Claude Code | Punkt końcowy użycia OAuth profilu (Pęk kluczy w macOS)                   | `~/.claude/projects`                           | CLI `claude` z wybranym profilem         |
 | Codex       | Metody limitów app-servera zainstalowanego CLI                            | `~/.codex/sessions`                            | CLI `codex`                              |
 | Cursor      | Podsumowanie użycia zalogowanej sesji                                     | Czaty Cursor Agent CLI (`~/.cursor/chats`)     | `cursor-agent`, w przeciwnym razie aplikacja |
-| Antigravity | Lokalna usługa działającej aplikacji (proces i port zweryfikowane)        | `~/.gemini/antigravity-ide`                    | Aplikacja Antigravity                    |
+| Antigravity | Lokalna usługa `agy --hub` (proces i port zweryfikowane) oraz `cloudcode-pa` dla odizolowanych profili `~/.antigravity-*` | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` i profile odizolowane | Aplikacja Antigravity (ręczne przełączanie kont) |
 
 Listy modeli pochodzą z danych każdego narzędzia: aliasy Claude Code i używane przez Ciebie modele, pamięć podręczna
 modeli Codex oraz `cursor-agent --list-models` (przechowywane przez 24 godziny).
 
 ## Prywatność i bezpieczeństwo
 
-Istniejące dane logowania są odczytywane w pamięci; dokumenty mogą zawierać tokeny dostępu i odświeżania. Aplikacja sprawdza obecność tokenu odświeżania, ale nie zapisuje go we własnych danych. Odnowienie wykonuje Claude Code.
+Istniejące dane logowania są odczytywane w pamięci; dokumenty mogą zawierać tokeny dostępu i odświeżania. Aplikacja sprawdza obecność tokenu odświeżania, ale nie zapisuje go we własnych danych. Odnowienie wykonuje Claude Code oraz (dla odizolowanych profili Antigravity) `agy`. Ręczne przełączenie konta Antigravity najpierw zapisuje kopię zapasową poprzedniego logowania w systemowym magazynie poświadczeń.
 
 Ustawienia, etykiety kont, ścieżki, historia limitów i ostatnie pomiary pozostają na lokalnym dysku. Kontynuacja na innym koncie kopiuje całą rozmowę. `VIBE_HANDOVER.md` zawiera oczyszczony kontekst rozmowy; nie da się zagwarantować rozpoznania wszystkich formatów sekretów. Sprawdź podgląd przed przekazaniem. Plik już śledzony przez Git lub błąd wykluczenia z Git wstrzymuje przekazanie. Cursor zachowuje własne pytania o zaufanie.
 
