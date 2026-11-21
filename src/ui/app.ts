@@ -596,6 +596,36 @@ function cardHeader(provider: Provider, accounts: readonly MeasuredAccount[], sh
   return heading;
 }
 
+function resetControls(account: MeasuredAccount, accounts: readonly MeasuredAccount[] = [account]): HTMLElement[] {
+  if (account.providerId === 'claude') {
+    const button = element('button', 'secondary-button', t('claudeCheckResets'));
+    onClick(button, () => vibe.openClaudeUsage());
+    return [button];
+  }
+  if (account.providerId !== 'codex' || !account.resetCredits || !['ok', 'no_limits_reported'].includes(account.status)) return [];
+  if (account.accountKey) {
+    const eligible = accounts.filter(
+      other => other.accountKey === account.accountKey && other.resetCredits && ['ok', 'no_limits_reported'].includes(other.status)
+    );
+    const selected = eligible.find(other => !other.primary) ?? eligible[0];
+    if (selected?.id !== account.id) return [];
+  }
+  const count = element('div', 'empty', t('codexResetCredits', { n: account.resetCredits }));
+  const key = account.accountKey;
+  if (!key) return [count];
+  const button = element('button', 'secondary-button', t('codexUseReset'));
+  onClick(button, async () => {
+    button.disabled = true;
+    try {
+      const outcome = await vibe.resetCodexQuota(account.id, key);
+      if (outcome === 'unavailable') toast(t('codexResetUnavailable'));
+    } finally {
+      button.disabled = false;
+    }
+  });
+  return [count, button];
+}
+
 function accountBody(provider: Provider, shown: MeasuredAccount, accounts: readonly MeasuredAccount[]): HTMLElement[] {
   const nodes: HTMLElement[] = [];
   const groups = groupWindows(shown.windows);
@@ -608,6 +638,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount, accounts: reado
       ? t('claudeFreePlanDetail')
       : describeAccountMessage(shown, accounts, t) || (shown.windows.length ? '' : t('noDataYet'));
   if (message) nodes.push(element('div', 'empty', message));
+  nodes.push(...resetControls(shown));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
   if (canSwitchAntigravity(provider, shown)) nodes.push(switchAntigravityButton(shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
@@ -639,11 +670,20 @@ function compareActions(provider: Provider, account: MeasuredAccount, accounts: 
   const column = element('div', 'compare-action');
   const name = accountName(account);
   if (account.plan) column.append(element('div', 'account-pill', `${pickerName(account)} · ${account.plan.toUpperCase()}`));
+  if (provider.id === 'codex' && account.signedInAs && name !== account.signedInAs)
+    column.append(element('div', 'empty', account.signedInAs));
+  if (
+    provider.id === 'codex' &&
+    account.accountKey &&
+    accounts.some(other => other.id !== account.id && other.accountKey === account.accountKey)
+  )
+    column.append(element('div', 'empty', t('duplicateCodexAccount')));
   const message =
     provider.id === 'claude' && account.plan === 'free' && account.status === 'no_limits_reported'
       ? t('claudeFreePlanDetail')
       : describeAccountMessage(account, accounts, t);
   if (message) column.append(element('div', 'empty', message));
+  column.append(...resetControls(account, accounts));
   if (canLaunch(provider, account)) {
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
     column.append(launch);

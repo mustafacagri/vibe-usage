@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const nl: Messages = {
+  duplicateCodexAccount: 'Deelt het quotum met een ander profiel',
+  codexResetCredits: 'Reset credits: {n}',
+  codexUseReset: 'Use a reset',
+  codexResetConfirm: 'Use one earned Codex reset? This cannot be undone.',
+  codexResetUnavailable: 'No eligible reset is available.',
+  claudeCheckResets: 'Check Claude limit resets',
   claudeFreePlanDetail: 'Free-abonnement; geen abonnementsquotum voor Claude Code beschikbaar.',
   name: 'Nederlands',
   liveTracker: 'Livetracker',

@@ -238,6 +238,8 @@ export interface MeasuredAccount extends Account {
   plan?: string;
   // From the latest reading; kept in memory only, never in the settings file.
   signedInAs?: string;
+  accountKey?: string;
+  resetCredits?: number;
   messageCode?: StatusCode;
 }
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import os from 'node:os';
@@ -22,14 +23,7 @@ import {
   type ToolCommand
 } from './common.ts';
 import { defaultProfileDir, isRegularFile, profileAccountId, profileFolders, profileLabel } from './profiles.ts';
-import {
-  type Discovery,
-  type DiscoveredAccount,
-  type FetchResult,
-  type ParsedQuota,
-  type ProviderAdapter,
-  type RefreshContext
-} from './types.ts';
+import { type Discovery, type DiscoveredAccount, type ParsedQuota, type ProviderAdapter, type RefreshContext } from './types.ts';
 
 export const DEFAULT_ACCOUNT_ID = accountId('codex', DEFAULT_ACCOUNT_KEY);
 const AUTH_FILE = 'auth.json';
@@ -65,7 +59,11 @@ export function parseCodexRateLimits(response: unknown): ParsedQuota {
       );
     }
   }
-  return windows.length ? { windows, completeness: 'complete' } : { windows, status: 'no_limits_reported', completeness: 'complete' };
+  const reset = isObject(response.rateLimitResetCredits) ? response.rateLimitResetCredits.availableCount : undefined;
+  const credits = typeof reset === 'number' && Number.isSafeInteger(reset) && reset >= 0 ? { resetCredits: reset } : {};
+  return windows.length
+    ? { windows, completeness: 'complete', ...credits }
+    : { windows, status: 'no_limits_reported', completeness: 'complete', ...credits };
 }
 
 interface RpcServer {
@@ -84,16 +82,26 @@ type ServerProcess = Pick<ChildProcess, 'on' | 'once' | 'kill' | 'exitCode' | 's
 export type SpawnAppServer = (binary: string, args: readonly string[], options: SpawnOptions) => ServerProcess;
 const spawnAppServer: SpawnAppServer = (binary, args, options) => spawn(binary, args, { ...options, stdio: ['pipe', 'pipe', 'ignore'] });
 
-function startAppServer(command: ToolCommand, configDir: string, spawnProcess: SpawnAppServer, context?: RefreshContext): RpcServer {
+function startAppServer(
+  command: ToolCommand,
+  configDir: string,
+  spawnProcess: SpawnAppServer,
+  fileBacked: boolean,
+  context?: RefreshContext
+): RpcServer {
   remainingTimeout(RPC_TIMEOUT_MS, context);
   let child: ServerProcess;
   try {
-    child = spawnProcess(command.binary, [...command.args, 'app-server', '--listen', 'stdio://'], {
-      shell: false,
-      windowsHide: true,
-      env: cleanEnvironment({ [PROFILE_ENV.codex]: configDir }),
-      stdio: ['pipe', 'pipe', 'ignore']
-    });
+    child = spawnProcess(
+      command.binary,
+      [...command.args, 'app-server', '--listen', 'stdio://', ...(fileBacked ? ['--config', 'cli_auth_credentials_store="file"'] : [])],
+      {
+        shell: false,
+        windowsHide: true,
+        env: cleanEnvironment({ [PROFILE_ENV.codex]: configDir }),
+        stdio: ['pipe', 'pipe', 'ignore']
+      }
+    );
   } catch (error) {
     throw processStartError(error, 'server_closed');
   }
@@ -206,13 +214,15 @@ function startAppServer(command: ToolCommand, configDir: string, spawnProcess: S
   };
 }
 
-async function probeAccount(
+async function withAccountServer<T>(
   command: ToolCommand,
   configDir: string,
   spawnProcess: SpawnAppServer,
+  fileBacked: boolean,
+  run: (server: RpcServer, account: Record<string, unknown>) => Promise<T>,
   context?: RefreshContext
-): Promise<FetchResult> {
-  const server = startAppServer(command, configDir, spawnProcess, context);
+): Promise<T> {
+  const server = startAppServer(command, configDir, spawnProcess, fileBacked, context);
   try {
     await server.request('initialize', {
       // The app server takes a client name as an identifier with underscores.
@@ -223,9 +233,7 @@ async function probeAccount(
     const read = await server.request('account/read', { refreshToken: false });
     const account = isObject(read) ? read.account : undefined;
     if (!isObject(account)) throw new ProviderError('auth_missing');
-    const result = parseCodexRateLimits(await server.request('account/rateLimits/read'));
-    const plan = safePlan(account.planType);
-    return plan ? { ...result, plan } : result;
+    return await run(server, account);
   } finally {
     await server.stop();
   }
@@ -233,7 +241,11 @@ async function probeAccount(
 
 // The signed-in e-mail from the local auth file, failing fast on a locally expired token. A
 // missing auth file is left to the app server, which reports the signed-out state itself.
-async function readLocalSignIn(configDir: string, clock?: Clock, context?: RefreshContext): Promise<string | undefined> {
+async function readLocalSignIn(
+  configDir: string,
+  clock?: Clock,
+  context?: RefreshContext
+): Promise<{ email: string | undefined; key: string | undefined }> {
   const auth = await readCredentialFile(path.join(configDir, AUTH_FILE), context).catch((error: unknown) => {
     if (error instanceof ProviderError && error.code === 'auth_missing') return null;
     throw error;
@@ -243,7 +255,17 @@ async function readLocalSignIn(configDir: string, clock?: Clock, context?: Refre
     const { exp } = jwtClaims(tokens.access_token);
     if (typeof exp === 'number' && isExpired(exp * 1000, clock)) throw new ProviderError('auth_expired');
   }
-  return safeEmail(attemptSync(() => jwtClaims(tokens.id_token).email));
+  const claims = attemptSync(() => jwtClaims(tokens.id_token));
+  const email = safeEmail(claims?.email);
+  const account = typeof tokens.account_id === 'string' ? tokens.account_id.trim() : '';
+  const user = typeof claims?.sub === 'string' ? claims.sub.trim() : '';
+  const key =
+    account && user
+      ? createHash('sha256')
+          .update(JSON.stringify(['codex-account-v1', account, user]))
+          .digest('hex')
+      : undefined;
+  return { email, key };
 }
 
 // The folder plain `codex` uses: CODEX_HOME when set, else `~/.codex`.
@@ -287,6 +309,26 @@ async function discoverCodexAccounts(home: string, env: Environment): Promise<Di
   };
 }
 
+export async function resetCodexQuota(configDir: string, accountKey: string, idempotencyKey: string, options: CodexProviderOptions = {}) {
+  const before = await readLocalSignIn(configDir, options.clock);
+  if (before.key !== accountKey || !before.email) throw new ProviderError('auth_invalid');
+  return withAccountServer(
+    await findCommand('codex', options),
+    configDir,
+    options.spawnProcess ?? spawnAppServer,
+    true,
+    async (server, account) => {
+      const local = await readLocalSignIn(configDir, options.clock);
+      if (local.key !== accountKey || !local.email || local.email !== safeEmail(account.email)) throw new ProviderError('auth_invalid');
+      const result = await server.request('account/rateLimitResetCredit/consume', { idempotencyKey });
+      const outcome = isObject(result) ? result.outcome : null;
+      if (outcome === 'reset' || outcome === 'alreadyRedeemed') return true;
+      if (outcome === 'noCredit' || outcome === 'nothingToReset') return false;
+      throw new ProviderError('invalid_response');
+    }
+  );
+}
+
 export interface CodexProviderOptions extends BinaryLocation {
   clock?: Clock;
   spawnProcess?: SpawnAppServer;
@@ -302,9 +344,28 @@ export function createCodexProvider(options: CodexProviderOptions = {}): Provide
     discover: () => discoverCodexAccounts(home, env).catch((): Discovery => ({ kind: 'unknown', accounts: [] })),
     async fetch(account, context) {
       const configDir = account.configDir ?? defaultConfigDir;
-      const signedInAs = await readLocalSignIn(configDir, options.clock, context);
-      const result = await probeAccount(await findCommand('codex', options), configDir, options.spawnProcess ?? spawnAppServer, context);
-      return signedInAs ? { ...result, signedInAs } : result;
+      const before = await readLocalSignIn(configDir, options.clock, context);
+      const result = await withAccountServer(
+        await findCommand('codex', options),
+        configDir,
+        options.spawnProcess ?? spawnAppServer,
+        Boolean(before.key),
+        async (server, account) => {
+          const quota = parseCodexRateLimits(await server.request('account/rateLimits/read'));
+          const plan = safePlan(account.planType);
+          const signedInAs = safeEmail(account.email);
+          return { ...quota, ...(plan ? { plan } : {}), ...(signedInAs ? { signedInAs } : {}) };
+        },
+        context
+      );
+      const after = await readLocalSignIn(configDir, options.clock, context);
+      if (
+        before.key !== after.key ||
+        before.email !== after.email ||
+        (after.email && result.signedInAs && after.email !== result.signedInAs)
+      )
+        throw new ProviderError('auth_invalid');
+      return after.key && after.email && result.signedInAs === after.email ? { ...result, accountKey: after.key } : result;
     }
   };
 }

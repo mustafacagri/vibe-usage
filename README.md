@@ -188,6 +188,10 @@ A sign-in not finished within ten minutes takes the account off again, and the n
 | Antigravity | Local `agy --hub` service (process and port ownership verified) and `cloudcode-pa` for isolated `~/.antigravity-*` profiles | `~/.gemini/antigravity`, `antigravity-cli`, `antigravity-ide` & isolated profiles | Antigravity app (manual account switch) |
 | GitHub Copilot | GitHub's Copilot usage endpoint, with the GitHub CLI's sign-in       | none                                    | none: only its quota is shown          |
 
+Codex quota and history are tied to the signed-in account. Duplicate profiles show that they share quota.
+When Codex reports earned resets, the account panel shows the available count and asks before spending one.
+For Claude, the panel opens Claude’s official Usage settings to check and use any reset.
+
 Model lists come from each tool's own data: Claude Code aliases and the models you used, the Codex model cache, and
 `cursor-agent --list-models` (cached for 24 hours).
 

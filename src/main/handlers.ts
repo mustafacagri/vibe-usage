@@ -1,5 +1,6 @@
 // What each IPC call does. Everything Electron-specific (windows, dialogs, timers) arrives
 // through `MainContext`, so the handlers run and are tested without Electron.
+import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { restoreAntigravityBackup, switchAntigravityAccount, type AntigravitySwitchResult } from '../core/antigravity-switch.ts';
@@ -24,7 +25,7 @@ import {
   isSignedInAntigravityProfile
 } from '../providers/antigravity.ts';
 import { claudeProfile, isSignedInProfile } from '../providers/claude.ts';
-import { codexProfile, isSignedInCodexHome } from '../providers/codex.ts';
+import { codexProfile, isSignedInCodexHome, resetCodexQuota } from '../providers/codex.ts';
 import { createProfileFolder } from '../providers/profiles.ts';
 import type { DiscoveredAccount } from '../providers/types.ts';
 import { HEALTHY_STATUSES } from '../shared/account-state.ts';
@@ -92,6 +93,8 @@ export interface MainContext {
   // Called after a settings change with the settings before and after it.
   settingsChanged(before: Settings, after: Settings): void;
   hideWindow(): void;
+  openClaudeUsage?(): Promise<void>;
+  resetCodexQuota?: typeof resetCodexQuota;
   // The operating system's open-at-login setting for the app.
   loginItem: { get(): LoginItem; set(enabled: boolean): LoginItem };
   chooseDirectory(titleKey: MessageKey, defaultPath?: string): Promise<string | null>;
@@ -253,9 +256,43 @@ export function createHandlers(context: MainContext): Handlers {
     return account;
   }
 
+  const resetBusy = new Set<string>();
+  const resetAttempts = new Map<string, string>();
+
   return {
     snapshot: () => Promise.resolve(context.view()),
     refresh: async providerId => context.refresh(optionalProvider(providerId)),
+    openClaudeUsage: async () => context.openClaudeUsage?.(),
+    async resetCodexQuota(id, key) {
+      const account = enabledAccount('codex', id);
+      const live = service
+        .snapshot()
+        .providers.find(p => p.id === 'codex')
+        ?.accounts.find(a => a.id === account.id);
+      if (
+        !account.configDir ||
+        !live?.accountKey ||
+        live.accountKey !== key ||
+        !live.resetCredits ||
+        !['ok', 'no_limits_reported'].includes(live.status) ||
+        resetBusy.has(key)
+      )
+        return 'unavailable';
+      resetBusy.add(key);
+      try {
+        if (!(await context.confirm('codexResetConfirm', 'codexUseReset'))) return 'canceled';
+        const current = enabledAccount('codex', id);
+        if (current.configDir !== account.configDir) return 'unavailable';
+        const attempt = resetAttempts.get(key) ?? randomUUID();
+        resetAttempts.set(key, attempt);
+        const reset = await (context.resetCodexQuota ?? resetCodexQuota)(account.configDir, key, attempt);
+        await context.refresh('codex', { fresh: true });
+        resetAttempts.delete(key);
+        return reset ? 'reset' : 'unavailable';
+      } finally {
+        resetBusy.delete(key);
+      }
+    },
     saveSettings: async patch => changeSettings(() => service.updateSettingsFrom(patch)),
     pin: async () => updateSettings({ pinned: !settings().pinned }),
     loginItem: () => Promise.resolve(context.loginItem.get()),
@@ -424,7 +461,15 @@ export function createHandlers(context: MainContext): Handlers {
         context.continuity.dismiss(requiredString(suggestionId));
         return context.publish();
       }),
-    history: () => Promise.resolve(context.history.series(service.snapshot().providers.flatMap(p => p.accounts.map(a => a.id)))),
+    history: () => {
+      const accounts = service.snapshot().providers.flatMap(p => p.accounts);
+      return Promise.resolve(
+        context.history.series(
+          accounts.map(a => a.id),
+          accounts
+        )
+      );
+    },
     tokenUsage: () => context.tokenUsage.read(service.snapshot().providers.flatMap(p => p.accounts)),
     openUpdate: () =>
       Promise.try(() => {

@@ -269,7 +269,7 @@ export async function createService({
           // Not read yet in this run: the last good reading, as stale. It shows the quota last
           // known; nothing acts on it, as only a fresh, ok reading counts as quota.
           const last = saved.get(account.id);
-          return last?.sourceKey === accountSourceKey(account)
+          return account.providerId !== 'codex' && last?.sourceKey === accountSourceKey(account)
             ? {
                 ...account,
                 status: 'stale',
@@ -294,7 +294,11 @@ export async function createService({
     for (const account of providers.flatMap(p => p.accounts)) {
       const reading = measurementOf(account);
       if (reading) saved.set(account.id, reading);
-      else if (account.status === 'no_limits_reported') saved.delete(account.id);
+      else if (
+        account.status === 'no_limits_reported' ||
+        (account.providerId === 'codex' && !account.accountKey && account.status !== 'pending')
+      )
+        saved.delete(account.id);
     }
     savingMeasurements = savingMeasurements.then(() => saveMeasurements(measurementsPath, saved)).catch(() => undefined);
   }
@@ -436,6 +440,10 @@ export async function createService({
     const windows = result.windows.map(normalizeWindow);
     if (!windows.length && result.status !== 'no_limits_reported') throw new ProviderError('invalid_response');
     if (result.plan) target.plan = result.plan;
+    if (result.resetCredits !== undefined) target.resetCredits = result.resetCredits;
+    else delete target.resetCredits;
+    if (result.accountKey) target.accountKey = result.accountKey;
+    else delete target.accountKey;
     if (result.signedInAs) target.signedInAs = result.signedInAs;
     else delete target.signedInAs;
     if (result.status === 'no_limits_reported') {
@@ -456,6 +464,14 @@ export async function createService({
 
   function applyFailure(target: MeasuredAccount, error: unknown, attemptedAt: number): void {
     const code = providerErrorCode(error);
+    delete target.resetCredits;
+    if (target.providerId === 'codex' && (code === 'auth_invalid' || code === 'auth_missing')) {
+      delete target.fetchedAt;
+      delete target.accountKey;
+      delete target.signedInAs;
+      delete target.plan;
+      target.windows = [];
+    }
     // A failed read keeps the last good measurement, labelled stale.
     target.status = target.fetchedAt ? 'stale' : code;
     target.messageCode = code;

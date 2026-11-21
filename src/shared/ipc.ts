@@ -108,6 +108,8 @@ export interface Canceled {
 export interface VibeMethods {
   snapshot(): Snapshot;
   refresh(providerId?: ProviderId): Snapshot;
+  resetCodexQuota(accountId: string, accountKey: string): 'reset' | 'unavailable' | 'canceled';
+  openClaudeUsage(): void;
   saveSettings(patch: SettingsPatch): Snapshot;
   pin(): Snapshot;
   loginItem(): LoginItem;

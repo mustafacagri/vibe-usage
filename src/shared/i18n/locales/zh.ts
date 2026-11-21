@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const zh: Messages = {
+  duplicateCodexAccount: '与另一个配置共享使用额度',
+  codexResetCredits: 'Reset credits: {n}',
+  codexUseReset: 'Use a reset',
+  codexResetConfirm: 'Use one earned Codex reset? This cannot be undone.',
+  codexResetUnavailable: 'No eligible reset is available.',
+  claudeCheckResets: 'Check Claude limit resets',
   claudeFreePlanDetail: 'Free 套餐无法使用 Claude Code 订阅配额。',
   name: '简体中文',
   liveTracker: '实时用量监控',

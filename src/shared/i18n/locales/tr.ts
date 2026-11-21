@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const tr: Messages = {
+  duplicateCodexAccount: 'Başka bir profille aynı kotayı kullanıyor',
+  codexResetCredits: 'Reset hakkı: {n}',
+  codexUseReset: 'Bir reset kullan',
+  codexResetConfirm: 'Bir Codex reset hakkı kullanılsın mı? Bu işlem geri alınamaz.',
+  codexResetUnavailable: 'Kullanılabilir reset hakkı yok.',
+  claudeCheckResets: 'Claude reset haklarını kontrol et',
   claudeFreePlanDetail: 'Free plan; Claude Code abonelik kotası kullanılamaz.',
   name: 'Türkçe',
   liveTracker: 'Canlı izleyici',

@@ -11,6 +11,9 @@ export interface FetchResult {
   plan?: string;
   // The e-mail the account is signed in with, as the tool recorded it on this device.
   signedInAs?: string;
+  // Opaque provider identity verified by the usage read, independent of display labels.
+  accountKey?: string;
+  resetCredits?: number;
   // The source answered and reports no limits for the account.
   status?: 'no_limits_reported';
 }

@@ -29,7 +29,7 @@ export interface History {
   record(snapshot: Snapshot): void;
   // The snapshot with each window's forecast filled in.
   annotate(snapshot: Snapshot): Snapshot;
-  series(accountIds: readonly string[]): WindowSeries[];
+  series(accountIds: readonly string[], accounts?: readonly MeasuredAccount[]): WindowSeries[];
   flush(): Promise<void>;
 }
 
@@ -58,6 +58,10 @@ const usedPercent = (window: QuotaWindow): number | null =>
   window.stale || window.amounts || window.usedPercent === null ? null : Math.min(Math.max(window.usedPercent, 0), PERCENT_MAX);
 
 const isMeasured = (account: MeasuredAccount): boolean => account.status === 'ok';
+
+// A Codex folder can change account. Never mix its old samples into the new login's forecast.
+const historyKey = (account: MeasuredAccount): string | null =>
+  account.providerId === 'codex' ? (account.accountKey ? `codex-account:${account.accountKey}` : null) : account.id;
 
 // The readings since the window last reset: usage only grows within a period, so the period
 // starts after the last drop.
@@ -105,18 +109,20 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
     const now = clock();
     let changed = false;
     for (const account of snapshot.providers.flatMap(p => p.accounts).filter(isMeasured)) {
+      const key = historyKey(account);
+      if (!key) continue;
       const at = Date.parse(account.fetchedAt ?? '');
       const time = Number.isFinite(at) ? at : now;
       for (const window of account.windows) {
         const used = usedPercent(window);
         if (used === null) continue;
-        const windows = store.get(account.id) ?? new Map<string, Sample[]>();
+        const windows = store.get(key) ?? new Map<string, Sample[]>();
         const samples = (windows.get(window.id) ?? []).filter(([t]) => now - t <= HISTORY_RETENTION_MS);
         const last = samples.at(-1);
         if (last && (time <= last[0] || (last[1] === used && time - last[0] < SAMPLE_INTERVAL_MS))) continue;
         samples.push([time, used]);
         windows.set(window.id, samples);
-        store.set(account.id, windows);
+        store.set(key, windows);
         changed = true;
       }
     }
@@ -127,7 +133,8 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
     const now = clock();
     for (const account of snapshot.providers.flatMap(p => p.accounts).filter(isMeasured)) {
       for (const window of account.windows) {
-        const exhaustsAt = forecastExhaustion(samplesOf(account.id, window.id), window, now);
+        const key = historyKey(account);
+        const exhaustsAt = key ? forecastExhaustion(samplesOf(key, window.id), window, now) : null;
         if (exhaustsAt === null) delete window.exhaustsAt;
         else window.exhaustsAt = new Date(exhaustsAt).toISOString();
       }
@@ -135,15 +142,17 @@ export async function createHistory({ dataDir, clock = Date.now }: { dataDir: st
     return snapshot;
   }
 
-  function series(accountIds: readonly string[]): WindowSeries[] {
+  function series(accountIds: readonly string[], accounts?: readonly MeasuredAccount[]): WindowSeries[] {
     const now = clock();
-    return accountIds.flatMap(accountId =>
-      [...(store.get(accountId) ?? [])].map(([windowId, samples]) => ({
+    return accountIds.flatMap(accountId => {
+      const account = accounts?.find(item => item.id === accountId);
+      const key = account ? historyKey(account) : accountId;
+      return [...(key ? (store.get(key) ?? []) : [])].map(([windowId, samples]) => ({
         accountId,
         windowId,
         samples: samples.filter(([time]) => now - time <= HISTORY_RETENTION_MS)
-      }))
-    );
+      }));
+    });
   }
 
   return { record, annotate, series, flush: saver.flush };
