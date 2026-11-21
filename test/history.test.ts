@@ -92,3 +92,16 @@ test('an unreadable history file starts an empty history', async t => {
   );
   assert.deepEqual((await createHistory({ dataDir })).series(['claude:a']), []);
 });
+
+test('Codex aliases share one forecast and a replacement login does not inherit it', async t => {
+  const history = await createHistory({ dataDir: await tempDir(t, 'vibe-codex-history-'), clock: () => NOW });
+  const codex = (id: string, key: string, used: number, time: number) =>
+    measuredAccount({ providerId: 'codex', id, accountKey: key, fetchedAt: new Date(time).toISOString(), windows: [fiveHour(used)] });
+  history.record(snapshot([codex('codex:default', 'old', 30, NOW - 30 * MINUTE)]));
+  const aliases = [codex('codex:default', 'old', 60, NOW), codex('codex:2', 'old', 60, NOW)];
+  const forecast = history.annotate(snapshot(aliases)).providers[0]?.accounts.map(a => a.windows[0]?.exhaustsAt);
+  assert.deepEqual(forecast, [new Date(NOW + 40 * MINUTE).toISOString(), new Date(NOW + 40 * MINUTE).toISOString()]);
+  const replacement = codex('codex:default', 'new', 60, NOW);
+  assert.equal(history.annotate(snapshot([replacement])).providers[0]?.accounts[0]?.windows[0]?.exhaustsAt, undefined);
+  assert.deepEqual(history.series([replacement.id], [replacement]), []);
+});

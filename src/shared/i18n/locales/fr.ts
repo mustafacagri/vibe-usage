@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const fr: Messages = {
+  duplicateCodexAccount: 'Partage le quota avec un autre profil',
+  codexResetCredits: 'Reset credits: {n}',
+  codexUseReset: 'Use a reset',
+  codexResetConfirm: 'Use one earned Codex reset? This cannot be undone.',
+  codexResetUnavailable: 'No eligible reset is available.',
+  claudeCheckResets: 'Check Claude limit resets',
   claudeFreePlanDetail: 'Offre Free ; le quota d’abonnement Claude Code est indisponible.',
   name: 'Français',
   liveTracker: 'Suivi en direct',

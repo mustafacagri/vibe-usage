@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const ru: Messages = {
+  duplicateCodexAccount: 'Общая квота с другим профилем',
+  codexResetCredits: 'Reset credits: {n}',
+  codexUseReset: 'Use a reset',
+  codexResetConfirm: 'Use one earned Codex reset? This cannot be undone.',
+  codexResetUnavailable: 'No eligible reset is available.',
+  claudeCheckResets: 'Check Claude limit resets',
   claudeFreePlanDetail: 'План Free; квота подписки Claude Code недоступна.',
   name: 'Русский',
   liveTracker: 'Монитор квот',

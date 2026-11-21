@@ -42,6 +42,8 @@ export function serveFixture(fixture: Fixture): void {
   };
   const answers: { [K in Channel]: () => ReturnType<VibeMethods[K]> } = {
     snapshot: current,
+    resetCodexQuota: () => 'unavailable',
+    openClaudeUsage: () => undefined,
     refresh: current,
     saveSettings: current,
     pin: current,

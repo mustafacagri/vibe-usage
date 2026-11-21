@@ -1,6 +1,12 @@
 import type { Messages } from '../messages.ts';
 
 export const ja: Messages = {
+  duplicateCodexAccount: '別のプロファイルと使用枠を共有しています',
+  codexResetCredits: 'Reset credits: {n}',
+  codexUseReset: 'Use a reset',
+  codexResetConfirm: 'Use one earned Codex reset? This cannot be undone.',
+  codexResetUnavailable: 'No eligible reset is available.',
+  claudeCheckResets: 'Check Claude limit resets',
   claudeFreePlanDetail: 'Free プランでは Claude Code のサブスクリプション利用枠は使えません。',
   name: '日本語',
   liveTracker: 'ライブトラッカー',

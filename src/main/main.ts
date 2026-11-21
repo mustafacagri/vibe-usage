@@ -603,6 +603,7 @@ async function start(): Promise<void> {
   };
 
   const handlers = createHandlers({
+    openClaudeUsage: () => shell.openExternal('https://claude.ai/settings/usage'),
     service,
     faults,
     dataDir,

@@ -19,6 +19,7 @@ export interface SavedMeasurement {
   configDir: string | null;
   // Older readings have no source proof and are not restored into a configured account.
   sourceKey?: string;
+  accountKey?: string;
   fetchedAt: string;
   plan?: string;
   windows: QuotaWindow[];
@@ -68,6 +69,7 @@ export async function loadMeasurements(file: string, now = Date.now()): Promise<
     saved.set(id, {
       configDir: typeof entry.configDir === 'string' ? entry.configDir : null,
       ...(typeof entry.sourceKey === 'string' && /^[a-f0-9]{64}$/.test(entry.sourceKey) ? { sourceKey: entry.sourceKey } : {}),
+      ...(typeof entry.accountKey === 'string' && /^[a-f0-9]{64}$/.test(entry.accountKey) ? { accountKey: entry.accountKey } : {}),
       fetchedAt: new Date(at).toISOString(),
       ...(typeof entry.plan === 'string' ? { plan: entry.plan } : {}),
       windows
@@ -79,10 +81,12 @@ export async function loadMeasurements(file: string, now = Date.now()): Promise<
 // The reading worth keeping from an account: a good one, without what was carried over.
 export function measurementOf(account: MeasuredAccount): SavedMeasurement | null {
   const windows = account.windows.filter(w => !w.stale).map(({ exhaustsAt: _forecast, ...window }) => window);
-  if (account.status !== 'ok' || !account.fetchedAt || !windows.length) return null;
+  if (account.status !== 'ok' || !account.fetchedAt || !windows.length || (account.providerId === 'codex' && !account.accountKey))
+    return null;
   return {
     configDir: account.configDir ?? null,
     sourceKey: accountSourceKey(account),
+    ...(account.accountKey ? { accountKey: account.accountKey } : {}),
     fetchedAt: account.fetchedAt,
     ...(account.plan ? { plan: account.plan } : {}),
     windows

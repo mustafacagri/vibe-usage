@@ -23,6 +23,8 @@ const api: Ipc.VibeApi = {
   platform: process.platform,
   snapshot: () => call('snapshot'),
   refresh: providerId => call('refresh', providerId),
+  resetCodexQuota: (id, key) => call('resetCodexQuota', id, key),
+  openClaudeUsage: () => call('openClaudeUsage'),
   saveSettings: patch => call('saveSettings', patch),
   pin: () => call('pin'),
   loginItem: () => call('loginItem'),
