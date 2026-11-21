@@ -493,7 +493,11 @@ function groupWindows(windows: readonly QuotaWindow[]): WindowGroups {
 
 // What the toast says once work went on: the session itself, or a new one from a brief.
 const continuedMessage = (result: ContinueOutcome, target: string): string =>
-  result.resumed ? t('continuedResumed', { target }) : t(LAUNCH_MESSAGES[result.mode], { tool: target });
+  result.switchedAntigravity
+    ? t('continuedAntigravitySwitched', { target })
+    : result.resumed
+      ? t('continuedResumed', { target })
+      : t(LAUNCH_MESSAGES[result.mode], { tool: target });
 
 const statusMessage = (entity: { messageCode?: string } | undefined): string => (entity?.messageCode ? describe(entity.messageCode) : '');
 
@@ -541,7 +545,28 @@ function launchButton(
 
 const canLaunch = (provider: Provider, account: MeasuredAccount): boolean =>
   provider.id === 'claude' && Boolean(account.configDir) && account.status === 'ok';
+const canSwitchAntigravity = (provider: Provider, account: MeasuredAccount): boolean =>
+  provider.id === 'antigravity' && Boolean(account.configDir) && !needsSignIn(account) && account.status !== 'pending';
 const pickerName = (account: Account): string => `${account.primary ? '★ ' : ''}${accountName(account)}`;
+
+function switchAntigravityButton(account: MeasuredAccount): HTMLButtonElement {
+  const name = accountName(account);
+  const button = element('button', 'launch-button', t('switchAccountBtn', { name }));
+  onClick(button, async () => {
+    const result = await vibe.switchAntigravityAccount(account.id);
+    if (result.status === 'switched') toast(t('antigravitySwitched', { name }));
+  });
+  return button;
+}
+
+function restoreAntigravityButton(className = 'secondary-button gap-top-sm'): HTMLButtonElement {
+  const button = element('button', className, t('restoreAntigravityBtn'));
+  onClick(button, async () => {
+    const result = await vibe.restoreAntigravityAccount();
+    if (result.status === 'restored') toast(t('antigravityRestored'));
+  });
+  return button;
+}
 
 function cardHeader(provider: Provider, accounts: readonly MeasuredAccount[], shown: MeasuredAccount | undefined): HTMLElement {
   const heading = element('div', 'provider-heading');
@@ -584,6 +609,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount, accounts: reado
       : describeAccountMessage(shown, accounts, t) || (shown.windows.length ? '' : t('noDataYet'));
   if (message) nodes.push(element('div', 'empty', message));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
+  if (canSwitchAntigravity(provider, shown)) nodes.push(switchAntigravityButton(shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
   else if (toolCannotStart(shown)) nodes.push(checkInstallButton());
   return nodes;
@@ -622,6 +648,7 @@ function compareActions(provider: Provider, account: MeasuredAccount, accounts: 
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
     column.append(launch);
   }
+  if (canSwitchAntigravity(provider, account)) column.append(switchAntigravityButton(account));
   if (needsSignIn(account)) column.append(signInButton(provider, account, t('signInAccountBtn', { name })));
   else if (toolCannotStart(account)) column.append(checkInstallButton());
   return column;
@@ -1153,6 +1180,7 @@ function providerCard(state: ProviderState): HTMLElement {
       toolCannotStart(state) ? checkInstallButton() : signInButton(provider)
     );
   const inView = accountsInView(accounts, compare, shown);
+  if (provider.id === 'antigravity' && current().antigravityBackup) section.append(restoreAntigravityButton());
   const charted = inView.filter(a => chartedWindows(a).length);
   if (charted.length) section.append(historySection(charted));
   if (isProfileProvider(provider.id) && inView.length) section.append(tokensSection(inView));
@@ -1661,6 +1689,7 @@ function renderAccounts(): void {
     rows.append(...owned.map(account => accountRow(provider, account)));
     card.append(header, rows);
     if (canAddAccount(provider.id)) card.append(addAccountButton(provider.id));
+    if (provider.id === 'antigravity' && current().antigravityBackup) card.append(restoreAntigravityButton());
     return card;
   });
   ui.accountSettings.replaceChildren(...cards);

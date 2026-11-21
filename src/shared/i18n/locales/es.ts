@@ -398,5 +398,19 @@ export const es: Messages = {
     'Abre el archivo descargado y arrastra Vibe Usage a Aplicaciones; solo una app firmada con un Apple Developer ID se actualiza sola.',
   updateUnsupportedUnpackaged: 'Una versión de desarrollo se actualiza desde el repositorio.',
   updateUnsupportedPlatform: 'Descarga la nueva versión desde la página de la versión.',
-  accountNotSignedIn: 'No ha iniciado sesión ahora mismo.'
+  accountNotSignedIn: 'No ha iniciado sesión ahora mismo.',
+  error_antigravity_switch_failed: 'No se pudo cambiar la sesión activa de Antigravity.',
+  error_antigravity_no_backup: 'No se encontró ninguna copia de seguridad de sesión de Antigravity en este dispositivo.',
+  switchAccountBtn: 'Cambiar a {name}',
+  switchAntigravityBtn: 'Cambiar cuenta',
+  switchAntigravityConfirm:
+    '¿Reemplazar la sesión activa de Antigravity en este dispositivo? Tu sesión actual se respalda primero para que puedas restaurarla después. El servicio local agy --hub se reiniciará; reinicia Antigravity IDE para aplicar el cambio (las sesiones abiertas conservan la sesión anterior en memoria).',
+  antigravitySwitched:
+    'Sesión activa de Antigravity cambiada a {name} y agy --hub reiniciado. Reinicia Antigravity IDE para aplicar el cambio (las sesiones abiertas conservan la sesión anterior en memoria).',
+  restoreAntigravityBtn: 'Restaurar sesión anterior',
+  restoreAntigravityConfirm:
+    '¿Restaurar la sesión respaldada de Antigravity en este dispositivo? El servicio local agy --hub se reiniciará; reinicia Antigravity IDE para aplicarla.',
+  antigravityRestored: 'Sesión anterior de Antigravity restaurada y agy --hub reiniciado. Reinicia Antigravity IDE para aplicarla.',
+  continuedAntigravitySwitched:
+    'Sesión activa de Antigravity cambiada a {target}, agy --hub reiniciado y VIBE_HANDOVER.md creado. Reinicia Antigravity IDE para aplicar el cambio.'
 };

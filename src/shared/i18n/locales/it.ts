@@ -400,5 +400,19 @@ export const it: Messages = {
     'Apri il file scaricato e trascina Vibe Usage in Applicazioni; solo un’app firmata con un Apple Developer ID si aggiorna da sola.',
   updateUnsupportedUnpackaged: 'Una build di sviluppo si aggiorna dal repository.',
   updateUnsupportedPlatform: 'Scarica la nuova versione dalla pagina della versione.',
-  accountNotSignedIn: 'Accesso non effettuato al momento.'
+  accountNotSignedIn: 'Accesso non effettuato al momento.',
+  error_antigravity_switch_failed: 'Impossibile cambiare l’accesso attivo di Antigravity.',
+  error_antigravity_no_backup: 'Nessun backup dell’accesso Antigravity trovato su questo dispositivo.',
+  switchAccountBtn: 'Passa a {name}',
+  switchAntigravityBtn: 'Cambia account',
+  switchAntigravityConfirm:
+    'Sostituire l’accesso Antigravity attivo su questo dispositivo? L’accesso attuale viene prima salvato in backup per poterlo ripristinare in seguito. Il servizio locale agy --hub verrà riavviato; riavvia Antigravity IDE per applicare (le sessioni in corso mantengono in memoria l’accesso precedente).',
+  antigravitySwitched:
+    'Accesso Antigravity attivo passato a {name} e agy --hub riavviato. Riavvia Antigravity IDE per applicare (le sessioni in corso mantengono in memoria l’accesso precedente).',
+  restoreAntigravityBtn: 'Ripristina accesso precedente',
+  restoreAntigravityConfirm:
+    'Ripristinare il backup dell’accesso Antigravity su questo dispositivo? Il servizio locale agy --hub verrà riavviato; riavvia Antigravity IDE per applicare.',
+  antigravityRestored: 'Accesso Antigravity precedente ripristinato e agy --hub riavviato. Riavvia Antigravity IDE per applicare.',
+  continuedAntigravitySwitched:
+    'Accesso Antigravity attivo passato a {target}, agy --hub riavviato e VIBE_HANDOVER.md scritto. Riavvia Antigravity IDE per applicare.'
 };

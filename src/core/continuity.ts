@@ -49,6 +49,7 @@ import type {
   Suggestion,
   TransitionRecord
 } from '../shared/types.ts';
+import { switchAntigravityAccount as defaultSwitchAntigravity, type AntigravitySwitchResult } from './antigravity-switch.ts';
 import {
   endClaudeSession,
   findClaudeProcess,
@@ -97,6 +98,7 @@ import {
   claudeTurnEnded,
   codexLimitStops,
   isRecentStop,
+  latestAntigravitySession,
   latestClaudeSession,
   latestCodexSession,
   latestCursorSession,
@@ -169,6 +171,8 @@ export async function findRecentSession(account: Account, homeDir: string, ident
       session = latestCursorSession(homeDir, identity);
       break;
     case 'antigravity':
+      session = latestAntigravitySession(homeDir, account.configDir, identity);
+      break;
     case 'copilot':
       session = null;
   }
@@ -251,6 +255,8 @@ export interface ContinueResult {
   mode: LaunchMode;
   // The handoff file of the app tab the session now runs in.
   tab?: string | null;
+  // True when continuing onto an isolated Antigravity account switched the active OS login.
+  switchedAntigravity?: boolean;
 }
 
 export interface MoveOptions {
@@ -261,6 +267,8 @@ export interface MoveOptions {
   // The handoff file of the app tab running it, to go on in that tab.
   tab?: string | null | undefined;
   processes?: ProcessControl | undefined;
+  // Switches the active OS-keyring Antigravity login before opening Antigravity on an isolated profile.
+  switchAntigravity?: ((account: Account) => Promise<AntigravitySwitchResult>) | undefined;
 }
 
 async function pickedUp(file: string): Promise<boolean> {
@@ -351,6 +359,11 @@ export async function continueSession(
       options
     );
   }
+  let switchedAntigravity = false;
+  if (to.providerId === 'antigravity' && to.account?.configDir) {
+    await (options.switchAntigravity ?? defaultSwitchAntigravity)(to.account);
+    switchedAntigravity = true;
+  }
   const result = await executeHandover(
     {
       projectDir: session.projectDir,
@@ -365,7 +378,13 @@ export async function continueSession(
     state,
     context
   );
-  return { to: result.to, accountId: to.account?.id ?? null, resumed: false, mode: result.mode };
+  return {
+    to: result.to,
+    accountId: to.account?.id ?? null,
+    resumed: false,
+    mode: result.mode,
+    ...(switchedAntigravity ? { switchedAntigravity: true } : {})
+  };
 }
 
 // The moves the app follows a whole session for, by the kind of their suggestion. A failed one
@@ -421,6 +440,7 @@ export interface ContinuityOptions {
   // Reload shared settings after waiting for process/transcript checks and before dispatch.
   getCurrentSnapshot?: () => Promise<Snapshot>;
   start?: typeof continueSession;
+  switchAntigravity?: (account: Account) => Promise<AntigravitySwitchResult>;
   clock?: () => number;
   // How many settled history records are kept.
   historyCap?: number;
@@ -600,7 +620,8 @@ const SAFE_ERRORS = [
   'bypass_not_consented',
   'cli_not_found',
   'start_blocked',
-  'start_failed'
+  'start_failed',
+  'antigravity_switch_failed'
 ] as const satisfies readonly ErrorCode[];
 // A failure as it is kept and announced: its code, and the params its message names (a tool, a
 // program, a system code). One the app did not foresee is kept as a failed launch.
@@ -789,6 +810,7 @@ export async function createContinuity({
   findOpen = defaultFindOpen(homeDir),
   getCurrentSnapshot,
   start = continueSession,
+  switchAntigravity,
   clock = Date.now,
   historyCap = MAX_HANDLED_STOPS,
   onFault
@@ -1138,6 +1160,9 @@ export async function createContinuity({
       if (automatic && pending.stopped) scope = continueScope(stopScope(snapshot, pending.session));
       const { session, holder } = await sourceSession(pending, snapshot);
       let to = await targetFor(pending, session, holder, snapshot, scope);
+      // Replacing the active OS-keyring Antigravity login is always manual and explicit:
+      // never rotate Antigravity accounts silently during automatic continuation.
+      if (automatic && to.providerId === 'antigravity' && to.account?.configDir) throw new DispatchDeferred();
       pending.to = to;
       const record = recordOf(pending);
       if (record)
@@ -1166,7 +1191,10 @@ export async function createContinuity({
       pending.to = to;
       let result: ContinueResult;
       try {
-        result = await start(session, to, current, launch, options);
+        result = await start(session, to, current, launch, {
+          ...options,
+          ...(switchAntigravity ? { switchAntigravity } : {})
+        });
       } catch (error) {
         status(pending, 'failed', failed(error));
         await save();

@@ -2,6 +2,7 @@
 // through `MainContext`, so the handlers run and are tested without Electron.
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { restoreAntigravityBackup, switchAntigravityAccount, type AntigravitySwitchResult } from '../core/antigravity-switch.ts';
 import type { Continuity } from '../core/continuity.ts';
 import type { Installer } from '../core/updater.ts';
 import { collectDiagnostics, renderDiagnosticsReport, type ToolProbe } from '../core/diagnostics.ts';
@@ -109,6 +110,12 @@ export interface MainContext {
   faults: Pick<FaultLog, 'list'>;
   appVersion: string;
   copyText(text: string): Promise<void>;
+  // Manual Antigravity active-login switching and backup restore (injectable for tests).
+  antigravitySwitch?: {
+    switchAccount: (account: Account) => Promise<AntigravitySwitchResult>;
+    restoreBackup: () => Promise<AntigravitySwitchResult>;
+    refreshBackup?: () => Promise<void>;
+  };
 }
 
 type Result<K extends Channel> = ReturnType<VibeMethods[K]>;
@@ -119,6 +126,10 @@ export function createHandlers(context: MainContext): Handlers {
   const { service, dataDir, homeDir, platform, spawnProcess } = context;
   const settings = (): Settings => service.snapshot().settings;
   const launchContext = { dataDir, homeDir, platform, spawnProcess };
+  const agySwitch = context.antigravitySwitch ?? {
+    switchAccount: account => switchAntigravityAccount(account, { platform }),
+    restoreBackup: () => restoreAntigravityBackup({ platform })
+  };
 
   // Applies a settings change and reports it, so the side effects of changed fields follow.
   async function updateSettings(patch: SettingsPatch): Promise<Snapshot> {
@@ -194,6 +205,16 @@ export function createHandlers(context: MainContext): Handlers {
     return (
       !(await context.continuity.isRunning(suggestionId, snapshot)) || context.confirmWarnings([{ key: 'warnSessionRunning', params: {} }])
     );
+  }
+
+  // Continuing onto an isolated Antigravity account replaces the active OS-keyring login,
+  // so the user explicitly confirms before any credential change happens.
+  async function confirmAntigravitySwitchForSuggestion(suggestionId: string): Promise<boolean> {
+    const suggestion = context.view().suggestions?.find(entry => entry.id === suggestionId);
+    if (suggestion?.target.providerId !== 'antigravity' || !suggestion.target.accountId) return true;
+    const target = settings().accounts.find(a => a.id === suggestion.target.accountId && a.enabled && a.providerId === 'antigravity');
+    if (!target?.configDir) return true;
+    return context.confirm('switchAntigravityConfirm', 'suggestionContinueBtn');
   }
 
   function handoverRequest(request: unknown): HandoverRequest {
@@ -314,6 +335,23 @@ export function createHandlers(context: MainContext): Handlers {
       });
       return context.publish();
     },
+    async switchAntigravityAccount(accountId) {
+      const id = requiredString(accountId);
+      const account = enabledAccount('antigravity', id);
+      if (!account.configDir) throw new AppError('account_not_found');
+      if (!(await context.confirm('switchAntigravityConfirm', 'switchAntigravityBtn'))) return { status: 'canceled' };
+      const result = await agySwitch.switchAccount(account);
+      await agySwitch.refreshBackup?.();
+      await context.refresh('antigravity', { fresh: true }).catch(() => undefined);
+      return { status: 'switched', hubRestarted: result.hubRestarted };
+    },
+    async restoreAntigravityAccount() {
+      if (!(await context.confirm('restoreAntigravityConfirm', 'restoreAntigravityBtn'))) return { status: 'canceled' };
+      const result = await agySwitch.restoreBackup();
+      await agySwitch.refreshBackup?.();
+      await context.refresh('antigravity', { fresh: true }).catch(() => undefined);
+      return { status: 'restored', hubRestarted: result.hubRestarted };
+    },
     async launchClaude(accountId) {
       await service.syncSettings();
       enabledAccount('claude', accountId);
@@ -357,7 +395,12 @@ export function createHandlers(context: MainContext): Handlers {
     async continueWork(suggestionId) {
       const id = requiredString(suggestionId);
       if (!(await confirmIfRunning(id))) return { status: 'canceled' };
+      if (!(await confirmAntigravitySwitchForSuggestion(id))) return { status: 'canceled' };
       const result = await context.continuity.accept(id, await service.syncSettings());
+      if (result.switchedAntigravity) {
+        await agySwitch.refreshBackup?.();
+        await context.refresh('antigravity', { fresh: true }).catch(() => undefined);
+      }
       context.publish();
       return { status: 'continued', ...result };
     },
@@ -367,7 +410,12 @@ export function createHandlers(context: MainContext): Handlers {
       const record = context.continuity.transitions().find(r => r.id === id);
       if (record?.status !== 'failed') throw new AppError('suggestion_expired');
       if (!(await confirmIfRunning(record.suggestionId))) return { status: 'canceled' };
+      if (!(await confirmAntigravitySwitchForSuggestion(record.suggestionId))) return { status: 'canceled' };
       const result = await context.continuity.retry(id, await service.syncSettings());
+      if (result.switchedAntigravity) {
+        await agySwitch.refreshBackup?.();
+        await context.refresh('antigravity', { fresh: true }).catch(() => undefined);
+      }
       context.publish();
       return { status: 'continued', ...result };
     },

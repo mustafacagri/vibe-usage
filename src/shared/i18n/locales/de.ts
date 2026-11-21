@@ -400,5 +400,19 @@ export const de: Messages = {
     'Öffnen Sie die heruntergeladene Datei und ziehen Sie Vibe Usage in „Programme“; nur eine mit einer Apple Developer ID signierte App installiert Updates selbst.',
   updateUnsupportedUnpackaged: 'Ein Entwicklungs-Build erhält Updates aus dem Repository.',
   updateUnsupportedPlatform: 'Laden Sie die neue Version von der Release-Seite herunter.',
-  accountNotSignedIn: 'Derzeit nicht angemeldet.'
+  accountNotSignedIn: 'Derzeit nicht angemeldet.',
+  error_antigravity_switch_failed: 'Die aktive Antigravity-Anmeldung konnte nicht gewechselt werden.',
+  error_antigravity_no_backup: 'Auf diesem Gerät wurde keine gesicherte Antigravity-Anmeldung gefunden.',
+  switchAccountBtn: 'Zu {name} wechseln',
+  switchAntigravityBtn: 'Konto wechseln',
+  switchAntigravityConfirm:
+    'Die aktive Antigravity-Anmeldung auf diesem Gerät ersetzen? Ihre aktuelle Anmeldung wird zuerst gesichert, damit Sie sie später wiederherstellen können. Der lokale Dienst agy --hub wird neu gestartet; starten Sie Antigravity IDE neu, um den Wechsel zu übernehmen (laufende Sitzungen behalten die vorherige Anmeldung im Speicher).',
+  antigravitySwitched:
+    'Aktive Antigravity-Anmeldung auf {name} umgestellt und agy --hub neu gestartet. Starten Sie Antigravity IDE neu (laufende Sitzungen behalten die vorherige Anmeldung im Speicher).',
+  restoreAntigravityBtn: 'Vorherige Anmeldung wiederherstellen',
+  restoreAntigravityConfirm:
+    'Die gesicherte Antigravity-Anmeldung auf diesem Gerät wiederherstellen? Der lokale Dienst agy --hub wird neu gestartet; starten Sie Antigravity IDE neu.',
+  antigravityRestored: 'Vorherige Antigravity-Anmeldung wiederhergestellt und agy --hub neu gestartet. Starten Sie Antigravity IDE neu.',
+  continuedAntigravitySwitched:
+    'Aktive Antigravity-Anmeldung auf {target} umgestellt, agy --hub neu gestartet und VIBE_HANDOVER.md geschrieben. Starten Sie Antigravity IDE neu.'
 };

@@ -9,8 +9,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
+import { ANTIGRAVITY_CLI_SUBDIR } from '../providers/antigravity.ts';
 import { CLAUDE_FILES, SYNTHETIC_MODEL } from '../providers/claude.ts';
 import { CODEX_SESSIONS_DIR } from '../providers/codex.ts';
 import { accountProfileDirs, defaultProfileDir } from '../providers/profiles.ts';
@@ -34,6 +35,7 @@ import {
   JSON_LINES_EXTENSION,
   jsonLines,
   newestFiles,
+  pathKey,
   readJsonSync,
   readTail,
   samePath,
@@ -107,6 +109,8 @@ function cacheEntry<T>(cache: Map<string, T>, file: string, value: T, limit = SE
 function sourceAccount(providerId: ProviderId, profile: string | undefined, sources: SessionSources): string | undefined {
   return sources.accounts?.find(account => {
     if (!account.enabled || account.providerId !== providerId) return false;
+    if (providerId === 'antigravity')
+      return profile ? Boolean(account.configDir && sameProject(account.configDir, profile)) : !account.configDir;
     if (!profile || (providerId !== 'claude' && providerId !== 'codex')) return true;
     return sameProject(account.configDir ?? defaultProfileDir(providerId, sources.homeDir), profile);
   })?.id;
@@ -597,8 +601,37 @@ function listCursor(projectDir: string, sources: SessionSources, sessionId?: str
 // ---------------------------------------------------------------- Antigravity
 // conversations/<id>.db is SQLite; trajectory_metadata_blob carries the workspace as a
 // file:// URI. The readable transcript lives in brain/<id>/.system_generated/logs.
-const antigravityRoot = (homeDir: string): string => path.join(homeDir, '.gemini', 'antigravity-ide');
+const antigravityDefaultRoots = (homeDir: string): string[] => [
+  path.join(homeDir, '.gemini', 'antigravity'),
+  path.join(homeDir, '.gemini', 'antigravity-cli'),
+  path.join(homeDir, '.gemini', 'antigravity-ide')
+];
+
+interface AntigravityRoot {
+  root: string;
+  profile?: string;
+}
+
+function antigravityRoots(homeDir: string, accounts?: readonly Account[]): AntigravityRoot[] {
+  const seen = new Set<string>();
+  const roots: AntigravityRoot[] = [];
+  const add = (root: string, profile?: string): void => {
+    const key = pathKey(root);
+    if (seen.has(key)) return;
+    seen.add(key);
+    roots.push(profile ? { root, profile } : { root });
+  };
+  for (const dir of antigravityDefaultRoots(homeDir)) add(dir);
+  for (const account of accounts ?? []) {
+    if (account.enabled && account.providerId === 'antigravity' && account.configDir)
+      add(path.join(account.configDir, ANTIGRAVITY_CLI_SUBDIR), account.configDir);
+  }
+  return roots;
+}
+
 const WINDOWS_DRIVE_URI = /^file:\/\/\/([A-Za-z]):(.*)$/;
+const WINDOWS_ENCODED_DRIVE_URI = /^file:\/\/\/([A-Za-z])%3[Aa](.*)$/;
+const FILE_URI_PREFIX = Buffer.from('file:///');
 const PROTOBUF_TAG_START = 0x20; // bytes below are control bytes: the next protobuf tag
 const SLASH = 0x2f;
 
@@ -612,6 +645,22 @@ function workspaceUris(projectDir: string): Buffer[] {
     uris.add(`file:///${drive.toLowerCase()}:${rest}`);
   }
   return [...uris].map(uri => Buffer.from(uri));
+}
+
+// Extracts the first embedded `file:///` workspace URI from a trajectory metadata blob.
+function extractWorkspacePath(blob: Buffer): string | null {
+  for (let at = blob.indexOf(FILE_URI_PREFIX); at !== -1; at = blob.indexOf(FILE_URI_PREFIX, at + 1)) {
+    let end = at + FILE_URI_PREFIX.length;
+    while (end < blob.length && (blob[end] ?? 0) >= PROTOBUF_TAG_START) end++;
+    const raw = blob.toString('utf8', at, end);
+    const normalized = raw.replace(
+      WINDOWS_ENCODED_DRIVE_URI,
+      (_match, drive: string, rest: string) => `file:///${drive.toUpperCase()}:${rest}`
+    );
+    const local = attemptSync(() => fileURLToPath(normalized));
+    if (local && path.isAbsolute(local)) return local;
+  }
+  return null;
 }
 
 // The URI is protobuf-embedded; a match must not continue as a longer path segment.
@@ -654,37 +703,43 @@ interface AntigravityConversation {
   id: string;
   file: string;
   model: string;
+  root: string;
+  profile?: string;
 }
 
-function antigravityConversations(projectDir: string, homeDir: string): AntigravityConversation[] {
-  const dir = path.join(antigravityRoot(homeDir), 'conversations');
+function antigravityConversations(projectDir: string, roots: readonly AntigravityRoot[]): AntigravityConversation[] {
   const uris = workspaceUris(projectDir);
-  return (attemptSync(() => fs.readdirSync(dir)) ?? [])
-    .filter(name => name.endsWith('.db'))
-    .flatMap(name => {
-      const file = path.join(dir, name);
-      const conversation = attemptSync(() =>
-        withDb(file, db => {
-          const rows = db.prepare('SELECT data FROM trajectory_metadata_blob').all();
-          const inProject = rows.some(row => {
-            const blob = bytes(row.data);
-            return blob !== null && blobHasWorkspace(blob, uris);
-          });
-          return inProject ? { id: path.basename(name, '.db'), file, model: antigravityModel(db) } : null;
-        })
-      );
-      return conversation ? [conversation] : [];
-    });
+  return roots.flatMap(({ root, profile }) => {
+    const dir = path.join(root, 'conversations');
+    return (attemptSync(() => fs.readdirSync(dir)) ?? [])
+      .filter(name => name.endsWith('.db'))
+      .flatMap(name => {
+        const file = path.join(dir, name);
+        const conversation = attemptSync(() =>
+          withDb(file, db => {
+            const rows = db.prepare('SELECT data FROM trajectory_metadata_blob').all();
+            const inProject = rows.some(row => {
+              const blob = bytes(row.data);
+              return blob !== null && blobHasWorkspace(blob, uris);
+            });
+            return inProject
+              ? { id: path.basename(name, '.db'), file, model: antigravityModel(db), root, ...(profile ? { profile } : {}) }
+              : null;
+          })
+        );
+        return conversation ? [conversation] : [];
+      });
+  });
 }
 
 const MARKUP = /<[^>]+>/g;
-const antigravityTranscriptFile = (homeDir: string, id: string): string =>
-  path.join(antigravityRoot(homeDir), 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+const antigravityTranscriptFile = (root: string, id: string): string =>
+  path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
 
-async function readAntigravityTranscript(homeDir: string, id: string, model: string): Promise<Transcript> {
+async function readAntigravityTranscript(root: string, id: string, model: string): Promise<Transcript> {
   const transcript = emptyTranscript('antigravity', id);
   transcript.sessionModel = model;
-  const file = antigravityTranscriptFile(homeDir, id);
+  const file = antigravityTranscriptFile(root, id);
   for (const { type, content } of jsonLines(await fsp.readFile(file, 'utf8').catch(() => ''))) {
     if (typeof content !== 'string') continue;
     if (type === 'USER_INPUT') addUser(transcript, content.replace(MARKUP, ''));
@@ -694,20 +749,21 @@ async function readAntigravityTranscript(homeDir: string, id: string, model: str
 }
 
 async function listAntigravity(projectDir: string, sources: SessionSources, sessionId?: string): Promise<(SessionCandidate | null)[]> {
-  const { homeDir } = sources;
+  const roots = antigravityRoots(sources.homeDir, sources.accounts);
   const sessions: (SessionCandidate | null)[] = [];
-  for (const { id, file, model } of antigravityConversations(projectDir, homeDir)) {
+  for (const { id, file, model, root, profile } of antigravityConversations(projectDir, roots)) {
     if (sessionId && id !== sessionId) continue;
     sessions.push(
       await attempt(async () => {
         const stat = await fsp.stat(file);
-        return listEntry(await readAntigravityTranscript(homeDir, id, model), {
+        return listEntry(await readAntigravityTranscript(root, id, model), {
           updatedAt: stat.mtimeMs,
           sizeBytes: stat.size,
           file,
           projectDir,
           sources,
-          dependencies: [`${file}-wal`, antigravityTranscriptFile(homeDir, id)]
+          ...(profile ? { profile } : {}),
+          dependencies: [`${file}-wal`, antigravityTranscriptFile(root, id)]
         });
       })
     );
@@ -909,6 +965,46 @@ export function latestCursorSession(homeDir: string, identity?: SessionIdentity)
     })
   );
   return chats.filter(s => matchesSession(s, identity)).sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+}
+
+export function latestAntigravitySession(homeDir: string, configDir?: string, identity?: SessionIdentity): RecentSession | null {
+  const roots = configDir ? [path.join(configDir, ANTIGRAVITY_CLI_SUBDIR)] : antigravityDefaultRoots(homeDir);
+  const candidates = roots
+    .flatMap(root => {
+      const dir = path.join(root, 'conversations');
+      return (attemptSync(() => fs.readdirSync(dir)) ?? [])
+        .filter(name => name.endsWith('.db'))
+        .map(name => {
+          const file = path.join(dir, name);
+          return { file, id: path.basename(name, '.db'), updatedAt: mtime(file) };
+        });
+    })
+    .filter(entry => !identity || entry.id === identity.sessionId)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  for (const { file, id, updatedAt } of candidates) {
+    const found = attemptSync(() =>
+      withDb(file, db => {
+        const rows = db.prepare('SELECT data FROM trajectory_metadata_blob').all();
+        for (const row of rows) {
+          const blob = bytes(row.data);
+          const projectDir = blob ? extractWorkspacePath(blob) : null;
+          if (projectDir) return { projectDir, model: antigravityModel(db) };
+        }
+        return null;
+      })
+    );
+    if (!found) continue;
+    const session: RecentSession = {
+      providerId: 'antigravity',
+      sessionId: id,
+      projectDir: found.projectDir,
+      updatedAt,
+      file,
+      ...(found.model ? { model: found.model } : {})
+    };
+    if (matchesSession(session, identity)) return session;
+  }
+  return null;
 }
 
 // ----------------------------------------------------------- stopped by a limit

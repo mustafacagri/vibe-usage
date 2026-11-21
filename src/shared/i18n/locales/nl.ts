@@ -398,5 +398,19 @@ export const nl: Messages = {
     'Open het gedownloade bestand en sleep Vibe Usage naar Apps; alleen een app die met een Apple Developer ID is ondertekend, werkt zichzelf bij.',
   updateUnsupportedUnpackaged: 'Een ontwikkelversie wordt bijgewerkt vanuit de repository.',
   updateUnsupportedPlatform: 'Download de nieuwe versie van de releasepagina.',
-  accountNotSignedIn: 'Momenteel niet ingelogd.'
+  accountNotSignedIn: 'Momenteel niet ingelogd.',
+  error_antigravity_switch_failed: 'De actieve Antigravity-aanmelding kon niet worden gewisseld.',
+  error_antigravity_no_backup: 'Er is geen back-up van een Antigravity-aanmelding op dit apparaat gevonden.',
+  switchAccountBtn: 'Overschakelen naar {name}',
+  switchAntigravityBtn: 'Account wisselen',
+  switchAntigravityConfirm:
+    'De actieve Antigravity-aanmelding op dit apparaat vervangen? Je huidige aanmelding wordt eerst als back-up opgeslagen zodat je die later kunt herstellen. De lokale service agy --hub wordt herstart; herstart Antigravity IDE om dit toe te passen (lopende sessies houden de vorige aanmelding in het geheugen).',
+  antigravitySwitched:
+    'Actieve Antigravity-aanmelding gewisseld naar {name} en agy --hub herstart. Herstart Antigravity IDE om dit toe te passen (lopende sessies houden de vorige aanmelding in het geheugen).',
+  restoreAntigravityBtn: 'Vorige aanmelding herstellen',
+  restoreAntigravityConfirm:
+    'De geback-upte Antigravity-aanmelding op dit apparaat herstellen? De lokale service agy --hub wordt herstart; herstart Antigravity IDE om dit toe te passen.',
+  antigravityRestored: 'Vorige Antigravity-aanmelding hersteld en agy --hub herstart. Herstart Antigravity IDE om dit toe te passen.',
+  continuedAntigravitySwitched:
+    'Actieve Antigravity-aanmelding gewisseld naar {target}, agy --hub herstart en VIBE_HANDOVER.md geschreven. Herstart Antigravity IDE om dit toe te passen.'
 };

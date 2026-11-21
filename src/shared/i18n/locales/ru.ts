@@ -395,5 +395,20 @@ export const ru: Messages = {
     'Откройте загруженный файл и перетащите Vibe Usage в «Программы»; обновляться сама может только программа, подписанная Apple Developer ID.',
   updateUnsupportedUnpackaged: 'Сборка для разработки обновляется из репозитория.',
   updateUnsupportedPlatform: 'Скачайте новую версию со страницы релиза.',
-  accountNotSignedIn: 'Сейчас вход не выполнен.'
+  accountNotSignedIn: 'Сейчас вход не выполнен.',
+  error_antigravity_switch_failed: 'Не удалось переключить активный вход Antigravity.',
+  error_antigravity_no_backup: 'На этом устройстве не найдена резервная копия входа Antigravity.',
+  switchAccountBtn: 'Переключиться на {name}',
+  switchAntigravityBtn: 'Переключить аккаунт',
+  switchAntigravityConfirm:
+    'Заменить активный вход Antigravity на этом устройстве? Текущий вход сначала сохранится в резервную копию, чтобы его можно было вернуть позже. Локальная служба agy --hub перезапустится; перезапустите Antigravity IDE, чтобы применить изменение (открытые сессии сохраняют прежний вход в памяти).',
+  antigravitySwitched:
+    'Активный вход Antigravity переключён на {name}, служба agy --hub перезапущена. Перезапустите Antigravity IDE, чтобы применить изменение (открытые сессии сохраняют прежний вход в памяти).',
+  restoreAntigravityBtn: 'Восстановить прежний вход',
+  restoreAntigravityConfirm:
+    'Восстановить резервную копию входа Antigravity на этом устройстве? Локальная служба agy --hub перезапустится; перезапустите Antigravity IDE, чтобы применить изменение.',
+  antigravityRestored:
+    'Прежний вход Antigravity восстановлен, служба agy --hub перезапущена. Перезапустите Antigravity IDE, чтобы применить изменение.',
+  continuedAntigravitySwitched:
+    'Активный вход Antigravity переключён на {target}, служба agy --hub перезапущена и записан VIBE_HANDOVER.md. Перезапустите Antigravity IDE, чтобы применить изменение.'
 };

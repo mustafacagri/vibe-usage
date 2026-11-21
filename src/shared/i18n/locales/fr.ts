@@ -397,5 +397,19 @@ export const fr: Messages = {
     'Ouvrez le fichier téléchargé et glissez Vibe Usage dans Applications ; seule une app signée avec un Apple Developer ID se met à jour seule.',
   updateUnsupportedUnpackaged: 'Une version de développement se met à jour depuis le dépôt.',
   updateUnsupportedPlatform: 'Téléchargez la nouvelle version depuis la page de publication.',
-  accountNotSignedIn: 'Non connecté actuellement.'
+  accountNotSignedIn: 'Non connecté actuellement.',
+  error_antigravity_switch_failed: 'Impossible de changer la connexion Antigravity active.',
+  error_antigravity_no_backup: 'Aucune sauvegarde de connexion Antigravity n’a été trouvée sur cet appareil.',
+  switchAccountBtn: 'Basculer vers {name}',
+  switchAntigravityBtn: 'Changer de compte',
+  switchAntigravityConfirm:
+    'Remplacer la connexion Antigravity active sur cet appareil ? Votre connexion actuelle est d’abord sauvegardée afin de pouvoir la restaurer plus tard. Le service local agy --hub va redémarrer ; redémarrez Antigravity IDE pour appliquer (les sessions en cours gardent la connexion précédente en mémoire).',
+  antigravitySwitched:
+    'Connexion Antigravity active basculée vers {name} et agy --hub redémarré. Redémarrez Antigravity IDE pour appliquer (les sessions en cours gardent la connexion précédente en mémoire).',
+  restoreAntigravityBtn: 'Restaurer la connexion précédente',
+  restoreAntigravityConfirm:
+    'Restaurer la connexion Antigravity sauvegardée sur cet appareil ? Le service local agy --hub va redémarrer ; redémarrez Antigravity IDE pour appliquer.',
+  antigravityRestored: 'Connexion Antigravity précédente restaurée et agy --hub redémarré. Redémarrez Antigravity IDE pour appliquer.',
+  continuedAntigravitySwitched:
+    'Connexion Antigravity active basculée vers {target}, agy --hub redémarré et VIBE_HANDOVER.md écrit. Redémarrez Antigravity IDE pour appliquer.'
 };

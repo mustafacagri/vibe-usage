@@ -45,7 +45,9 @@ export type AppErrorCode =
   | 'process_unknown'
   | 'not_picked_up'
   | 'bypass_not_consented'
-  | 'session_unsaved';
+  | 'session_unsaved'
+  | 'antigravity_switch_failed'
+  | 'antigravity_no_backup';
 
 // Why a quota read failed. Codes with a `status_<code>` message are shown as such; the
 // others are internal and shown as a generic failure.
@@ -350,6 +352,7 @@ export interface Snapshot {
   // Added by the desktop app; the service and the CLI leave them out.
   suggestions?: Suggestion[];
   serviceIssues?: ServiceIssue[];
+  antigravityBackup?: boolean;
   appVersion?: string;
   update?: UpdateInfo;
   updateInstall?: UpdateInstall;

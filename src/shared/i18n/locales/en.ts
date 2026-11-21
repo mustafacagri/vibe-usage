@@ -394,6 +394,20 @@ export const en = {
     'Open the downloaded file and drag Vibe Usage to Applications; only an app signed with an Apple Developer ID updates itself.',
   updateUnsupportedUnpackaged: 'A development build updates from the repository.',
   updateUnsupportedPlatform: 'Download the new version from the release page.',
-  accountNotSignedIn: 'Not signed in right now.'
+  accountNotSignedIn: 'Not signed in right now.',
+  error_antigravity_switch_failed: 'Could not switch the active Antigravity sign-in.',
+  error_antigravity_no_backup: 'No backed-up Antigravity sign-in was found on this device.',
+  switchAccountBtn: 'Switch to {name}',
+  switchAntigravityBtn: 'Switch account',
+  switchAntigravityConfirm:
+    'Replace the active Antigravity sign-in on this device? Your current sign-in is backed up first so you can restore it later. The local agy --hub service will restart; restart Antigravity IDE to apply (running sessions keep the previous sign-in in memory).',
+  antigravitySwitched:
+    'Switched active Antigravity sign-in to {name} and restarted agy --hub. Restart Antigravity IDE to apply (running sessions keep the previous sign-in in memory).',
+  restoreAntigravityBtn: 'Restore previous sign-in',
+  restoreAntigravityConfirm:
+    'Restore the backed-up Antigravity sign-in on this device? The local agy --hub service will restart; restart Antigravity IDE to apply.',
+  antigravityRestored: 'Restored the previous Antigravity sign-in and restarted agy --hub. Restart Antigravity IDE to apply.',
+  continuedAntigravitySwitched:
+    'Switched active Antigravity sign-in to {target}, restarted agy --hub and wrote VIBE_HANDOVER.md. Restart Antigravity IDE to apply.'
   // Every code the app reports has its message: an app error as error_<code>, a status as status_<code>.
 } satisfies Record<`error_${AppErrorCode}` | `status_${StatusCode}`, string> & Record<string, unknown>;

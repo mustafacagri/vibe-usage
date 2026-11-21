@@ -97,6 +97,8 @@ export interface ContinueOutcome {
   // The session itself continues (rather than a new one from a handover brief).
   resumed: boolean;
   mode: LaunchMode;
+  // True when continuing onto an isolated Antigravity account switched the active OS login.
+  switchedAntigravity?: boolean;
 }
 
 export interface Canceled {
@@ -126,6 +128,10 @@ export interface VibeMethods {
   signIn(providerId: ProviderId, accountId?: string): void;
   // Adds an account in a new profile folder and opens the tool's sign-in for it.
   addAccount(providerId: AddableProviderId): Snapshot;
+  // Manually switches the active Antigravity OS-keyring sign-in to an isolated profile (backing up the previous login first).
+  switchAntigravityAccount(accountId: string): Canceled | { status: 'switched'; hubRestarted: boolean };
+  // Restores the backed-up Antigravity OS-keyring sign-in.
+  restoreAntigravityAccount(): Canceled | { status: 'restored'; hubRestarted: boolean };
   launchClaude(accountId: string): Canceled | { status: 'launched' };
   getModels(): ModelCatalog;
   previewSmartLaunch(): SmartLaunchPreview;

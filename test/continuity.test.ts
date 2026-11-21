@@ -34,7 +34,16 @@ import {
 import { defaultSettings } from '../src/core/settings.ts';
 import { PROVIDER_IDS, type ProviderId } from '../src/shared/catalog.ts';
 import type { Account, AutoContinue, MeasuredAccount, ReopenAfterRestart, ReturnToPrimary, Snapshot } from '../src/shared/types.ts';
-import { account, codexRollout, fakeSpawn, measuredAccount, quotaWindow, tempDir, writeCursorChat } from './helpers/fixtures.ts';
+import {
+  account,
+  codexRollout,
+  fakeSpawn,
+  measuredAccount,
+  quotaWindow,
+  tempDir,
+  writeAntigravityDb,
+  writeCursorChat
+} from './helpers/fixtures.ts';
 
 const NOW = Date.parse('2026-10-17T12:00:00.000Z');
 const MINUTE = 60 * 1000;
@@ -1069,6 +1078,14 @@ test('real profile discovery binds the project, session and model for continuati
     'cursor-task'
   );
   assert.equal(await findRecentSession(account({ providerId: 'antigravity' }), home), null);
+  const agConversations = path.join(home, '.gemini', 'antigravity', 'conversations');
+  await fs.mkdir(agConversations, { recursive: true });
+  writeAntigravityDb(path.join(agConversations, 'ag-task.db'), project, 'Gemini 3.8 Pro');
+  assert.equal(
+    (await findRecentSession(account({ providerId: 'antigravity' }), home, { projectDir: project, sessionId: 'ag-task' }))?.sessionId,
+    'ag-task'
+  );
+  assert.equal(await findStoppedSession(account({ providerId: 'antigravity' }), home, NOW), null);
   assert.equal(await findStoppedSession(account({ providerId: 'cursor' }), home, NOW), null);
 });
 
@@ -2132,4 +2149,139 @@ test('reopening checks the exact session again at dispatch and never restarts a 
       assert.equal(after.started.length, 1, 'a subsequent targeted proof of absence permits reopening');
     }
   }
+});
+
+test('Antigravity offers continuing on the roomiest sibling, never switches silently, and switches on explicit confirmation', async t => {
+  const home = await tempDir(t, 'vibe-agy-cont-home-');
+  const dataDir = await tempDir(t, 'vibe-agy-cont-data-');
+  const project = await tempDir(t, 'vibe-agy-cont-proj-');
+  const agLocal = account({ id: 'antigravity:local', providerId: 'antigravity', label: 'a@example.com', primary: true });
+  const agRoomy = account({
+    id: 'antigravity:profile-2',
+    providerId: 'antigravity',
+    label: 'b@example.com',
+    configDir: path.join(home, '.antigravity-2'),
+    primary: false
+  });
+  const agTight = account({
+    id: 'antigravity:profile-3',
+    providerId: 'antigravity',
+    label: 'c@example.com',
+    configDir: path.join(home, '.antigravity-3'),
+    primary: false
+  });
+
+  const convDir = path.join(home, '.gemini', 'antigravity', 'conversations');
+  await fs.mkdir(convDir, { recursive: true });
+  const dbFile = path.join(convDir, 'ag-sess-1.db');
+  writeAntigravityDb(dbFile, project, 'Gemini 3.8 Pro');
+  const logDir = path.join(home, '.gemini', 'antigravity', 'brain', 'ag-sess-1', '.system_generated', 'logs');
+  await fs.mkdir(logDir, { recursive: true });
+  await fs.writeFile(
+    path.join(logDir, 'transcript.jsonl'),
+    `${JSON.stringify({ type: 'USER_INPUT', content: 'Continue Antigravity work' })}\n`
+  );
+  await fs.utimes(dbFile, new Date(NOW - MINUTE), new Date(NOW - MINUTE));
+
+  const agSnapshot: Snapshot = {
+    refreshing: false,
+    settings: { ...defaultSettings(), autoContinue: 'tools', accounts: [agLocal, agRoomy, agTight] },
+    providers: PROVIDER_IDS.map(id => ({
+      id,
+      status: 'ok',
+      accounts: id === 'antigravity' ? [reading(agLocal, 10), reading(agRoomy, 90), reading(agTight, 45)] : []
+    }))
+  };
+
+  const spawned: string[][] = [];
+  const switched: string[] = [];
+  const continuity = await createContinuity({
+    homeDir: home,
+    dataDir,
+    launch: { dataDir, homeDir: home, platform: 'darwin', spawnProcess: fakeSpawn(spawned) },
+    switchAntigravity: target => {
+      switched.push(target.id);
+      return Promise.resolve({ hubRestarted: true, backedUp: true });
+    },
+    clock: () => NOW
+  });
+
+  const lowAccount = agSnapshot.providers.find(p => p.id === 'antigravity')?.accounts[0];
+  assert.ok(lowAccount);
+  const notices = await continuity.observe(agSnapshot, {
+    low: [
+      {
+        kind: 'low',
+        providerId: 'antigravity',
+        account: lowAccount,
+        window: { ...quotaWindow({ id: 'w' }), remainingPercent: 10 }
+      }
+    ]
+  });
+  assert.deepEqual(
+    notices.map(n => n.kind),
+    ['suggested'],
+    'low Antigravity quota offers a manual continuation rather than rotating silently'
+  );
+  assert.deepEqual(switched, [], 'nothing switched automatically');
+  const [offer] = continuity.suggestions();
+  assert.ok(offer);
+  assert.deepEqual(offer.target, { providerId: 'antigravity', accountId: agRoomy.id });
+
+  const result = await continuity.accept(offer.id, agSnapshot);
+  assert.deepEqual(result, { to: 'antigravity', accountId: agRoomy.id, resumed: false, mode: 'app', switchedAntigravity: true });
+  assert.deepEqual(switched, [agRoomy.id]);
+  assert.ok((await fs.readFile(path.join(project, 'VIBE_HANDOVER.md'), 'utf8')).includes('Continue Antigravity work'));
+  assert.deepEqual(spawned, [['/usr/bin/open', '-a', 'Antigravity', project]]);
+
+  // Even when a Claude session stops with autoContinue='tools', an isolated Antigravity successor
+  // is offered manually instead of silently replacing the active OS-keyring login.
+  const claudeStoppedSnapshot: Snapshot = {
+    refreshing: false,
+    settings: {
+      ...defaultSettings(),
+      autoContinue: 'tools',
+      providerOrder: ['claude', 'antigravity', 'codex', 'cursor'],
+      accounts: [claudeA, agRoomy]
+    },
+    providers: PROVIDER_IDS.map(id => ({
+      id,
+      status: 'ok',
+      accounts: id === 'claude' ? [reading(claudeA, 0)] : id === 'antigravity' ? [reading(agRoomy, 90)] : []
+    }))
+  };
+  const autoSwitched: string[] = [];
+  const silentCheck = await createContinuity({
+    homeDir: home,
+    dataDir: await tempDir(t, 'vibe-agy-no-auto-'),
+    launch: { dataDir, homeDir: home, platform: 'darwin', spawnProcess: fakeSpawn([]) },
+    findStopped: acc =>
+      Promise.resolve(
+        acc.id === claudeA.id
+          ? [
+              {
+                providerId: 'claude',
+                sessionId: 's1',
+                projectDir: project,
+                file: '/tmp/s1.jsonl',
+                updatedAt: NOW - MINUTE,
+                stoppedAt: NOW - MINUTE
+              }
+            ]
+          : []
+      ),
+    findRunning: () => Promise.resolve({ kind: 'none' }),
+    switchAntigravity: target => {
+      autoSwitched.push(target.id);
+      return Promise.resolve({ hubRestarted: true });
+    },
+    clock: () => NOW
+  });
+  const autoNotices = await silentCheck.observe(claudeStoppedSnapshot, { low: [] });
+  assert.deepEqual(
+    autoNotices.map(n => n.kind),
+    ['suggested'],
+    'automatic continuation defers to a manual suggestion rather than silently switching Antigravity login'
+  );
+  assert.deepEqual(autoSwitched, []);
 });

@@ -59,6 +59,8 @@ export function serveFixture(fixture: Fixture): void {
     restoreDismissedAccounts: fixture.snapshot,
     signIn: () => undefined,
     addAccount: fixture.snapshot,
+    switchAntigravityAccount: () => canceled,
+    restoreAntigravityAccount: () => canceled,
     launchClaude: () => canceled,
     getModels: () => fixture.models,
     previewSmartLaunch: () => fixture.smartLaunch,

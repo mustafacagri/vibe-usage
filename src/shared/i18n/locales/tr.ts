@@ -383,5 +383,20 @@ export const tr: Messages = {
     'İndirilen dosyayı açıp Vibe Usage’ı Uygulamalar klasörüne sürükleyin; yalnızca Apple Developer ID ile imzalı bir uygulama kendini günceller.',
   updateUnsupportedUnpackaged: 'Geliştirme sürümü depodan güncellenir.',
   updateUnsupportedPlatform: 'Yeni sürümü sürüm sayfasından indirin.',
-  accountNotSignedIn: 'Şu anda giriş yapılı değil.'
+  accountNotSignedIn: 'Şu anda giriş yapılı değil.',
+  error_antigravity_switch_failed: 'Etkin Antigravity oturumu değiştirilemedi.',
+  error_antigravity_no_backup: 'Bu cihazda yedeklenmiş bir Antigravity oturumu bulunamadı.',
+  switchAccountBtn: '{name} hesabına geç',
+  switchAntigravityBtn: 'Hesabı değiştir',
+  switchAntigravityConfirm:
+    'Bu cihazdaki etkin Antigravity oturumu değiştirilsin mi? Mevcut oturumunuz daha sonra geri yükleyebilmeniz için önce yedeklenir. Yerel agy --hub servisi yeniden başlatılır; yeni hesabın geçerli olması için Antigravity IDE’yi yeniden başlatın (açık oturumlar önceki girişi bellekte tutar).',
+  antigravitySwitched:
+    'Etkin Antigravity oturumu {name} hesabına geçirildi ve agy --hub yeniden başlatıldı. Uygulamak için Antigravity IDE’yi yeniden başlatın (açık oturumlar önceki girişi bellekte tutar).',
+  restoreAntigravityBtn: 'Önceki oturumu geri yükle',
+  restoreAntigravityConfirm:
+    'Bu cihazda yedeklenen Antigravity oturumu geri yüklensin mi? Yerel agy --hub servisi yeniden başlatılır; uygulamak için Antigravity IDE’yi yeniden başlatın.',
+  antigravityRestored:
+    'Önceki Antigravity oturumu geri yüklendi ve agy --hub yeniden başlatıldı. Uygulamak için Antigravity IDE’yi yeniden başlatın.',
+  continuedAntigravitySwitched:
+    'Etkin Antigravity oturumu {target} hesabına geçirildi, agy --hub yeniden başlatıldı ve VIBE_HANDOVER.md yazıldı. Uygulamak için Antigravity IDE’yi yeniden başlatın.'
 };

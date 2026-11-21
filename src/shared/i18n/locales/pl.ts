@@ -396,5 +396,20 @@ export const pl: Messages = {
     'Otwórz pobrany plik i przeciągnij Vibe Usage do Aplikacji; tylko aplikacja podpisana Apple Developer ID aktualizuje się sama.',
   updateUnsupportedUnpackaged: 'Wersja deweloperska aktualizuje się z repozytorium.',
   updateUnsupportedPlatform: 'Pobierz nową wersję ze strony wydania.',
-  accountNotSignedIn: 'Obecnie nie jest zalogowane.'
+  accountNotSignedIn: 'Obecnie nie jest zalogowane.',
+  error_antigravity_switch_failed: 'Nie udało się przełączyć aktywnego logowania Antigravity.',
+  error_antigravity_no_backup: 'Na tym urządzeniu nie znaleziono kopii zapasowej logowania Antigravity.',
+  switchAccountBtn: 'Przełącz na {name}',
+  switchAntigravityBtn: 'Przełącz konto',
+  switchAntigravityConfirm:
+    'Zastąpić aktywne logowanie Antigravity na tym urządzeniu? Bieżące logowanie zostanie najpierw zapisane jako kopia zapasowa, aby można je było później przywrócić. Lokalna usługa agy --hub zostanie uruchomiona ponownie; uruchom ponownie Antigravity IDE, aby zastosować zmianę (działające sesje zachowują poprzednie logowanie w pamięci).',
+  antigravitySwitched:
+    'Przełączono aktywne logowanie Antigravity na {name} i ponownie uruchomiono agy --hub. Uruchom ponownie Antigravity IDE, aby zastosować zmianę (działające sesje zachowują poprzednie logowanie w pamięci).',
+  restoreAntigravityBtn: 'Przywróć poprzednie logowanie',
+  restoreAntigravityConfirm:
+    'Przywrócić kopię zapasową logowania Antigravity na tym urządzeniu? Lokalna usługa agy --hub zostanie uruchomiona ponownie; uruchom ponownie Antigravity IDE, aby zastosować zmianę.',
+  antigravityRestored:
+    'Przywrócono poprzednie logowanie Antigravity i ponownie uruchomiono agy --hub. Uruchom ponownie Antigravity IDE, aby zastosować zmianę.',
+  continuedAntigravitySwitched:
+    'Przełączono aktywne logowanie Antigravity na {target}, ponownie uruchomiono agy --hub i zapisano VIBE_HANDOVER.md. Uruchom ponownie Antigravity IDE, aby zastosować zmianę.'
 };

@@ -646,3 +646,109 @@ test('adding an Antigravity account creates an isolated profile folder and runs 
   assert.ok(content.includes("export WSL_INTEROP='1'"));
   assert.ok(content.includes(`exec '${binary}' '--gemini_dir=${folder}'`));
 });
+
+test('switching and restoring the active Antigravity sign-in require explicit confirmation and refresh quota', async t => {
+  const { context, log, home } = await harness(t);
+  const isolated = account({
+    id: 'antigravity:profile-2',
+    providerId: 'antigravity',
+    configDir: path.join(home, '.antigravity-2'),
+    primary: false
+  });
+  const local = account({ id: 'antigravity:local', providerId: 'antigravity', primary: true });
+  await context.service.updateSettings({ accounts: [local, isolated] });
+  const switched: string[] = [];
+  let restored = 0;
+  let refreshedBackup = 0;
+  context.antigravitySwitch = {
+    switchAccount: target => {
+      switched.push(target.id);
+      return Promise.resolve({ hubRestarted: true, backedUp: true });
+    },
+    restoreBackup: () => {
+      restored++;
+      return Promise.resolve({ hubRestarted: true });
+    },
+    refreshBackup: () => {
+      refreshedBackup++;
+      return Promise.resolve();
+    }
+  };
+  const handlers = createHandlers(context);
+  await assert.rejects(handlers.switchAntigravityAccount('antigravity:local'), /account_not_found/);
+  await assert.rejects(handlers.switchAntigravityAccount(''), /invalid_argument/);
+
+  assert.deepEqual(await handlers.switchAntigravityAccount(isolated.id), { status: 'switched', hubRestarted: true });
+  assert.deepEqual(switched, [isolated.id]);
+  assert.equal(refreshedBackup, 1);
+  assert.ok(log.dialogs.includes('switchAntigravityConfirm'));
+  assert.equal(log.refreshed.at(-1), 'antigravity');
+
+  assert.deepEqual(await handlers.restoreAntigravityAccount(), { status: 'restored', hubRestarted: true });
+  assert.equal(restored, 1);
+  assert.equal(refreshedBackup, 2);
+  assert.ok(log.dialogs.includes('restoreAntigravityConfirm'));
+
+  const declined = await harness(t, { confirm: false });
+  await declined.context.service.updateSettings({ accounts: [local, isolated] });
+  let declinedCalls = 0;
+  declined.context.antigravitySwitch = {
+    switchAccount: () => {
+      declinedCalls++;
+      return Promise.resolve({ hubRestarted: true });
+    },
+    restoreBackup: () => {
+      declinedCalls++;
+      return Promise.resolve({ hubRestarted: true });
+    }
+  };
+  const declinedHandlers = createHandlers(declined.context);
+  assert.deepEqual(await declinedHandlers.switchAntigravityAccount(isolated.id), { status: 'canceled' });
+  assert.deepEqual(await declinedHandlers.restoreAntigravityAccount(), { status: 'canceled' });
+  assert.equal(declinedCalls, 0);
+});
+
+test('continuing work onto an isolated Antigravity account asks confirmation before switching the OS login', async t => {
+  const { context, log, home } = await harness(t, { confirm: false });
+  const isolated = account({
+    id: 'antigravity:profile-2',
+    providerId: 'antigravity',
+    configDir: path.join(home, '.antigravity-2'),
+    primary: false
+  });
+  await context.service.updateSettings({ accounts: [isolated] });
+  const suggestion = {
+    id: 'low:antigravity:local',
+    kind: 'low' as const,
+    providerId: 'antigravity' as const,
+    accountId: 'antigravity:local',
+    remainingPercent: 5,
+    target: { providerId: 'antigravity' as const, accountId: isolated.id },
+    projectDir: home,
+    sessionProvider: 'antigravity' as const
+  };
+  let backupRefreshed = 0;
+  context.antigravitySwitch = {
+    switchAccount: () => Promise.resolve({ hubRestarted: true }),
+    restoreBackup: () => Promise.resolve({ hubRestarted: true }),
+    refreshBackup: () => {
+      backupRefreshed++;
+      return Promise.resolve();
+    }
+  };
+  context.view = () => ({ ...context.service.snapshot(), suggestions: [suggestion] });
+  const handlers = createHandlers(context);
+  assert.deepEqual(await handlers.continueWork(suggestion.id), { status: 'canceled' });
+  assert.deepEqual(log.accepted, [], 'declining the Antigravity login switch stops continuation');
+
+  context.confirm = () => Promise.resolve(true);
+  context.continuity.accept = id => {
+    log.accepted.push(id);
+    return Promise.resolve({ to: 'antigravity', accountId: isolated.id, resumed: false, mode: 'app', switchedAntigravity: true });
+  };
+  const result = await handlers.continueWork(suggestion.id);
+  assert.equal(result.status, 'continued');
+  assert.equal(result.switchedAntigravity, true);
+  assert.equal(backupRefreshed, 1);
+  assert.equal(log.refreshed.at(-1), 'antigravity');
+});

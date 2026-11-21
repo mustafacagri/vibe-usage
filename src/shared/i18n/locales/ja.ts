@@ -387,5 +387,20 @@ export const ja: Messages = {
     'ダウンロードしたファイルを開き、Vibe Usage をアプリケーションにドラッグしてください。Apple Developer ID で署名されたアプリだけが自動でアップデートできます。',
   updateUnsupportedUnpackaged: '開発ビルドはリポジトリからアップデートします。',
   updateUnsupportedPlatform: 'リリースページから新しいバージョンをダウンロードしてください。',
-  accountNotSignedIn: '現在サインインしていません。'
+  accountNotSignedIn: '現在サインインしていません。',
+  error_antigravity_switch_failed: 'アクティブな Antigravity のサインインを切り替えられませんでした。',
+  error_antigravity_no_backup: 'このデバイスにバックアップ済みの Antigravity サインインが見つかりませんでした。',
+  switchAccountBtn: '{name} に切り替え',
+  switchAntigravityBtn: 'アカウントを切り替え',
+  switchAntigravityConfirm:
+    'このデバイスのアクティブな Antigravity サインインを置き換えますか？ 後で戻せるよう現在のサインインを先にバックアップします。ローカルの agy --hub が再起動します。反映するには Antigravity IDE を再起動してください（実行中のセッションは前のサインインをメモリに保持します）。',
+  antigravitySwitched:
+    'アクティブな Antigravity サインインを {name} に切り替え、agy --hub を再起動しました。反映するには Antigravity IDE を再起動してください（実行中のセッションは前のサインインをメモリに保持します）。',
+  restoreAntigravityBtn: '以前のサインインを復元',
+  restoreAntigravityConfirm:
+    'このデバイスにバックアップされた Antigravity サインインを復元しますか？ ローカルの agy --hub が再起動します。反映するには Antigravity IDE を再起動してください。',
+  antigravityRestored:
+    '以前の Antigravity サインインを復元し、agy --hub を再起動しました。反映するには Antigravity IDE を再起動してください。',
+  continuedAntigravitySwitched:
+    'アクティブな Antigravity サインインを {target} に切り替え、agy --hub を再起動して VIBE_HANDOVER.md を作成しました。反映するには Antigravity IDE を再起動してください。'
 };

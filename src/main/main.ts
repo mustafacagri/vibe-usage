@@ -31,6 +31,7 @@ import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip,
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
 import { renewAntigravitySignIn } from '../core/antigravity-renew.ts';
+import { hasAntigravityBackup, restoreAntigravityBackup, switchAntigravityAccount } from '../core/antigravity-switch.ts';
 import { renewClaudeSignIn } from '../core/claude-renew.ts';
 import { loginShellPath, mergePath } from '../core/shell-path.ts';
 import { MEASUREMENTS_FILE } from '../core/measurements.ts';
@@ -383,6 +384,11 @@ async function start(): Promise<void> {
   let trayDrawn: string | undefined;
   let update: UpdateInfo | undefined;
   let serviceIssues: ServiceIssue[] = [];
+  let antigravityBackup = false;
+  const refreshAntigravityBackup = async (): Promise<void> => {
+    antigravityBackup = await hasAntigravityBackup();
+    send(view());
+  };
   const unsupported = await updateSupport({ packaged: app.isPackaged, platform: process.platform, execPath: process.execPath });
   const installer = createInstaller(unsupported ?? releaseUpdater(), () => {
     send(view());
@@ -399,6 +405,7 @@ async function start(): Promise<void> {
     ...history.annotate(service.snapshot()),
     appVersion: app.getVersion(),
     suggestions: continuity.suggestions(),
+    ...(antigravityBackup ? { antigravityBackup: true } : {}),
     ...(serviceIssues.length ? { serviceIssues } : {}),
     ...(update ? { update, updateInstall: installer.state() } : {})
   });
@@ -688,7 +695,12 @@ async function start(): Promise<void> {
       return response === 0;
     },
     setTimeout,
-    watchFolder
+    watchFolder,
+    antigravitySwitch: {
+      switchAccount: account => switchAntigravityAccount(account),
+      restoreBackup: () => restoreAntigravityBackup(),
+      refreshBackup: refreshAntigravityBackup
+    }
   });
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(`${IPC_PREFIX}${channel}`, (event, ...args: unknown[]) =>
@@ -732,6 +744,7 @@ async function start(): Promise<void> {
   });
   await win.loadFile(HTML);
   if (!openedAtLogin()) show(win);
+  void refreshAntigravityBackup().catch(() => undefined);
   checkUpdates();
   checkStatus();
   schedule();

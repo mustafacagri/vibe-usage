@@ -396,5 +396,19 @@ export const pt: Messages = {
     'Abra o arquivo baixado e arraste o Vibe Usage para Aplicativos; só um app assinado com um Apple Developer ID se atualiza sozinho.',
   updateUnsupportedUnpackaged: 'Uma versão de desenvolvimento é atualizada a partir do repositório.',
   updateUnsupportedPlatform: 'Baixe a nova versão na página de versões.',
-  accountNotSignedIn: 'Sem login no momento.'
+  accountNotSignedIn: 'Sem login no momento.',
+  error_antigravity_switch_failed: 'Não foi possível trocar o login ativo do Antigravity.',
+  error_antigravity_no_backup: 'Nenhum backup de login do Antigravity foi encontrado neste dispositivo.',
+  switchAccountBtn: 'Trocar para {name}',
+  switchAntigravityBtn: 'Trocar conta',
+  switchAntigravityConfirm:
+    'Substituir o login ativo do Antigravity neste dispositivo? Seu login atual é salvo em backup primeiro para você restaurá-lo depois. O serviço local agy --hub será reiniciado; reinicie o Antigravity IDE para aplicar (sessões em execução mantêm o login anterior na memória).',
+  antigravitySwitched:
+    'Login ativo do Antigravity trocado para {name} e agy --hub reiniciado. Reinicie o Antigravity IDE para aplicar (sessões em execução mantêm o login anterior na memória).',
+  restoreAntigravityBtn: 'Restaurar login anterior',
+  restoreAntigravityConfirm:
+    'Restaurar o backup de login do Antigravity neste dispositivo? O serviço local agy --hub será reiniciado; reinicie o Antigravity IDE para aplicar.',
+  antigravityRestored: 'Login anterior do Antigravity restaurado e agy --hub reiniciado. Reinicie o Antigravity IDE para aplicar.',
+  continuedAntigravitySwitched:
+    'Login ativo do Antigravity trocado para {target}, agy --hub reiniciado e VIBE_HANDOVER.md gravado. Reinicie o Antigravity IDE para aplicar.'
 };

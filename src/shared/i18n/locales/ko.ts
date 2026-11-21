@@ -382,5 +382,19 @@ export const ko: Messages = {
     '다운로드한 파일을 열고 Vibe Usage를 응용 프로그램으로 끌어 놓으세요. Apple Developer ID로 서명된 앱만 스스로 업데이트합니다.',
   updateUnsupportedUnpackaged: '개발 빌드는 저장소에서 업데이트합니다.',
   updateUnsupportedPlatform: '릴리스 페이지에서 새 버전을 다운로드하세요.',
-  accountNotSignedIn: '현재 로그인되어 있지 않습니다.'
+  accountNotSignedIn: '현재 로그인되어 있지 않습니다.',
+  error_antigravity_switch_failed: '활성 Antigravity 로그인을 전환하지 못했습니다.',
+  error_antigravity_no_backup: '이 기기에서 백업된 Antigravity 로그인을 찾을 수 없습니다.',
+  switchAccountBtn: '{name} 계정으로 전환',
+  switchAntigravityBtn: '계정 전환',
+  switchAntigravityConfirm:
+    '이 기기의 활성 Antigravity 로그인을 교체할까요? 나중에 복원할 수 있도록 현재 로그인을 먼저 백업합니다. 로컬 agy --hub 서비스가 다시 시작되며, 변경 사항을 적용하려면 Antigravity IDE를 다시 시작해야 합니다(실행 중인 세션은 이전 로그인을 메모리에 유지합니다).',
+  antigravitySwitched:
+    '활성 Antigravity 로그인을 {name} 계정으로 전환하고 agy --hub를 다시 시작했습니다. 적용하려면 Antigravity IDE를 다시 시작하세요(실행 중인 세션은 이전 로그인을 메모리에 유지합니다).',
+  restoreAntigravityBtn: '이전 로그인 복원',
+  restoreAntigravityConfirm:
+    '이 기기에 백업된 Antigravity 로그인을 복원할까요? 로컬 agy --hub 서비스가 다시 시작되며, 적용하려면 Antigravity IDE를 다시 시작해야 합니다.',
+  antigravityRestored: '이전 Antigravity 로그인을 복원하고 agy --hub를 다시 시작했습니다. 적용하려면 Antigravity IDE를 다시 시작하세요.',
+  continuedAntigravitySwitched:
+    '활성 Antigravity 로그인을 {target} 계정으로 전환하고 agy --hub를 다시 시작했으며 VIBE_HANDOVER.md를 작성했습니다. 적용하려면 Antigravity IDE를 다시 시작하세요.'
 };

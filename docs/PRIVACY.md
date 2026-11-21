@@ -17,6 +17,15 @@ account runs `agy --gemini_dir=<profile>` with `WSL_INTEROP=1` so `agy` uses its
 profile directory on disk rather than the OS keyring. Quota requests use the existing access token at the provider's
 allowed endpoint.
 
+Switching the active Antigravity sign-in is strictly manual and requires explicit confirmation. When you choose to
+switch to an isolated Antigravity profile, Vibe Usage runs a platform helper script that copies the existing OS-keyring
+entry (`gemini:antigravity` in Windows Credential Manager; service `gemini`, account `antigravity` in macOS Keychain)
+into a separate OS-keyring backup entry (`vibe-usage:antigravity-backup` on Windows; service `vibe-usage`, account
+`antigravity-backup` on macOS) before replacing the active entry, then restarts your user's local `agy --hub` process.
+Token bytes are never written to `settings.json`, logs, or Node.js memory during switch or restore, and you can restore
+the previous sign-in at any time. Running Antigravity IDE sessions keep their previous sign-in in memory until
+restarted.
+
 Anthropic, Cursor, GitHub Copilot and isolated Antigravity quota requests verify TLS. The Copilot request carries the
 GitHub token the GitHub CLI would use (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`), only to `api.github.com`; the
 token is not stored. Codex uses its local CLI. The active Antigravity sign-in uses its local `agy --hub` service after

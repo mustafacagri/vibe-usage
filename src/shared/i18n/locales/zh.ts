@@ -369,5 +369,18 @@ export const zh: Messages = {
   updateUnsupportedUnsigned: '打开下载的文件，把 Vibe Usage 拖到“应用程序”；只有使用 Apple Developer ID 签名的应用才能自行更新。',
   updateUnsupportedUnpackaged: '开发版本请从代码仓库更新。',
   updateUnsupportedPlatform: '请从发布页面下载新版本。',
-  accountNotSignedIn: '当前未登录。'
+  accountNotSignedIn: '当前未登录。',
+  error_antigravity_switch_failed: '无法切换当前活动的 Antigravity 登录。',
+  error_antigravity_no_backup: '在此设备上未找到备份的 Antigravity 登录。',
+  switchAccountBtn: '切换到 {name}',
+  switchAntigravityBtn: '切换账号',
+  switchAntigravityConfirm:
+    '替换此设备上当前活动的 Antigravity 登录？系统会先备份当前登录以便稍后恢复。本地 agy --hub 服务将重启；请重启 Antigravity IDE 以生效（正在运行的会话会在内存中保留先前的登录）。',
+  antigravitySwitched:
+    '已将活动的 Antigravity 登录切换到 {name} 并重启了 agy --hub。请重启 Antigravity IDE 以生效（正在运行的会话会在内存中保留先前的登录）。',
+  restoreAntigravityBtn: '恢复先前的登录',
+  restoreAntigravityConfirm: '恢复此设备上备份的 Antigravity 登录？本地 agy --hub 服务将重启；请重启 Antigravity IDE 以生效。',
+  antigravityRestored: '已恢复先前的 Antigravity 登录并重启了 agy --hub。请重启 Antigravity IDE 以生效。',
+  continuedAntigravitySwitched:
+    '已将活动的 Antigravity 登录切换到 {target}、重启了 agy --hub 并写入 VIBE_HANDOVER.md。请重启 Antigravity IDE 以生效。'
 };

@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { claudeLimitStop, claudeProjectDir, latestClaudeSession, readSession, RECENT_TURNS, sessionSources } from '../src/core/sessions.ts';
+import {
+  claudeLimitStop,
+  claudeProjectDir,
+  latestAntigravitySession,
+  latestClaudeSession,
+  readSession,
+  RECENT_TURNS,
+  sessionSources
+} from '../src/core/sessions.ts';
 import test from 'node:test';
 import zlib from 'node:zlib';
 import { collectHandoverContext, listSessions } from '../src/core/handover.ts';
@@ -336,6 +344,46 @@ test('Antigravity sessions require an exact workspace match and report the model
   const exact = session(sessions, s => s.id === 'exact');
   assert.deepEqual([exact.title, exact.model], ['Task exact', 'Gemini 3.8 Flash (High)']);
   assert.equal(session(sessions, s => s.id === 'nomodel').model, '', 'an unknown model stays unknown');
+});
+
+test('Antigravity sessions are discovered across current app/CLI folders and isolated profiles', async t => {
+  const home = await tempDir(t, 'vibe-ag-roots-home-');
+  const project = await tempDir(t, 'vibe-ag-roots-proj-');
+  const writeRoot = async (root: string, id: string, prompt: string, model: string, mtimeOffsetMs: number) => {
+    const convDir = path.join(root, 'conversations');
+    const logDir = path.join(root, 'brain', id, '.system_generated', 'logs');
+    await fs.mkdir(convDir, { recursive: true });
+    await fs.mkdir(logDir, { recursive: true });
+    const dbFile = path.join(convDir, `${id}.db`);
+    writeAntigravityDb(dbFile, project, model);
+    await fs.writeFile(path.join(logDir, 'transcript.jsonl'), `${JSON.stringify({ type: 'USER_INPUT', content: prompt })}\n`);
+    const when = new Date(Date.parse('2026-10-18T12:00:00Z') + mtimeOffsetMs);
+    await fs.utimes(dbFile, when, when);
+  };
+  await writeRoot(path.join(home, '.gemini', 'antigravity'), 'ag-app', 'App task', 'Gemini 3.8 Pro', 1000);
+  const isolatedDir = path.join(home, '.antigravity-2');
+  await writeRoot(path.join(isolatedDir, 'antigravity-cli'), 'ag-iso', 'Isolated CLI task', 'Gemini 3.8 Flash', 2000);
+
+  const accounts = [
+    account({ id: 'antigravity:local', providerId: 'antigravity' }),
+    account({ id: 'antigravity:iso', providerId: 'antigravity', configDir: isolatedDir, primary: false })
+  ];
+  const listed = await listSessions('antigravity', project, sessionSources(home, accounts));
+  assert.deepEqual(
+    listed.map(s => [s.id, s.source.accountId, s.title]),
+    [
+      ['ag-iso', 'antigravity:iso', 'Isolated CLI task'],
+      ['ag-app', 'antigravity:local', 'App task']
+    ]
+  );
+
+  const latestLocal = latestAntigravitySession(home);
+  assert.ok(latestLocal);
+  assert.equal(latestLocal.sessionId, 'ag-app');
+  assert.equal(latestLocal.model, 'Gemini 3.8 Pro');
+  const latestIso = latestAntigravitySession(home, isolatedDir);
+  assert.equal(latestIso?.sessionId, 'ag-iso');
+  assert.equal(latestAntigravitySession(home, isolatedDir, { projectDir: project, sessionId: 'missing' }), null);
 });
 
 test('a path that is not an existing folder lists no sessions', async t => {
