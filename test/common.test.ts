@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
+import type { ClientRequest, IncomingMessage } from 'node:http';
 import path from 'node:path';
 import test from 'node:test';
 import { ProviderError } from '../src/core/errors.ts';
@@ -8,11 +10,14 @@ import {
   findBinary,
   findCommand,
   isExpired,
+  postJson,
   processStartError,
+  QUOTA_ENDPOINTS,
   readCredentialFile,
   runProcess,
   unpackedPath,
-  windowsPowerShell
+  windowsPowerShell,
+  type QuotaEndpoint
 } from '../src/providers/common.ts';
 import { tempDir } from './helpers/fixtures.ts';
 
@@ -193,4 +198,37 @@ test('expiry includes a safety margin; Windows paths and PowerShell are fixed', 
   assert.equal(unpackedPath('C:\\app\\resources\\app.asar\\build\\x.ps1'), 'C:\\app\\resources\\app.asar.unpacked\\build\\x.ps1');
   assert.match(windowsPowerShell({ SystemRoot: 'D:\\Windows' }), /^D:\\Windows\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/);
   assert.throws(() => windowsPowerShell({ VIBE_POWERSHELL_BINARY: 'powershell' }), code('invalid_binary'));
+});
+
+test('postJson enforces endpoint allow-list, TLS verification and parses JSON responses', async () => {
+  await assert.rejects(postJson('https://evil.example/api' as QuotaEndpoint), code('endpoint_not_allowed'));
+  let capturedBody = '';
+  let capturedRejectUnauthorized: boolean | undefined;
+  const fakeRequest = (
+    url: URL,
+    options: { rejectUnauthorized?: boolean | undefined },
+    callback: (res: IncomingMessage) => void
+  ): ClientRequest => {
+    assert.equal(url.href, QUOTA_ENDPOINTS.antigravityLoadCodeAssist);
+    capturedRejectUnauthorized = options.rejectUnauthorized;
+    const req = new EventEmitter();
+    return Object.assign(req, {
+      destroy: () => req,
+      end: (chunk?: string) => {
+        capturedBody = chunk ?? '';
+        const res = new EventEmitter();
+        callback(Object.assign(res, { statusCode: 200, headers: {}, destroy: () => res }) as unknown as IncomingMessage);
+        res.emit('data', Buffer.from('{"cloudaicompanionProject":"p-1"}'));
+        res.emit('end');
+        return req;
+      }
+    }) as unknown as ClientRequest;
+  };
+  const answer = await postJson(QUOTA_ENDPOINTS.antigravityLoadCodeAssist, {
+    body: { hello: 'world' },
+    requestImpl: fakeRequest
+  });
+  assert.deepEqual(answer, { cloudaicompanionProject: 'p-1' });
+  assert.equal(capturedBody, '{"hello":"world"}');
+  assert.equal(capturedRejectUnauthorized, true);
 });

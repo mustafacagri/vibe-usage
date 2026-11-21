@@ -30,6 +30,7 @@ import { removeAbandonedWrites } from '../core/files.ts';
 import { createQuotaWatch, describeAlert, describeNotice, trayTool, trayTooltip, type QuotaAlert } from '../core/glance.ts';
 import { createHistory } from '../core/history.ts';
 import { createTokenUsage } from '../core/token-usage.ts';
+import { renewAntigravitySignIn } from '../core/antigravity-renew.ts';
 import { renewClaudeSignIn } from '../core/claude-renew.ts';
 import { loginShellPath, mergePath } from '../core/shell-path.ts';
 import { MEASUREMENTS_FILE } from '../core/measurements.ts';
@@ -346,7 +347,10 @@ async function start(): Promise<void> {
     },
     settingsPath: settingsPath(dataDir),
     measurementsPath: path.join(dataDir, MEASUREMENTS_FILE),
-    renewSignIn: { claude: account => renewClaudeSignIn(account, { dataDir, home: homeDir }) }
+    renewSignIn: {
+      claude: account => renewClaudeSignIn(account, { dataDir, home: homeDir }),
+      antigravity: account => renewAntigravitySignIn(account)
+    }
   });
   const history = await createHistory({ dataDir });
   const tokenUsage = await createTokenUsage({ dataDir, homeDir });

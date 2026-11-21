@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
+import { ProviderError } from '../src/core/errors.ts';
 import {
   antigravityAccountId,
+  antigravityProfile,
+  antigravityProfileFolders,
+  antigravityTokenPath,
+  createAntigravityProfileFolder,
   createAntigravityProvider,
+  isSignedInAntigravityProfile,
+  parseAntigravityTokenDocument,
   type LanguageServer,
   type RequestLocalJson
 } from '../src/providers/antigravity.ts';
-import type { RunProcess } from '../src/providers/common.ts';
-import { account, windowsOf } from './helpers/fixtures.ts';
+import { QUOTA_ENDPOINTS, type PostJson, type RunProcess } from '../src/providers/common.ts';
+import { account, tempDir, windowsOf } from './helpers/fixtures.ts';
 
 const server = (pid: number, csrfToken: string, ports: number[]): LanguageServer => ({
   pid,
@@ -200,4 +209,92 @@ test('identity lookup continues on the next port', async () => {
   const windows = windowsOf(await adapter.fetch(emailAccount('dev@test.com')));
   assert.equal(windows.length, 1);
   assert.equal(windows[0]?.remainingPercent, 80);
+});
+
+test('isolated Antigravity profiles discover, read quota from cloudcode-pa and stay isolated from closed local servers', async t => {
+  const home = await tempDir(t, 'vibe-agy-profiles-');
+  // Sibling backup folders are ignored; numbered profile folders are created and reused when free.
+  await fs.mkdir(path.join(home, '.antigravity-backup'));
+  const dir2 = await createAntigravityProfileFolder(home, () => Promise.resolve(true));
+  assert.equal(path.basename(dir2), '.antigravity-2');
+  assert.equal(await isSignedInAntigravityProfile(dir2), false);
+
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  const tokenDoc = {
+    token: {
+      access_token: 'fixture-access-token',
+      refresh_token: 'fixture-refresh-token',
+      expiry: '2026-10-20T13:00:00Z'
+    },
+    id_token_email: 'Work@Example.com',
+    auth_method: 'consumer'
+  };
+  await fs.writeFile(antigravityTokenPath(dir2), JSON.stringify(tokenDoc));
+  assert.equal(await isSignedInAntigravityProfile(dir2), true);
+  assert.equal(parseAntigravityTokenDocument(tokenDoc)?.email, 'work@example.com');
+  assert.deepEqual(await antigravityProfileFolders(home), [dir2]);
+
+  const dir3 = await createAntigravityProfileFolder(home, async d => !(await isSignedInAntigravityProfile(d)));
+  assert.equal(path.basename(dir3), '.antigravity-3');
+
+  const calls: { endpoint: string; body: unknown }[] = [];
+  const postJson: PostJson = (endpoint, options) => {
+    calls.push({ endpoint, body: options?.body });
+    if (endpoint === QUOTA_ENDPOINTS.antigravityLoadCodeAssist)
+      return Promise.resolve({ cloudaicompanionProject: 'proj-123', paidTier: { id: 'g1-pro-tier', name: 'Pro' } });
+    if (endpoint === QUOTA_ENDPOINTS.antigravityQuotaSummary)
+      return Promise.resolve({
+        groups: [group('gemini', 'Gemini Models', [bucket('gemini-5h', '5h', 0.72), bucket('gemini-weekly', 'weekly', 0.88)])]
+      });
+    return Promise.reject(new Error('unexpected endpoint'));
+  };
+
+  // Even when the local app is closed, isolated profiles still discover and fetch quota.
+  const adapter = createAntigravityProvider({
+    home,
+    clock: () => now,
+    postJson,
+    discoverAntigravityServers: () => Promise.reject(new ProviderError('app_closed'))
+  });
+  const discovery = await adapter.discover();
+  assert.ok(!Array.isArray(discovery) && discovery.kind === 'complete');
+  assert.equal(discovery.accounts.length, 1);
+  const [discovered] = discovery.accounts;
+  assert.ok(discovered);
+  assert.equal(discovered.configDir, dir2);
+  assert.equal(discovered.label, 'work@example.com');
+
+  const profileAccount = antigravityProfile(dir2, 'work@example.com');
+  const result = await adapter.fetch(profileAccount);
+  assert.equal(result.plan, 'pro');
+  assert.equal(result.signedInAs, 'work@example.com');
+  assert.equal(result.windows.length, 2);
+  const [firstWindow] = result.windows;
+  assert.ok(firstWindow);
+  assert.equal(firstWindow.remainingPercent, 72);
+  assert.equal(firstWindow.detailKey, undefined, 'cloud readings do not claim local service');
+  assert.deepEqual(
+    calls.map(c => c.endpoint),
+    [QUOTA_ENDPOINTS.antigravityLoadCodeAssist, QUOTA_ENDPOINTS.antigravityQuotaSummary]
+  );
+
+  // Deduplicates a local server running the same e-mail as an isolated profile.
+  const mixed = createAntigravityProvider({
+    home,
+    clock: () => now,
+    postJson,
+    discoverAntigravityServers: () => Promise.resolve([server(501, 'tok', [5101])]),
+    requestLocalJson: () => Promise.resolve(status('work@example.com'))
+  });
+  const mixedDiscovery = await mixed.discover();
+  assert.ok(!Array.isArray(mixedDiscovery) && mixedDiscovery.kind === 'complete');
+  assert.equal(mixedDiscovery.accounts.length, 1, 'does not duplicate the same e-mail across local and isolated');
+
+  // Expired access tokens fail fast with auth_expired so background renewal can run.
+  const expired = createAntigravityProvider({
+    home,
+    clock: () => Date.parse('2026-10-20T13:05:00Z'),
+    postJson
+  });
+  await assert.rejects(expired.fetch(profileAccount), { code: 'auth_expired' });
 });

@@ -1,6 +1,6 @@
 // The contract between the renderer and the main process. Each method is invoked on the
 // channel `vibe:<name>`; results travel in an envelope so that error codes survive the hop.
-import type { Auto, ProfileProviderId, ProviderId } from './catalog.ts';
+import type { AddableProviderId, Auto, ProviderId } from './catalog.ts';
 import type { AccountTokens, Diagnostics, ErrorPayload, PassedOver, QuietHours, Settings, Snapshot, TransitionRecord } from './types.ts';
 
 export const IPC_PREFIX = 'vibe:';
@@ -125,7 +125,7 @@ export interface VibeMethods {
   // Signs in the given account's profile, or the tool's default profile.
   signIn(providerId: ProviderId, accountId?: string): void;
   // Adds an account in a new profile folder and opens the tool's sign-in for it.
-  addAccount(providerId: ProfileProviderId): Snapshot;
+  addAccount(providerId: AddableProviderId): Snapshot;
   launchClaude(accountId: string): Canceled | { status: 'launched' };
   getModels(): ModelCatalog;
   previewSmartLaunch(): SmartLaunchPreview;

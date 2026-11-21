@@ -371,3 +371,32 @@ test('on macOS and Windows, Cursor signs in through the Agent CLI when installed
   const script = await fs.readFile(macCli[3] ?? '', 'utf8');
   assert.ok(script.endsWith(`exec '${binary}' 'login'\n`));
 });
+
+test('an isolated Antigravity profile signs in via agy --gemini_dir with WSL_INTEROP=1', async t => {
+  const binDir = await tempDir(t, 'vibe-agy-bin-');
+  const binary = path.join(binDir, process.platform === 'win32' ? 'agy.exe' : 'agy');
+  await fs.writeFile(binary, '');
+  process.env.VIBE_AGY_BINARY = binary;
+  t.after(() => {
+    delete process.env.VIBE_AGY_BINARY;
+  });
+  const dataDir = await tempDir(t, 'vibe-agy-data-');
+  const configDir = await tempDir(t, 'vibe-agy-profile-');
+  const calls: string[][] = [];
+  const envs: (NodeJS.ProcessEnv | undefined)[] = [];
+  await openSignIn({
+    providerId: 'antigravity',
+    account: account({ id: 'antigravity:profile-1', providerId: 'antigravity', configDir }),
+    dataDir,
+    cwd: dataDir,
+    platform: 'win32',
+    spawnProcess: (command, args, options) => {
+      envs.push(options.env);
+      return fakeSpawn(calls)(command, args, options);
+    }
+  });
+  const call = calls[0] ?? [];
+  assert.equal(call[call.indexOf('-Executable') + 1], binary);
+  assert.equal(Buffer.from(call[call.indexOf('-ArgumentsBase64') + 1] ?? '', 'base64').toString('utf8'), `--gemini_dir=${configDir}`);
+  assert.equal(envs[0]?.WSL_INTEROP, '1');
+});

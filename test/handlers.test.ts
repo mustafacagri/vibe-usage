@@ -628,3 +628,21 @@ test('an exported settings file saved again with a byte order mark still imports
   assert.deepEqual(await handlers.importSettings(), { status: 'imported' });
   assert.equal(context.service.snapshot().settings.lowQuotaPercent, 35);
 });
+
+test('adding an Antigravity account creates an isolated profile folder and runs agy with file-storage isolation', async t => {
+  const binary = path.join(await tempDir(t, 'vibe-agy-bin-'), 'agy');
+  await fs.writeFile(binary, '');
+  process.env.VIBE_AGY_BINARY = binary;
+  t.after(() => {
+    delete process.env.VIBE_AGY_BINARY;
+  });
+  const { context, log, home, watches } = await harness(t);
+  const handlers = createHandlers(context);
+  const added = (await handlers.addAccount('antigravity')).settings.accounts.find(a => a.providerId === 'antigravity');
+  const folder = path.join(home, '.antigravity-2');
+  assert.deepEqual([added?.configDir, added?.labelKey, added?.origin], [folder, 'newAccount', 'pending']);
+  assert.equal(watches[0]?.dir, path.join(folder, 'antigravity-cli'));
+  const content = await fs.readFile(log.spawned[0]?.at(-1) ?? '', 'utf8');
+  assert.ok(content.includes("export WSL_INTEROP='1'"));
+  assert.ok(content.includes(`exec '${binary}' '--gemini_dir=${folder}'`));
+});

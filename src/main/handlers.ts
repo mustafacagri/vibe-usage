@@ -1,6 +1,7 @@
 // What each IPC call does. Everything Electron-specific (windows, dialogs, timers) arrives
 // through `MainContext`, so the handlers run and are tested without Electron.
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import type { Continuity } from '../core/continuity.ts';
 import type { Installer } from '../core/updater.ts';
 import { collectDiagnostics, renderDiagnosticsReport, type ToolProbe } from '../core/diagnostics.ts';
@@ -15,12 +16,18 @@ import { discoverModels, refreshCursorModels } from '../core/models.ts';
 import { sessionSources } from '../core/sessions.ts';
 import type { LaunchWarning } from '../core/selection.ts';
 import { SIGN_IN_WINDOW_MS, type RefreshOptions, type Service } from '../core/service.ts';
+import {
+  ANTIGRAVITY_CLI_SUBDIR,
+  antigravityProfile,
+  createAntigravityProfileFolder,
+  isSignedInAntigravityProfile
+} from '../providers/antigravity.ts';
 import { claudeProfile, isSignedInProfile } from '../providers/claude.ts';
 import { codexProfile, isSignedInCodexHome } from '../providers/codex.ts';
 import { createProfileFolder } from '../providers/profiles.ts';
 import type { DiscoveredAccount } from '../providers/types.ts';
 import { HEALTHY_STATUSES } from '../shared/account-state.ts';
-import { APP_NAME, APP_SLUG, AUTO, isProfileProvider, isProviderId, type ProfileProviderId, type ProviderId } from '../shared/catalog.ts';
+import { APP_NAME, APP_SLUG, AUTO, canAddAccount, isProviderId, type AddableProviderId, type ProviderId } from '../shared/catalog.ts';
 import type { MessageKey } from '../shared/i18n/index.ts';
 import type { Channel, HandoverRequest, LoginItem, SessionSourceRef, SettingsPatch, VibeMethods } from '../shared/ipc.ts';
 import type { Account, Settings, Snapshot } from '../shared/types.ts';
@@ -33,15 +40,36 @@ const MAX_IMPORT_BYTES = 1024 * 1024;
 const EXPORT_FILE_NAME = `${APP_SLUG}-settings.json`;
 const DIAGNOSTICS_FILE_NAME = `${APP_SLUG}-diagnostics.md`;
 
-// What a profile folder holds: its account, and whether it is signed in.
+// What a profile folder holds: how to create it, its account, and whether it is signed in.
 const PROFILES: Readonly<
   Record<
-    ProfileProviderId,
-    { account: (configDir: string, home: string) => DiscoveredAccount; isSignedIn: (configDir: string) => Promise<boolean> }
+    AddableProviderId,
+    {
+      createFolder: (home: string, isFree: (dir: string) => Promise<boolean>) => Promise<string>;
+      account: (configDir: string, home: string) => DiscoveredAccount;
+      isSignedIn: (configDir: string) => Promise<boolean>;
+      watchDir: (configDir: string) => string;
+    }
   >
 > = {
-  claude: { account: claudeProfile, isSignedIn: dir => isSignedInProfile(dir) },
-  codex: { account: (configDir, home) => codexProfile(configDir, home), isSignedIn: isSignedInCodexHome }
+  claude: {
+    createFolder: (home, isFree) => createProfileFolder('claude', home, isFree),
+    account: claudeProfile,
+    isSignedIn: dir => isSignedInProfile(dir),
+    watchDir: dir => dir
+  },
+  codex: {
+    createFolder: (home, isFree) => createProfileFolder('codex', home, isFree),
+    account: (configDir, home) => codexProfile(configDir, home),
+    isSignedIn: isSignedInCodexHome,
+    watchDir: dir => dir
+  },
+  antigravity: {
+    createFolder: createAntigravityProfileFolder,
+    account: configDir => antigravityProfile(configDir),
+    isSignedIn: isSignedInAntigravityProfile,
+    watchDir: dir => path.join(dir, ANTIGRAVITY_CLI_SUBDIR)
+  }
 };
 
 export interface MainContext {
@@ -140,7 +168,8 @@ export function createHandlers(context: MainContext): Handlers {
     if (!account?.configDir) return;
     const { id } = account;
     await service.signInOpened(id);
-    const stop = context.watchFolder(account.configDir, () => {
+    const watchDir = canAddAccount(providerId) ? PROFILES[providerId].watchDir(account.configDir) : account.configDir;
+    const stop = context.watchFolder(watchDir, () => {
       context.refresh(providerId, { fresh: true }).then(
         snapshot => {
           if (isSignedIn(snapshot, id)) stop();
@@ -266,7 +295,7 @@ export function createHandlers(context: MainContext): Handlers {
     // "New account" until the sign-in finishes; then its e-mail names it. It stays pending until
     // then, and goes again if its sign-in closes without one.
     async addAccount(providerId) {
-      if (!isProviderId(providerId) || !isProfileProvider(providerId)) throw new AppError('invalid_provider');
+      if (!isProviderId(providerId) || !canAddAccount(providerId)) throw new AppError('invalid_provider');
       const used = new Set(settings().accounts.flatMap(a => (a.configDir ? [pathKey(a.configDir)] : [])));
       // A folder that cannot be inspected is not free: it may hold a sign-in.
       const isFree = async (dir: string): Promise<boolean> =>
@@ -275,7 +304,7 @@ export function createHandlers(context: MainContext): Handlers {
         label: _folderName,
         primary: _primary,
         ...profile
-      } = PROFILES[providerId].account(await createProfileFolder(providerId, homeDir, isFree), homeDir);
+      } = PROFILES[providerId].account(await PROFILES[providerId].createFolder(homeDir, isFree), homeDir);
       await service.addPendingAccount({ ...profile, labelKey: 'newAccount' });
       // A sign-in that could not even be opened (the tool is missing) leaves nothing to wait for.
       await signIn(providerId, enabledAccount(providerId, profile.id)).catch(async (error: unknown) => {

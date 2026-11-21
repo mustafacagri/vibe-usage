@@ -5,16 +5,26 @@ This document describes the current source. Older downloaded releases may behave
 ## Credentials and network access
 
 Vibe Usage reads the tools' existing local sign-ins, including credential documents that can contain both access and
-refresh tokens. The Claude renewal check inspects whether a refresh token is present. It does not implement OAuth
-refresh itself, copy refresh tokens into its settings/history, or send them to a Vibe Usage service. When enabled,
-renewal is delegated to Claude Code through a minimal Haiku request, at most once per account every 30 minutes.
-Quota requests use the existing access token at the provider's allowed endpoint.
+refresh tokens. The renewal checks inspect whether a refresh token is present. Vibe Usage does not implement OAuth
+refresh itself, embed or extract any provider's OAuth client secret, copy refresh tokens into its settings/history, or
+send them to a Vibe Usage service. When enabled, Claude renewal is delegated to Claude Code through a minimal Haiku
+request, at most once per account every 30 minutes. For isolated Antigravity profiles (`~/.antigravity-<n>`), adding an
+account runs `agy --gemini_dir=<profile>` with `WSL_INTEROP=1` so `agy` uses its own file-based token storage
+(`<profile>/antigravity-cli/antigravity-oauth-token`) without reading or modifying Windows Credential Manager
+(`gemini:antigravity`) or macOS Keychain; when an isolated profile's access token expires, renewal is delegated to
+`agy --gemini_dir=<profile> models` (at most once per account every 30 minutes, spending no quota). Note that
+`WSL_INTEROP=1` uses `agy`'s unofficial file-storage fallback, so the token file written by `agy` lives in that private
+profile directory on disk rather than the OS keyring. Quota requests use the existing access token at the provider's
+allowed endpoint.
 
-Anthropic, Cursor and GitHub Copilot quota requests verify TLS. The Copilot request carries the GitHub token the GitHub
-CLI would use (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`), only to `api.github.com`; the token is not stored. Codex uses its local CLI; Antigravity uses its local service after
-process, port and account checks. GitHub release checks can be disabled. Downloading an update and restarting to
-install it are separate user actions. Supported installed builds verify update checksums and publisher signatures;
-unsigned development builds and portable archives keep the release-page route.
+Anthropic, Cursor, GitHub Copilot and isolated Antigravity quota requests verify TLS. The Copilot request carries the
+GitHub token the GitHub CLI would use (`GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`), only to `api.github.com`; the
+token is not stored. Codex uses its local CLI. The active Antigravity sign-in uses its local `agy --hub` service after
+process, port and account checks; isolated Antigravity profiles query `cloudcode-pa.googleapis.com`
+(`:loadCodeAssist` and `:retrieveUserQuotaSummary`) with the profile's access token in memory. GitHub release checks
+can be disabled. Downloading an update and restarting to install it are separate user actions. Supported installed
+builds verify update checksums and publisher signatures; unsigned development builds and portable archives keep the
+release-page route.
 
 Every five minutes the app also reads the public status pages of Claude, OpenAI, Cursor and GitHub (JSON, no sign-in
 or account data sent) to tell when a tool's service has a problem. Settings → General turns this off.

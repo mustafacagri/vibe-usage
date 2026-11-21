@@ -1,10 +1,12 @@
+import fsp from 'node:fs/promises';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import https from 'node:https';
+import os from 'node:os';
 import path from 'node:path';
 import type { Environment } from '../core/environment.ts';
-import { ProviderError } from '../core/errors.ts';
-import { field, isObject, parseJson, type JsonObject } from '../core/files.ts';
-import { hasControlChars, isoFromUnixSeconds, normalizeEmail, normalizeWindow, safeText } from '../core/model.ts';
+import { AppError, ProviderError, systemErrorCode } from '../core/errors.ts';
+import { attemptSync, field, isObject, parseJson, type JsonObject } from '../core/files.ts';
+import { hasControlChars, isoFromUnixSeconds, normalizeEmail, normalizeWindow, safeEmail, safePlan, safeText } from '../core/model.ts';
 import {
   accountId,
   DURATION_MS,
@@ -17,19 +19,29 @@ import {
 } from '../shared/catalog.ts';
 import type { Account, QuotaWindow } from '../shared/types.ts';
 import {
+  isExpired,
+  jwtClaims,
   MAX_RESPONSE_BYTES,
+  postJson as defaultPostJson,
+  QUOTA_ENDPOINTS,
+  readCredentialFile,
   readJsonResponse,
   remainingTimeout,
   runProcess as defaultRunProcess,
   settleOnce,
   sha256Prefix,
   unpackedPath,
+  USER_AGENT,
   windowsPowerShell,
+  type Clock,
+  type PostJson,
   type RunProcess
 } from './common.ts';
+import { isRegularFile } from './profiles.ts';
 import {
   discoverSafely,
   providerReading,
+  type DiscoveredAccount,
   type FetchResult,
   type ProviderAdapter,
   type ProviderReading,
@@ -511,7 +523,135 @@ async function resolveServerEmails(servers: LanguageServer[], read: RequestLocal
 const fulfilled = <T>(results: PromiseSettledResult<T>[]): T[] =>
   results.flatMap(result => (result.status === 'fulfilled' ? [result.value] : []));
 
+export const ANTIGRAVITY_PROFILE_PREFIX = '.antigravity';
+export const ANTIGRAVITY_CLI_SUBDIR = 'antigravity-cli';
+export const ANTIGRAVITY_TOKEN_FILE = 'antigravity-oauth-token';
+// Triggers `agy`'s built-in file-based token storage (`composite_token_storage.go` / `wslDetector`)
+// so isolated profile folders never read or overwrite Windows Credential Manager (`gemini:antigravity`)
+// or macOS Keychain. Verified on Windows with agy 1.5.13 (`--gemini_dir=<profile>`).
+export const ANTIGRAVITY_ISOLATION_ENV = {
+  WSL_INTEROP: '1',
+  AGY_CLI_DISABLE_AUTO_UPDATE: '1'
+} as const;
+const PROFILE_ID_HASH_LENGTH = 12;
+const FIRST_NEW_PROFILE = 2;
+const MAX_NEW_PROFILE = 99;
+const PROFILE_NAME = /^[a-zA-Z0-9_-]+$/;
+const COPY_NAME = /(?:^|[-_])(backup|backups|history|old|archive|copy|bak)(?:[-_]|$)/i;
+const PLAN_TIERS: Readonly<Record<string, string>> = {
+  'free-tier': 'free',
+  'standard-tier': 'standard',
+  'g1-pro-tier': 'pro',
+  'g1-ultra-tier': 'ultra'
+};
+
+export const antigravityTokenPath = (configDir: string): string => path.join(configDir, ANTIGRAVITY_CLI_SUBDIR, ANTIGRAVITY_TOKEN_FILE);
+
+export const antigravityProfileId = (configDir: string): string =>
+  accountId('antigravity', `profile-${sha256Prefix(path.resolve(configDir), PROFILE_ID_HASH_LENGTH)}`);
+
+export async function antigravityProfileFolders(home: string): Promise<string[]> {
+  const entries = await fsp.readdir(home, { withFileTypes: true }).catch((error: unknown) => {
+    if (systemErrorCode(error) === 'ENOENT') return [];
+    throw error;
+  });
+  const prefix = `${ANTIGRAVITY_PROFILE_PREFIX}-`;
+  return entries
+    .filter(entry => {
+      if (!entry.isDirectory() || !entry.name.startsWith(prefix)) return false;
+      const suffix = entry.name.slice(prefix.length);
+      return PROFILE_NAME.test(suffix) && !COPY_NAME.test(suffix);
+    })
+    .map(entry => path.join(home, entry.name));
+}
+
+export async function createAntigravityProfileFolder(home: string, isFree: (dir: string) => Promise<boolean>): Promise<string> {
+  for (let n = FIRST_NEW_PROFILE; n <= MAX_NEW_PROFILE; n++) {
+    const dir = path.join(home, `${ANTIGRAVITY_PROFILE_PREFIX}-${n}`);
+    let chosen = false;
+    try {
+      await fsp.mkdir(dir, { mode: 0o700 });
+      chosen = true;
+    } catch (error) {
+      if (systemErrorCode(error) !== 'EEXIST') throw error;
+      if ((await fsp.lstat(dir)).isDirectory() && (await isFree(dir))) chosen = true;
+    }
+    if (chosen) {
+      // Ensure the CLI subdir exists upfront so folder watching works immediately during sign-in.
+      await fsp.mkdir(path.join(dir, ANTIGRAVITY_CLI_SUBDIR), { recursive: true, mode: 0o700 });
+      return dir;
+    }
+  }
+  throw new AppError('invalid_path');
+}
+
+export interface AntigravityTokenDocument {
+  accessToken: string;
+  refreshToken?: string;
+  expiryMs?: number;
+  email?: string;
+  projectId?: string;
+  authMethod?: string;
+}
+
+export function parseAntigravityTokenDocument(raw: unknown): AntigravityTokenDocument | null {
+  if (!isObject(raw) || !isObject(raw.token)) return null;
+  const accessToken = typeof raw.token.access_token === 'string' ? raw.token.access_token.trim() : '';
+  const refreshToken = typeof raw.token.refresh_token === 'string' ? raw.token.refresh_token.trim() : '';
+  if (!accessToken && !refreshToken) return null;
+  const expiryRaw = typeof raw.token.expiry === 'string' ? Date.parse(raw.token.expiry) : Number.NaN;
+  const expiryMs = Number.isFinite(expiryRaw) ? expiryRaw : undefined;
+  const claimEmail = attemptSync(() => jwtClaims(raw.id_token).email);
+  const email = safeEmail(raw.id_token_email) ?? safeEmail(claimEmail);
+  const projectId = typeof raw.project_id === 'string' && raw.project_id.trim() ? raw.project_id.trim() : undefined;
+  const authMethod = typeof raw.auth_method === 'string' && raw.auth_method.trim() ? raw.auth_method.trim() : undefined;
+  return {
+    accessToken,
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(expiryMs === undefined ? {} : { expiryMs }),
+    ...(email ? { email } : {}),
+    ...(projectId ? { projectId } : {}),
+    ...(authMethod ? { authMethod } : {})
+  };
+}
+
+export async function isSignedInAntigravityProfile(configDir: string): Promise<boolean> {
+  const file = antigravityTokenPath(configDir);
+  if (!(await isRegularFile(file))) return false;
+  return parseAntigravityTokenDocument(await readCredentialFile(file)) !== null;
+}
+
+export function antigravityProfile(configDir: string, email?: string): DiscoveredAccount {
+  const resolved = path.resolve(configDir);
+  const name = path.basename(resolved);
+  const prefix = `${ANTIGRAVITY_PROFILE_PREFIX}-`;
+  const suffix = name.startsWith(prefix) ? name.slice(prefix.length) : name;
+  return {
+    id: antigravityProfileId(resolved),
+    providerId: 'antigravity',
+    label: (email ?? (suffix || resolved)).slice(0, MAX_LABEL_LENGTH),
+    configDir: resolved,
+    configDirExplicit: true,
+    primary: false,
+    enabled: true
+  };
+}
+
+function tierPlan(response: unknown, authMethod?: string, projectId?: string): string | undefined {
+  for (const candidate of [field(response, 'paidTier'), field(response, 'currentTier')]) {
+    const id = typeof field(candidate, 'id') === 'string' ? String(field(candidate, 'id')).trim().toLowerCase() : '';
+    if (id && PLAN_TIERS[id]) return PLAN_TIERS[id];
+    const name = safePlan(field(candidate, 'name'));
+    if (name) return name;
+  }
+  if (authMethod?.toLowerCase() === 'gcp' && projectId) return 'paygo';
+  return undefined;
+}
+
 export interface AntigravityProviderOptions extends DiscoveryOptions {
+  home?: string;
+  clock?: Clock;
+  postJson?: PostJson;
   discoverAntigravityServers?: (options: DiscoveryOptions) => Promise<LanguageServer[]>;
   requestLocalJson?: RequestLocalJson;
 }
@@ -520,10 +660,75 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
   const discoverServers = (context?: RefreshContext): Promise<LanguageServer[]> =>
     (options.discoverAntigravityServers ?? discoverAntigravityServers)({ ...options, ...context });
   const read = options.requestLocalJson ?? requestLocalJson;
+  const post = options.postJson ?? defaultPostJson;
+  const profileHome = options.home ?? (options.discoverAntigravityServers ? undefined : os.homedir());
   const fetchTimeoutMs = Math.max(WINDOWS_DISCOVERY_TIMEOUT_MS, DISCOVERY_BUDGET_MS) + FETCH_BUDGET_MS;
 
+  async function fetchProfileAccount(account: Account, context: RefreshContext): Promise<FetchResult> {
+    if (!account.configDir) throw new ProviderError('unsupported_profile');
+    const raw = await readCredentialFile(antigravityTokenPath(account.configDir), context);
+    const token = parseAntigravityTokenDocument(raw);
+    if (!token?.accessToken) throw new ProviderError('auth_missing');
+    if (token.expiryMs !== undefined && isExpired(token.expiryMs, options.clock)) throw new ProviderError('auth_expired');
+    const headers = {
+      Authorization: `Bearer ${token.accessToken}`,
+      'User-Agent': USER_AGENT,
+      Accept: MEDIA_TYPE.json
+    };
+    const loadResponse = await post(QUOTA_ENDPOINTS.antigravityLoadCodeAssist, {
+      ...context,
+      headers,
+      body: {
+        ...(token.projectId ? { cloudaicompanionProject: token.projectId } : {}),
+        metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
+      }
+    });
+    const project =
+      (typeof field(loadResponse, 'cloudaicompanionProject') === 'string' &&
+        String(field(loadResponse, 'cloudaicompanionProject')).trim()) ||
+      token.projectId ||
+      '';
+    if (!project) throw new ProviderError('invalid_response');
+    const summary = await post(QUOTA_ENDPOINTS.antigravityQuotaSummary, {
+      ...context,
+      headers,
+      body: { project }
+    });
+    const reading = parseAntigravitySummary(summary);
+    // Cloud readings come from cloudcode-pa rather than the local language server.
+    const windows = reading.windows.map(({ detailKey: _localNote, ...window }) => window);
+    const plan = tierPlan(loadResponse, token.authMethod, project);
+    const signedInAs = token.email ?? reading.email ?? undefined;
+    return {
+      windows,
+      completeness: 'complete',
+      ...(plan ? { plan } : {}),
+      ...(signedInAs ? { signedInAs } : {})
+    };
+  }
+
+  async function discoverIsolatedProfiles(): Promise<{ accounts: DiscoveredAccount[]; emails: Set<string>; complete: boolean }> {
+    if (!profileHome) return { accounts: [], emails: new Set(), complete: true };
+    const accounts: DiscoveredAccount[] = [];
+    const emails = new Set<string>();
+    let complete = true;
+    for (const dir of await antigravityProfileFolders(profileHome)) {
+      try {
+        const file = antigravityTokenPath(dir);
+        if (!(await isRegularFile(file))) continue;
+        const doc = parseAntigravityTokenDocument(await readCredentialFile(file));
+        if (!doc) continue;
+        if (doc.email) emails.add(normalizeEmail(doc.email));
+        accounts.push(antigravityProfile(dir, doc.email));
+      } catch {
+        complete = false;
+      }
+    }
+    accounts.sort((a, b) => a.id.localeCompare(b.id));
+    return { accounts, emails, complete };
+  }
+
   function readingForAccount(account: Account, all: AntigravityReading[]): FetchResult {
-    if (account.configDir) throw new ProviderError('unsupported_profile');
     const accountEmail = account.email === undefined ? undefined : normalizeEmail(account.email);
     let readings = all;
     if (accountEmail) {
@@ -537,9 +742,7 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     return { windows, completeness: 'complete' };
   }
 
-  async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
-    const context = provided ?? { deadline: Date.now() + fetchTimeoutMs, signal: new AbortController().signal };
-    remainingTimeout(fetchTimeoutMs, context);
+  async function fetchLocalAccounts(accounts: readonly Account[], context: RefreshContext): Promise<Map<string, ProviderReading>> {
     const servers = await discoverServers(context);
     if (!servers.length) throw new ProviderError('app_closed');
     const quotaContext = { ...context, deadline: Math.min(context.deadline, Date.now() + FETCH_BUDGET_MS) };
@@ -567,30 +770,72 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     );
   }
 
+  async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
+    const context = provided ?? { deadline: Date.now() + fetchTimeoutMs, signal: new AbortController().signal };
+    remainingTimeout(fetchTimeoutMs, context);
+    const profileAccounts = accounts.filter(a => Boolean(a.configDir));
+    const localAccounts = accounts.filter(a => !a.configDir);
+    const results = new Map<string, ProviderReading>();
+    const [profileReadings, localReadings] = await Promise.all([
+      Promise.all(
+        profileAccounts.map(async account => {
+          const reading = await fetchProfileAccount(account, context).then(providerReading, (error: unknown): ProviderReading => ({
+            kind: 'failed',
+            error
+          }));
+          return [account.id, reading] as const;
+        })
+      ),
+      localAccounts.length
+        ? fetchLocalAccounts(localAccounts, context).catch(
+            (error: unknown) => new Map<string, ProviderReading>(localAccounts.map(a => [a.id, { kind: 'failed', error }]))
+          )
+        : Promise.resolve(new Map<string, ProviderReading>())
+    ]);
+    for (const [id, reading] of profileReadings) results.set(id, reading);
+    for (const [id, reading] of localReadings) results.set(id, reading);
+    return results;
+  }
+
   return {
     id: 'antigravity',
     // Finding the servers (PowerShell on Windows), then reading them.
     fetchTimeoutMs,
     discover: () =>
       discoverSafely(async () => {
-        const servers = await discoverServers();
-        if (!servers.length) throw new ProviderError('app_closed');
-        const queries = await resolveServerEmails(servers, read);
-        const emails = fulfilled(queries);
-        // Fail closed: an unidentified server could belong to any account.
-        if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
-        return [...new Set(emails.filter(email => email !== null))].map((email, index) => ({
-          id: antigravityAccountId(email),
-          providerId: 'antigravity',
-          label: email.slice(0, MAX_LABEL_LENGTH),
-          email,
-          primary: index === 0,
-          enabled: true
-        }));
+        const isolated = await discoverIsolatedProfiles();
+        let localEmails: string[] = [];
+        try {
+          const servers = await discoverServers();
+          if (servers.length) {
+            const queries = await resolveServerEmails(servers, read);
+            const emails = fulfilled(queries);
+            // Fail closed: an unidentified server could belong to any account.
+            if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
+            localEmails = [...new Set(emails.filter(email => email !== null))];
+          }
+        } catch (error) {
+          if (!isolated.accounts.length || !(error instanceof ProviderError && error.code === 'app_closed')) throw error;
+        }
+        const localAccounts: DiscoveredAccount[] = localEmails
+          .filter(email => !isolated.emails.has(normalizeEmail(email)))
+          .map(email => ({
+            id: antigravityAccountId(email),
+            providerId: 'antigravity',
+            label: email.slice(0, MAX_LABEL_LENGTH),
+            email,
+            primary: false,
+            enabled: true
+          }));
+        const all = [...localAccounts, ...isolated.accounts];
+        if (!all.length) throw new ProviderError('app_closed');
+        if (!isolated.complete) throw new ProviderError('local_service_unavailable');
+        const [first] = all;
+        if (first && !all.some(a => a.primary)) first.primary = true;
+        return all;
       }),
     fetchAll,
     async fetch(account: Account, context?: RefreshContext) {
-      if (account.configDir) throw new ProviderError('unsupported_profile');
       const reading = (await fetchAll([account], context)).get(account.id);
       if (!reading) throw new ProviderError('invalid_response');
       if (reading.kind === 'failed') throw reading.error;

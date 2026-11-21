@@ -39,7 +39,9 @@ export const QUOTA_ENDPOINTS = {
   claude: 'https://api.anthropic.com/api/oauth/usage',
   claudeProfile: 'https://api.anthropic.com/api/oauth/profile',
   cursor: 'https://cursor.com/api/usage-summary',
-  copilot: 'https://api.github.com/copilot_internal/user'
+  copilot: 'https://api.github.com/copilot_internal/user',
+  antigravityLoadCodeAssist: 'https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist',
+  antigravityQuotaSummary: 'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary'
 } as const;
 const ALLOWED_ENDPOINTS: ReadonlySet<string> = new Set(Object.values(QUOTA_ENDPOINTS));
 
@@ -198,6 +200,7 @@ export function readJsonResponse(response: IncomingMessage, settle: Settle<unkno
 
 export type QuotaEndpoint = (typeof QUOTA_ENDPOINTS)[keyof typeof QUOTA_ENDPOINTS];
 type HttpsGet = (url: URL, options: https.RequestOptions, callback: (response: IncomingMessage) => void) => ClientRequest;
+type HttpsPost = (url: URL, options: https.RequestOptions, callback: (response: IncomingMessage) => void) => ClientRequest;
 
 export interface GetJsonOptions extends Partial<RefreshContext> {
   headers?: Readonly<Record<string, string>>;
@@ -206,6 +209,66 @@ export interface GetJsonOptions extends Partial<RefreshContext> {
 }
 
 export type GetJson = (endpoint: QuotaEndpoint, options?: GetJsonOptions) => Promise<unknown>;
+
+export interface PostJsonOptions extends Partial<RefreshContext> {
+  headers?: Readonly<Record<string, string>>;
+  body?: unknown;
+  timeoutMs?: number;
+  requestImpl?: HttpsPost;
+}
+
+export type PostJson = (endpoint: QuotaEndpoint, options?: PostJsonOptions) => Promise<unknown>;
+
+export const postJson: PostJson = (
+  endpoint,
+  { headers = {}, body = {}, timeoutMs = DEFAULT_HTTP_TIMEOUT_MS, requestImpl = https.request, ...context } = {}
+) =>
+  new Promise((resolve, reject) => {
+    if (!ALLOWED_ENDPOINTS.has(endpoint)) {
+      reject(new ProviderError('endpoint_not_allowed'));
+      return;
+    }
+    try {
+      timeoutMs = remainingTimeout(timeoutMs, context);
+    } catch (error) {
+      reject(error instanceof Error ? error : new ProviderError('request_timeout'));
+      return;
+    }
+    const payload = JSON.stringify(body);
+    const settle = settleOnce<unknown>(resolve, reject, timeoutMs, context.signal);
+    try {
+      const request = settle.attach(
+        requestImpl(
+          new URL(endpoint),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': String(Buffer.byteLength(payload)),
+              ...headers
+            },
+            timeout: timeoutMs,
+            agent: getQuotaAgent(),
+            rejectUnauthorized: true
+          },
+          response => {
+            readJsonResponse(settle.attach(response), settle);
+          }
+        )
+      );
+      request.on('timeout', () => {
+        settle.fail(new ProviderError('request_timeout'));
+      });
+      request.on('error', error => {
+        settle.fail(
+          new ProviderError(CERTIFICATE_ERRORS.has(String(systemErrorCode(error))) ? 'tls_certificate_error' : 'transport_error')
+        );
+      });
+      request.end(payload);
+    } catch (error) {
+      settle.fail(error instanceof ProviderError ? error : new ProviderError('transport_error', { cause: error }));
+    }
+  });
 
 export const getJson: GetJson = (
   endpoint,
@@ -283,7 +346,7 @@ export const TOOL_INSTALLS: Readonly<Record<ProviderId, { binaries: readonly str
   codex: { binaries: ['codex'] },
   // The Cursor Agent CLI; older installs only have the `agent` name.
   cursor: { binaries: ['cursor-agent', 'agent'], app: { mac: 'Cursor', windows: ['cursor', 'Cursor.exe'] } },
-  antigravity: { binaries: [], app: { mac: 'Antigravity', windows: ['Antigravity', 'Antigravity.exe'] } },
+  antigravity: { binaries: ['agy'], app: { mac: 'Antigravity', windows: ['Antigravity', 'Antigravity.exe'] } },
   // Copilot has no program of its own here: the GitHub CLI holds the sign-in its quota is read with.
   copilot: { binaries: [GITHUB_CLI] }
 };
@@ -305,6 +368,7 @@ function knownInstallLocations(name: string, env: Environment, home: string, pla
   const filename = platform === 'win32' ? `${name}.exe` : name;
   const locations: string[] = [];
   if (name === 'codex' && platform === 'win32') locations.push(path.join(localAppData(env, home), 'Programs/OpenAI/Codex/bin/codex.exe'));
+  if (name === 'agy') locations.push(path.join(home, '.gemini', 'bin', filename), path.join(home, '.local', 'bin', filename));
   if (HOME_BIN_TOOLS.has(name)) locations.push(path.join(home, '.local/bin', filename));
   return locations;
 }

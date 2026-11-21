@@ -43,6 +43,12 @@ export const PROFILE_PROVIDER_IDS: readonly ProfileProviderId[] = PROVIDER_IDS.f
 // The variable that points each of those tools at a profile folder other than the default one.
 export const PROFILE_ENV = { claude: 'CLAUDE_CONFIG_DIR', codex: 'CODEX_HOME' } as const satisfies Record<ProfileProviderId, string>;
 
+// Tools that support "+ Add account" in Settings (Claude and Codex via profile folders;
+// Antigravity via isolated `agy --gemini_dir` profile folders with file token storage).
+export const ADDABLE_ACCOUNT_PROVIDERS = ['claude', 'codex', 'antigravity'] as const satisfies readonly ProviderId[];
+export type AddableProviderId = (typeof ADDABLE_ACCOUNT_PROVIDERS)[number];
+export const canAddAccount = (id: ProviderId): id is AddableProviderId => isOneOf(ADDABLE_ACCOUNT_PROVIDERS, id);
+
 // The media types the app asks for and sends.
 export const MEDIA_TYPE = { json: 'application/json', githubJson: 'application/vnd.github+json' } as const;
 

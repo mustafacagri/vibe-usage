@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { ANTIGRAVITY_ISOLATION_ENV } from '../providers/antigravity.ts';
 import { findCommand, TOOL_INSTALLS, unpackedPath, windowsAppPath, windowsPowerShell, type ToolCommand } from '../providers/common.ts';
 import { CLAUDE_FILES, DEFAULT_ACCOUNT_ID as CLAUDE_DEFAULT_ACCOUNT_ID } from '../providers/claude.ts';
 import { findCursorAgent } from '../providers/cursor.ts';
@@ -397,6 +398,20 @@ async function startSignIn({ providerId, account, dataDir, cwd, platform = proce
     if (agent)
       return openInTerminal({ cwd, binary: agent.binary, args: [...agent.args, 'login'], env: {}, dataDir, platform, spawnProcess });
     return openDesktopApp({ providerId, platform, spawnProcess });
+  }
+  // Isolated Antigravity profiles sign in via `agy --gemini_dir=<profile>` with file-based token
+  // storage so Windows Credential Manager (`gemini:antigravity`) and macOS Keychain stay untouched.
+  if (providerId === 'antigravity' && account?.configDir) {
+    const command = await toolCommand('antigravity', 'agy');
+    return openInTerminal({
+      cwd,
+      binary: command.binary,
+      args: [...command.args, `--gemini_dir=${validateConfigDir(account.configDir)}`],
+      env: { set: { ...ANTIGRAVITY_ISOLATION_ENV } },
+      dataDir,
+      platform,
+      spawnProcess
+    });
   }
   const args = LOGIN_ARGS[providerId];
   const [binaryName] = TOOL_INSTALLS[providerId].binaries;

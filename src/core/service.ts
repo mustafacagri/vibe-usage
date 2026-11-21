@@ -1,7 +1,7 @@
 // The quota service: owns the settings, discovers accounts, reads quotas and hands out
 // snapshots. Settings writes are serialized; reads run per provider, deduplicated.
 import os from 'node:os';
-import { createAntigravityProvider } from '../providers/antigravity.ts';
+import { antigravityProfileFolders, createAntigravityProvider } from '../providers/antigravity.ts';
 import { createCopilotProvider } from '../providers/copilot.ts';
 import { createClaudeProvider } from '../providers/claude.ts';
 import { createCodexProvider } from '../providers/codex.ts';
@@ -471,7 +471,8 @@ export async function createService({
   // accounts are read again and the change announced.
   function renewInBackground(adapter: ProviderAdapter, account: MeasuredAccount, error: unknown): void {
     const renew = renewSignIn?.[account.providerId];
-    if (!renew || !movesWorkOnItsOwn(settings) || providerErrorCode(error) !== 'auth_expired' || renewing.has(account.id)) return;
+    const allowed = account.providerId === 'antigravity' ? Boolean(account.configDir) : movesWorkOnItsOwn(settings);
+    if (!renew || !allowed || providerErrorCode(error) !== 'auth_expired' || renewing.has(account.id)) return;
     if (clock() - (lastRenewal.get(account.id) ?? Number.NEGATIVE_INFINITY) < RENEW_INTERVAL_MS) return;
     lastRenewal.set(account.id, clock());
     renewing.add(account.id);
@@ -699,7 +700,11 @@ export async function createService({
     // discovery finds them. Another computer's paths mean nothing here, and a folder named by a
     // file someone handed over would have the app run the tool there, with that folder's
     // settings and hooks. Discovery adds back each local account it finds.
-    const local = new Set((await Promise.all(PROFILE_PROVIDER_IDS.map(id => profileFolders(id, home)))).flat().map(dir => pathKey(dir)));
+    const local = new Set(
+      (await Promise.all([...PROFILE_PROVIDER_IDS.map(id => profileFolders(id, home)), antigravityProfileFolders(home)]))
+        .flat()
+        .map(dir => pathKey(dir))
+    );
     next.accounts = next.accounts.filter(a => a.configDir === undefined || local.has(pathKey(a.configDir)));
     await serialized(() => replace({ ...next, ...(settings.window ? { window: settings.window } : {}) }));
     await reconcileDiscovery();

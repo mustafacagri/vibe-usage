@@ -2,6 +2,7 @@ import {
   AUTO,
   AUTO_CONTINUE,
   AUTOMATION_MODES,
+  canAddAccount,
   displayOrder,
   DURATION_MS,
   INHERIT,
@@ -12,7 +13,7 @@ import {
   providerById,
   PROVIDERS,
   REFRESH_INTERVAL_SECONDS,
-  type ProfileProviderId,
+  type AddableProviderId,
   type Provider,
   type ProviderId,
   visibleProviders,
@@ -1635,7 +1636,7 @@ function accountRow(provider: Provider, account: Account): HTMLElement {
   return item;
 }
 
-function addAccountButton(providerId: ProfileProviderId): HTMLButtonElement {
+function addAccountButton(providerId: AddableProviderId): HTMLButtonElement {
   const tool = providerById(providerId).name;
   const button = element('button', 'secondary-button gap-top-sm', t('addAccountBtn', { tool }));
   onClick(button, async () => {
@@ -1648,7 +1649,7 @@ function addAccountButton(providerId: ProfileProviderId): HTMLButtonElement {
 
 function renderAccounts(): void {
   const { accounts, dismissedAccountIds } = current().settings;
-  const cards = PROVIDERS.filter(p => isProfileProvider(p.id) || accounts.some(a => a.providerId === p.id)).map(provider => {
+  const cards = PROVIDERS.filter(p => canAddAccount(p.id) || accounts.some(a => a.providerId === p.id)).map(provider => {
     const owned = accounts.filter(a => a.providerId === provider.id);
     const card = element('div', 'provider-settings-card');
     card.dataset.provider = provider.id;
@@ -1659,7 +1660,7 @@ function renderAccounts(): void {
     const rows = element('div', 'provider-accounts-list');
     rows.append(...owned.map(account => accountRow(provider, account)));
     card.append(header, rows);
-    if (isProfileProvider(provider.id)) card.append(addAccountButton(provider.id));
+    if (canAddAccount(provider.id)) card.append(addAccountButton(provider.id));
     return card;
   });
   ui.accountSettings.replaceChildren(...cards);
