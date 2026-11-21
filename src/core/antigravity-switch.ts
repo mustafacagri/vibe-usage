@@ -128,8 +128,7 @@ export async function hasAntigravityBackup(options: AntigravitySwitchOptions = {
 // backing up the previous entry first and restarting `agy --hub`.
 export async function switchAntigravityAccount(account: Account, options: AntigravitySwitchOptions = {}): Promise<AntigravitySwitchResult> {
   if (account.providerId !== 'antigravity' || !account.configDir) throw new AppError('account_not_found');
-  const platform = options.platform ?? process.platform;
-  const configDir = validateConfigDir(account.configDir, platform);
+  const configDir = validateConfigDir(account.configDir);
   const tokenFile = antigravityTokenPath(configDir);
   const checkFile = options.isFile ?? isRegularFile;
   if (!(await checkFile(tokenFile))) throw new AppError('auth_missing');
