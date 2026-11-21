@@ -1,10 +1,11 @@
 // Presentation shared by the renderer and the CLI: turns language-neutral snapshot data into
 // display text. Wording comes from the injected `t`; numbers, money and durations from Intl
 // in the given locale.
+import { HEALTHY_STATUSES, isSignedOut } from './account-state.ts';
 import { hasKey, type MessageKey, type Params, type Translate } from './i18n/index.ts';
 import { DURATION_MS, providerById, type ProviderId } from './catalog.ts';
 import type { LaunchMode } from './ipc.ts';
-import type { Account, Amounts, MeasuredAccount, QuotaWindow, Suggestion } from './types.ts';
+import type { Account, Amounts, MeasuredAccount, ProviderStatus, QuotaWindow, Suggestion } from './types.ts';
 
 export interface FormatContext {
   t: Translate;
@@ -181,6 +182,33 @@ export function describeCode(code: string, t: Translate, params?: Params): strin
   if (hasKey(error)) return t(error, params);
   if (hasKey(status)) return t(status, params);
   return t('error_unexpected');
+}
+
+// A card footer's status badge: a signed-out account keeping a past reading has no session,
+// rather than a failed refresh.
+export function statusTextKey(state: {
+  status: ProviderStatus;
+  messageCode?: MeasuredAccount['messageCode'] | undefined;
+}): MessageKey | undefined {
+  if (isSignedOut(state)) return 'noSession';
+  if (state.status === 'pending') return 'reading';
+  if (state.status === 'ok') return 'live';
+  if (state.status === 'stale') return 'refreshFailed';
+  return undefined;
+}
+
+// Why an account has no live reading. When another account of the same tool is healthy on this
+// device, a signed-out sibling says it is not signed in right now rather than "no sign-in on
+// this device".
+export function describeAccountMessage(
+  account: Pick<MeasuredAccount, 'id' | 'status' | 'messageCode'>,
+  accounts: readonly Pick<MeasuredAccount, 'id' | 'status'>[],
+  t: Translate
+): string {
+  if (!account.messageCode) return '';
+  if (account.messageCode === 'auth_missing' && accounts.some(other => other.id !== account.id && HEALTHY_STATUSES.has(other.status)))
+    return t('accountNotSignedIn');
+  return describeCode(account.messageCode, t);
 }
 
 // The times, on the local clock, of a chart's grid lines: every whole `stepHours` mark after

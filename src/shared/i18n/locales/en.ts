@@ -393,6 +393,7 @@ export const en = {
   updateUnsupportedUnsigned:
     'Open the downloaded file and drag Vibe Usage to Applications; only an app signed with an Apple Developer ID updates itself.',
   updateUnsupportedUnpackaged: 'A development build updates from the repository.',
-  updateUnsupportedPlatform: 'Download the new version from the release page.'
+  updateUnsupportedPlatform: 'Download the new version from the release page.',
+  accountNotSignedIn: 'Not signed in right now.'
   // Every code the app reports has its message: an app error as error_<code>, a status as status_<code>.
 } satisfies Record<`error_${AppErrorCode}` | `status_${StatusCode}`, string> & Record<string, unknown>;

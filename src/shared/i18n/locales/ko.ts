@@ -381,5 +381,6 @@ export const ko: Messages = {
   updateUnsupportedUnsigned:
     '다운로드한 파일을 열고 Vibe Usage를 응용 프로그램으로 끌어 놓으세요. Apple Developer ID로 서명된 앱만 스스로 업데이트합니다.',
   updateUnsupportedUnpackaged: '개발 빌드는 저장소에서 업데이트합니다.',
-  updateUnsupportedPlatform: '릴리스 페이지에서 새 버전을 다운로드하세요.'
+  updateUnsupportedPlatform: '릴리스 페이지에서 새 버전을 다운로드하세요.',
+  accountNotSignedIn: '현재 로그인되어 있지 않습니다.'
 };

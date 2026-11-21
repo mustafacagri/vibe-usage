@@ -382,5 +382,6 @@ export const tr: Messages = {
   updateUnsupportedUnsigned:
     'İndirilen dosyayı açıp Vibe Usage’ı Uygulamalar klasörüne sürükleyin; yalnızca Apple Developer ID ile imzalı bir uygulama kendini günceller.',
   updateUnsupportedUnpackaged: 'Geliştirme sürümü depodan güncellenir.',
-  updateUnsupportedPlatform: 'Yeni sürümü sürüm sayfasından indirin.'
+  updateUnsupportedPlatform: 'Yeni sürümü sürüm sayfasından indirin.',
+  accountNotSignedIn: 'Şu anda giriş yapılı değil.'
 };

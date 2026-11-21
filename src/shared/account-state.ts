@@ -5,6 +5,27 @@ import type { AccountStatus, MeasuredAccount, ProviderState, ProviderStatus, Quo
 // States of an account read just now with a working sign-in: quota, or none to report.
 export const HEALTHY_STATUSES: ReadonlySet<AccountStatus> = new Set(['ok', 'no_limits_reported']);
 
+// An account with no active sign-in on this device, whether never read or holding a past reading.
+export const isSignedOut = (account: { status: ProviderStatus; messageCode?: MeasuredAccount['messageCode'] | undefined }): boolean =>
+  account.status === 'auth_missing' || (account.status === 'stale' && account.messageCode === 'auth_missing');
+
+// A tool's overall status from its enabled accounts. A signed-out account beside a healthy one
+// does not degrade the tool: the live account is working, and only the other lacks a sign-in.
+export function aggregateProviderStatus(accounts: readonly MeasuredAccount[]): ProviderStatus {
+  if (!accounts.length) return 'unavailable';
+  const hasHealthy = accounts.some(a => HEALTHY_STATUSES.has(a.status));
+  if (hasHealthy && accounts.every(a => HEALTHY_STATUSES.has(a.status) || isSignedOut(a))) return 'ok';
+  return accounts.some(a => a.fetchedAt) ? 'stale' : (accounts[0]?.status ?? 'unavailable');
+}
+
+// The account a card shows when the user has not picked one: the primary, unless it is signed
+// out while another account of the same tool is live.
+export function defaultShownAccount(accounts: readonly MeasuredAccount[]): MeasuredAccount | undefined {
+  const primary = accounts.find(a => a.primary) ?? accounts[0];
+  if (primary && isSignedOut(primary)) return accounts.find(a => HEALTHY_STATUSES.has(a.status)) ?? primary;
+  return primary;
+}
+
 // Whether a limit with `remaining` percent left is low at the user's threshold.
 export const isLowQuota = (remaining: number | null, threshold: number): boolean => remaining !== null && remaining <= threshold;
 
@@ -101,6 +122,7 @@ function noteFor(account: MeasuredAccount): CompactNote {
   if (toolBlocked(account)) return 'blocked';
   if (account.status === 'no_limits_reported') return 'noLimits';
   if (WAITING_STATUSES.has(account.status)) return 'waiting';
+  if (isSignedOut(account)) return 'signIn';
   return needsSignIn(account) ? 'signIn' : 'noData';
 }
 

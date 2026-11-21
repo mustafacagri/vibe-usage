@@ -396,5 +396,6 @@ export const fr: Messages = {
   updateUnsupportedUnsigned:
     'Ouvrez le fichier téléchargé et glissez Vibe Usage dans Applications ; seule une app signée avec un Apple Developer ID se met à jour seule.',
   updateUnsupportedUnpackaged: 'Une version de développement se met à jour depuis le dépôt.',
-  updateUnsupportedPlatform: 'Téléchargez la nouvelle version depuis la page de publication.'
+  updateUnsupportedPlatform: 'Téléchargez la nouvelle version depuis la page de publication.',
+  accountNotSignedIn: 'Non connecté actuellement.'
 };

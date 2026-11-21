@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  describeAccountMessage,
   describeCode,
   describeWindow,
   formatDuration,
   formatFreshness,
   gridTimes,
   hasOwnName,
+  statusTextKey,
   type FormatContext
 } from '../src/shared/format.ts';
 import { translator, type Language } from '../src/shared/i18n/index.ts';
@@ -141,4 +143,19 @@ test('chart grid lines fall on the local clock: midnights for a week, every four
   assert.deepEqual(gridTimes(at(16, 9), at(16, 9), 4), [], 'an empty span has no lines');
   // A step that is not a whole, positive number of hours would never reach the end.
   for (const step of [0, 1.5]) assert.throws(() => gridTimes(at(16, 9), at(17, 9), step), RangeError, `a step of ${step}`);
+});
+
+test('a signed-out sibling beside a live account does not say no sign-in on this device or refresh failed', () => {
+  const t = translator('en');
+  const live = { id: 'antigravity:a', status: 'ok' as const };
+  const signedOut = { id: 'antigravity:b', status: 'stale' as const, messageCode: 'auth_missing' as const };
+  const broken = { id: 'antigravity:c', status: 'stale' as const, messageCode: 'transport_error' as const };
+
+  assert.equal(describeAccountMessage(signedOut, [live, signedOut], t), 'Not signed in right now.');
+  assert.equal(describeAccountMessage(signedOut, [signedOut], t), 'No sign-in found on this device.');
+  assert.equal(describeAccountMessage(broken, [live, broken], t), 'Could not reach the provider.');
+
+  assert.equal(statusTextKey(signedOut), 'noSession');
+  assert.equal(statusTextKey(broken), 'refreshFailed');
+  assert.equal(statusTextKey({ status: 'ok' }), 'live');
 });

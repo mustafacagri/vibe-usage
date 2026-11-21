@@ -397,5 +397,6 @@ export const nl: Messages = {
   updateUnsupportedUnsigned:
     'Open het gedownloade bestand en sleep Vibe Usage naar Apps; alleen een app die met een Apple Developer ID is ondertekend, werkt zichzelf bij.',
   updateUnsupportedUnpackaged: 'Een ontwikkelversie wordt bijgewerkt vanuit de repository.',
-  updateUnsupportedPlatform: 'Download de nieuwe versie van de releasepagina.'
+  updateUnsupportedPlatform: 'Download de nieuwe versie van de releasepagina.',
+  accountNotSignedIn: 'Momenteel niet ingelogd.'
 };

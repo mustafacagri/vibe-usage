@@ -394,5 +394,6 @@ export const ru: Messages = {
   updateUnsupportedUnsigned:
     'Откройте загруженный файл и перетащите Vibe Usage в «Программы»; обновляться сама может только программа, подписанная Apple Developer ID.',
   updateUnsupportedUnpackaged: 'Сборка для разработки обновляется из репозитория.',
-  updateUnsupportedPlatform: 'Скачайте новую версию со страницы релиза.'
+  updateUnsupportedPlatform: 'Скачайте новую версию со страницы релиза.',
+  accountNotSignedIn: 'Сейчас вход не выполнен.'
 };

@@ -925,3 +925,71 @@ test('a refresh of every tool leaves out the hidden ones only when asked to; one
   await service.refresh('codex');
   assert.deepEqual(fetched, ['codex'], 'a tool named on its own is read, hidden or not');
 });
+
+test('a signed-out secondary account does not degrade a healthy provider to stale', async t => {
+  let activeEmail = 'primary@example.com';
+  let failSecondaryWith: 'auth_missing' | 'transport_error' = 'auth_missing';
+  const primary = found('antigravity:a1', {
+    providerId: 'antigravity',
+    email: 'primary@example.com',
+    label: 'primary@example.com',
+    primary: true
+  });
+  const secondary = found('antigravity:a2', {
+    providerId: 'antigravity',
+    email: 'secondary@example.com',
+    label: 'secondary@example.com',
+    primary: false
+  });
+  const { service } = await start(t, {
+    stored: { accounts: [primary, secondary] },
+    providers: [
+      adapter(
+        'antigravity',
+        () => [],
+        target => {
+          if (target.email === activeEmail) return healthy();
+          return Promise.reject(new ProviderError(target.id === secondary.id ? failSecondaryWith : 'auth_missing'));
+        }
+      )
+    ]
+  });
+
+  // Primary is live, secondary was never signed in -> provider stays ok.
+  const first = (await service.refresh('antigravity')).providers[0];
+  assert.equal(first?.status, 'ok');
+  assert.ok(first.fetchedAt);
+  assert.deepEqual(
+    first.accounts.map(a => [a.id, a.status, a.messageCode]),
+    [
+      [primary.id, 'ok', undefined],
+      [secondary.id, 'auth_missing', 'auth_missing']
+    ]
+  );
+
+  // Switch active account to secondary: primary keeps its retained reading (stale + auth_missing),
+  // secondary is now live -> provider still stays ok.
+  activeEmail = 'secondary@example.com';
+  const second = (await service.refresh('antigravity')).providers[0];
+  assert.equal(second?.status, 'ok');
+  assert.deepEqual(
+    second.accounts.map(a => [a.id, a.status, a.messageCode]),
+    [
+      [primary.id, 'stale', 'auth_missing'],
+      [secondary.id, 'ok', undefined]
+    ]
+  );
+
+  // A real failure (transport_error) on a secondary account still degrades the provider to stale.
+  activeEmail = 'primary@example.com';
+  failSecondaryWith = 'transport_error';
+  const third = (await service.refresh('antigravity')).providers[0];
+  assert.equal(third?.status, 'stale');
+  assert.equal(third.accounts[1]?.messageCode, 'transport_error');
+
+  // When every account is signed out, the provider is no longer ok.
+  activeEmail = 'nobody@example.com';
+  failSecondaryWith = 'auth_missing';
+  const fourth = (await service.refresh('antigravity')).providers[0];
+  assert.equal(fourth?.status, 'stale');
+});

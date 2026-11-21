@@ -14,6 +14,7 @@ import { createService, type Service } from './core/service.ts';
 import { appDataDir, settingsPath } from './core/settings.ts';
 import { AUTO, isProviderId, providerById } from './shared/catalog.ts';
 import {
+  describeAccountMessage,
   describeCode,
   describeWindow,
   formatAccountName,
@@ -58,7 +59,8 @@ export function renderSnapshot(snapshot: Snapshot, context: FormatContext): stri
         const scope = window.scope ? ` / ${window.scope}` : '';
         lines.push(`    ${view.label}${scope}: ${[view.value, view.reset, view.detail].filter(Boolean).join(' · ')}`);
       }
-      if (account.messageCode) lines.push(`    ${describeCode(account.messageCode, t)}`);
+      const note = describeAccountMessage(account, provider.accounts, t);
+      if (note) lines.push(`    ${note}`);
     }
     lines.push('');
   }

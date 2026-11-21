@@ -15,7 +15,7 @@ import {
   type ProviderReading,
   type RefreshContext
 } from '../providers/types.ts';
-import { HEALTHY_STATUSES } from '../shared/account-state.ts';
+import { aggregateProviderStatus, HEALTHY_STATUSES } from '../shared/account-state.ts';
 import {
   ACCOUNT_ID_PATTERN,
   DURATION_MS,
@@ -584,8 +584,7 @@ export async function createService({
     } else await Promise.all(provider.accounts.map(account => refreshAccount(adapter, provider, account, generation)));
 
     const { accounts } = provider;
-    const allHealthy = accounts.length > 0 && accounts.every(isHealthy);
-    provider.status = allHealthy ? 'ok' : accounts.some(a => a.fetchedAt) ? 'stale' : (accounts[0]?.status ?? 'unavailable');
+    provider.status = aggregateProviderStatus(accounts);
     if (accounts.some(isHealthy)) provider.fetchedAt = stamp();
     if (accounts.length) delete provider.messageCode;
     else provider.messageCode = 'no_accounts';

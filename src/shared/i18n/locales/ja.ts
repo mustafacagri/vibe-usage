@@ -386,5 +386,6 @@ export const ja: Messages = {
   updateUnsupportedUnsigned:
     'ダウンロードしたファイルを開き、Vibe Usage をアプリケーションにドラッグしてください。Apple Developer ID で署名されたアプリだけが自動でアップデートできます。',
   updateUnsupportedUnpackaged: '開発ビルドはリポジトリからアップデートします。',
-  updateUnsupportedPlatform: 'リリースページから新しいバージョンをダウンロードしてください。'
+  updateUnsupportedPlatform: 'リリースページから新しいバージョンをダウンロードしてください。',
+  accountNotSignedIn: '現在サインインしていません。'
 };

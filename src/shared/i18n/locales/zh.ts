@@ -368,5 +368,6 @@ export const zh: Messages = {
   updateUnsupportedPortable: '此便携版无法自行更新；请下载新版本，或使用安装程序以便在应用内更新。',
   updateUnsupportedUnsigned: '打开下载的文件，把 Vibe Usage 拖到“应用程序”；只有使用 Apple Developer ID 签名的应用才能自行更新。',
   updateUnsupportedUnpackaged: '开发版本请从代码仓库更新。',
-  updateUnsupportedPlatform: '请从发布页面下载新版本。'
+  updateUnsupportedPlatform: '请从发布页面下载新版本。',
+  accountNotSignedIn: '当前未登录。'
 };

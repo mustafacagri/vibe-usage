@@ -20,7 +20,9 @@ import {
 } from '../shared/catalog.ts';
 import {
   compactLines,
+  defaultShownAccount,
   isLowQuota,
+  isSignedOut,
   needsSignIn,
   toolCannotStart,
   type CompactLine,
@@ -28,6 +30,7 @@ import {
   type KnownWindow
 } from '../shared/account-state.ts';
 import {
+  describeAccountMessage,
   describeCode,
   describeWindow,
   formatAccountName,
@@ -39,6 +42,7 @@ import {
   gridTimes,
   hasOwnName,
   LAUNCH_MESSAGES,
+  statusTextKey,
   SUGGESTION_BUTTONS,
   successorName,
   toolLabel,
@@ -566,7 +570,7 @@ function cardHeader(provider: Provider, accounts: readonly MeasuredAccount[], sh
   return heading;
 }
 
-function accountBody(provider: Provider, shown: MeasuredAccount): HTMLElement[] {
+function accountBody(provider: Provider, shown: MeasuredAccount, accounts: readonly MeasuredAccount[]): HTMLElement[] {
   const nodes: HTMLElement[] = [];
   const groups = groupWindows(shown.windows);
   // Account-wide limits first; per-model scopes follow under their own headings.
@@ -576,7 +580,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount): HTMLElement[] 
   const message =
     provider.id === 'claude' && shown.plan === 'free' && shown.status === 'no_limits_reported'
       ? t('claudeFreePlanDetail')
-      : statusMessage(shown) || (shown.windows.length ? '' : t('noDataYet'));
+      : describeAccountMessage(shown, accounts, t) || (shown.windows.length ? '' : t('noDataYet'));
   if (message) nodes.push(element('div', 'empty', message));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
@@ -604,14 +608,14 @@ function compareRow(sample: QuotaWindow, accounts: readonly MeasuredAccount[]): 
 }
 
 // Each account's status and next step, under its own column.
-function compareActions(provider: Provider, account: MeasuredAccount): HTMLElement {
+function compareActions(provider: Provider, account: MeasuredAccount, accounts: readonly MeasuredAccount[]): HTMLElement {
   const column = element('div', 'compare-action');
   const name = accountName(account);
   if (account.plan) column.append(element('div', 'account-pill', `${pickerName(account)} · ${account.plan.toUpperCase()}`));
   const message =
     provider.id === 'claude' && account.plan === 'free' && account.status === 'no_limits_reported'
       ? t('claudeFreePlanDetail')
-      : statusMessage(account);
+      : describeAccountMessage(account, accounts, t);
   if (message) column.append(element('div', 'empty', message));
   if (canLaunch(provider, account)) {
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
@@ -633,7 +637,7 @@ function compareBody(provider: Provider, accounts: readonly MeasuredAccount[]): 
   const nodes = rows(groups.general);
   for (const [scope, scoped] of groups.scopes) nodes.push(element('div', 'scope-title', scope), ...rows(scoped));
   if (groups.details.length) nodes.push(spendingDetails(rows(groups.details)));
-  const actions = accounts.map(account => compareActions(provider, account));
+  const actions = accounts.map(account => compareActions(provider, account, accounts));
   if (actions.some(column => column.childElementCount)) {
     const row = element('div', 'compare-columns compare-actions');
     row.append(...actions);
@@ -982,7 +986,8 @@ function compactWhen(window: KnownWindow): string {
 // One account's part of the row: its name when the tool has several, then its limit as a bar
 // with what is left and when it resets, or a short note on why there is no number (signing in
 // is one click away).
-function compactSegment(provider: Provider, line: CompactLine, many: boolean): HTMLElement {
+function compactSegment(provider: Provider, line: CompactLine, accounts: readonly MeasuredAccount[]): HTMLElement {
+  const many = accounts.length > 1;
   const classes = ['compact-segment', line.low ? 'low' : '', line.stale ? 'stale' : ''].filter(Boolean).join(' ');
   const segment = element('div', classes);
   if (many) segment.append(element('span', 'compact-account', pickerName(line.account)));
@@ -991,7 +996,9 @@ function compactSegment(provider: Provider, line: CompactLine, many: boolean): H
     const note = line.note ?? 'noData';
     const actionable = note === 'signIn' || note === 'openApp' || note === 'notFound' || note === 'blocked';
     const cell = element(actionable ? 'button' : 'span', `compact-note ${note}`, t(COMPACT_NOTES[note]));
-    segment.title = [many ? accountName(line.account) : '', statusMessage(line.account) || t('noDataYet')].filter(Boolean).join(' · ');
+    segment.title = [many ? accountName(line.account) : '', describeAccountMessage(line.account, accounts, t) || t('noDataYet')]
+      .filter(Boolean)
+      .join(' · ');
     if (actionable) {
       onClick(cell, async () => {
         if (note === 'notFound' || note === 'blocked') ui.diagnosticsButton.click();
@@ -1030,7 +1037,7 @@ function compactRow(state: ProviderState): HTMLElement {
   const row = element('section', 'provider compact-row');
   row.dataset.provider = provider.id;
   const segments = element('div', 'compact-segments');
-  if (lines.length) segments.append(...lines.map(line => compactSegment(provider, line, lines.length > 1)));
+  if (lines.length) segments.append(...lines.map(line => compactSegment(provider, line, state.accounts)));
   else segments.append(element('span', 'compact-note noData', statusMessage(state) || t('status_no_accounts')));
   row.append(element('span', 'brand-avatar', provider.glyph), element('span', 'compact-name', provider.name), segments);
   return row;
@@ -1133,14 +1140,12 @@ function providerCard(state: ProviderState): HTMLElement {
   section.dataset.provider = provider.id;
   const { accounts } = state;
   const compare = current().settings.compareAccounts && accounts.length > 1;
-  const shown = compare
-    ? undefined
-    : (accounts.find(a => a.id === selectedAccount.get(provider.id)) ?? accounts.find(a => a.primary) ?? accounts[0]);
+  const shown = compare ? undefined : (accounts.find(a => a.id === selectedAccount.get(provider.id)) ?? defaultShownAccount(accounts));
   section.append(cardHeader(provider, compare ? [] : accounts, shown));
   const issue = current().serviceIssues?.find(entry => entry.providerId === provider.id);
   if (issue) section.append(serviceIssueNote(issue));
   if (compare) section.append(...compareBody(provider, accounts));
-  else if (shown) section.append(...accountBody(provider, shown));
+  else if (shown) section.append(...accountBody(provider, shown, accounts));
   else
     section.append(
       element('div', 'empty', statusMessage(state) || t('status_no_accounts')),
@@ -1151,9 +1156,11 @@ function providerCard(state: ProviderState): HTMLElement {
   if (charted.length) section.append(historySection(charted));
   if (isProfileProvider(provider.id) && inView.length) section.append(tokensSection(inView));
 
-  const status = shown?.status ?? state.status;
-  const footer = element('div', `provider-status${status === 'stale' ? ' stale' : ''}`);
-  const statusKey = STATUS_TEXT[status];
+  const footerState = shown ?? state;
+  const status = footerState.status;
+  const stale = status === 'stale' && !(shown && isSignedOut(shown));
+  const footer = element('div', `provider-status${stale ? ' stale' : ''}`);
+  const statusKey = statusTextKey(footerState);
   footer.append(
     element('span', '', formatFreshness(shown ? shown.fetchedAt : state.fetchedAt, status, format())),
     element('span', '', statusKey ? t(statusKey) : '')

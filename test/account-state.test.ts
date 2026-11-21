@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compactLines, needsSignIn, toolNotFound } from '../src/shared/account-state.ts';
+import {
+  aggregateProviderStatus,
+  compactLines,
+  defaultShownAccount,
+  isSignedOut,
+  needsSignIn,
+  toolNotFound
+} from '../src/shared/account-state.ts';
 import type { AccountStatus, MeasuredAccount, ProviderState, QuotaWindow } from '../src/shared/types.ts';
 import { measuredAccount, quotaWindow } from './helpers/fixtures.ts';
 
@@ -132,4 +139,51 @@ test('the account’s other limit is always named, and marked only when it runs 
   assert.deepEqual([codex.window?.id, codex.other?.id, codex.tighter], ['primary', 'secondary', null], 'the weekly one, quietly');
   const one = line([limit('five_hour', 40, { durationMinutes: 5 * HOUR })]);
   assert.equal(one.other, null, 'nothing else to name');
+});
+
+test('a signed-out sibling beside a healthy account keeps the provider ok and defaults the card to the live account', () => {
+  const live = reading({ id: 'antigravity:live', providerId: 'antigravity', primary: false, status: 'ok' });
+  const signedOutFresh = measuredAccount({
+    id: 'antigravity:out',
+    providerId: 'antigravity',
+    primary: true,
+    status: 'auth_missing',
+    messageCode: 'auth_missing',
+    windows: []
+  });
+  const signedOutStale = reading({
+    id: 'antigravity:stale',
+    providerId: 'antigravity',
+    primary: true,
+    status: 'stale',
+    messageCode: 'auth_missing',
+    windows: [limit('five_hour', 100, { resetsAt: '2026-10-16T08:00:00Z' })]
+  });
+  const broken = reading({
+    id: 'antigravity:err',
+    providerId: 'antigravity',
+    primary: false,
+    status: 'stale',
+    messageCode: 'transport_error'
+  });
+
+  assert.equal(isSignedOut(signedOutFresh), true);
+  assert.equal(isSignedOut(signedOutStale), true);
+  assert.equal(isSignedOut(broken), false);
+  assert.equal(isSignedOut(live), false);
+
+  assert.equal(aggregateProviderStatus([live, signedOutFresh]), 'ok');
+  assert.equal(aggregateProviderStatus([signedOutStale, live]), 'ok');
+  assert.equal(aggregateProviderStatus([live, broken]), 'stale');
+  assert.equal(aggregateProviderStatus([signedOutFresh]), 'auth_missing');
+  assert.equal(aggregateProviderStatus([signedOutStale, signedOutFresh]), 'stale');
+  assert.equal(aggregateProviderStatus([]), 'unavailable');
+
+  assert.equal(defaultShownAccount([signedOutStale, live])?.id, live.id, 'prefers the live account when primary is signed out');
+  assert.equal(defaultShownAccount([signedOutFresh, signedOutStale])?.id, signedOutFresh.id, 'falls back to primary when none is live');
+
+  // An expired stale reading whose failure was auth_missing shows Sign in, not No data.
+  const now = Date.parse('2026-10-17T12:00:00Z');
+  const lines = compactLines(tool([signedOutStale, live]), 20, now);
+  assert.equal(only(lines, 0).note, 'signIn');
 });
