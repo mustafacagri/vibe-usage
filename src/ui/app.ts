@@ -596,13 +596,20 @@ function cardHeader(provider: Provider, accounts: readonly MeasuredAccount[], sh
   return heading;
 }
 
-function resetControls(account: MeasuredAccount): HTMLElement[] {
+function resetControls(account: MeasuredAccount, accounts: readonly MeasuredAccount[] = [account]): HTMLElement[] {
   if (account.providerId === 'claude') {
     const button = element('button', 'secondary-button', t('claudeCheckResets'));
     onClick(button, () => vibe.openClaudeUsage());
     return [button];
   }
-  if (account.providerId !== 'codex' || !account.resetCredits) return [];
+  if (account.providerId !== 'codex' || !account.resetCredits || !['ok', 'no_limits_reported'].includes(account.status)) return [];
+  if (account.accountKey) {
+    const eligible = accounts.filter(
+      other => other.accountKey === account.accountKey && other.resetCredits && ['ok', 'no_limits_reported'].includes(other.status)
+    );
+    const selected = eligible.find(other => !other.primary) ?? eligible[0];
+    if (selected?.id !== account.id) return [];
+  }
   const count = element('div', 'empty', t('codexResetCredits', { n: account.resetCredits }));
   const key = account.accountKey;
   if (!key) return [count];
@@ -676,7 +683,7 @@ function compareActions(provider: Provider, account: MeasuredAccount, accounts: 
       ? t('claudeFreePlanDetail')
       : describeAccountMessage(account, accounts, t);
   if (message) column.append(element('div', 'empty', message));
-  column.append(...resetControls(account));
+  column.append(...resetControls(account, accounts));
   if (canLaunch(provider, account)) {
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
     column.append(launch);

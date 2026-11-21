@@ -269,7 +269,14 @@ export function createHandlers(context: MainContext): Handlers {
         .snapshot()
         .providers.find(p => p.id === 'codex')
         ?.accounts.find(a => a.id === account.id);
-      if (!account.configDir || !live?.accountKey || live.accountKey !== key || !live.resetCredits || resetBusy.has(key))
+      if (
+        !account.configDir ||
+        !live?.accountKey ||
+        live.accountKey !== key ||
+        !live.resetCredits ||
+        !['ok', 'no_limits_reported'].includes(live.status) ||
+        resetBusy.has(key)
+      )
         return 'unavailable';
       resetBusy.add(key);
       try {
