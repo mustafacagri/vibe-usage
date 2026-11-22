@@ -180,11 +180,14 @@ test('Windows discovery script is read-only and limits output to internal server
   const source = await fs.readFile(DISCOVERY_SCRIPT, 'utf8');
   for (const required of [
     /Get-CimInstance/,
-    /Get-NetTCPConnection/,
-    /-OwningProcess/,
+    /GetExtendedTcpTable/,
+    /OpenProcessToken/,
+    /GetTokenInformation/,
+    /QueryFullProcessImageName/,
     /ExecutablePath/,
     /WindowsIdentity\]::GetCurrent\(\)/,
-    /-MethodName GetOwnerSid/
+    /127\.0\.0\.1/,
+    /0\.0\.0\.0/
   ])
     assert.match(source, required);
   assert.doesNotMatch(source, /Start-Process|Stop-Process|Invoke-Expression|Set-Content|Write-Host|HttpClient|Invoke-WebRequest/i);
@@ -194,13 +197,30 @@ test('Windows discovery rejects a foreign-user fixture before reading its ports'
   const scriptPath = DISCOVERY_SCRIPT.replaceAll("'", "''");
   const harness = [
     '$global:fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
-    '$global:portsRead = @()',
     "$global:fixtureExe = Join-Path $env:LOCALAPPDATA 'Programs\\Antigravity\\resources\\bin\\language_server.exe'",
-    "function Get-CimInstance { param($ClassName, $Filter) $rows = @( [pscustomobject]@{ ProcessId=100; ExecutablePath=$global:fixtureExe; CreationDate='fixture'; CommandLine='server --csrf_token=fixture-foreign' }, [pscustomobject]@{ ProcessId=200; ExecutablePath=$global:fixtureExe; CreationDate='fixture'; CommandLine='server --csrf_token=fixture-current' }); if ($Filter -match 'ProcessId = (\\d+)') { $rows | Where-Object { $_.ProcessId -eq [int]$Matches[1] } } else { $rows } }",
-    "function Invoke-CimMethod { param($InputObject, $MethodName) [pscustomobject]@{ ReturnValue=0; Sid=$(if ($InputObject.ProcessId -eq 200) { $global:fixtureSid } else { 'S-1-0-0' }) } }",
-    'function Get-NetTCPConnection { param($State, $OwningProcess, $ErrorAction) $global:portsRead += $OwningProcess; if ($OwningProcess -eq 100) { [pscustomobject]@{ LocalAddress="127.0.0.1"; LocalPort=9999 } } else { [pscustomobject]@{ LocalAddress="127.0.0.1"; LocalPort=3333 }; [pscustomobject]@{ LocalAddress="192.168.1.10"; LocalPort=4444 }; [pscustomobject]@{ LocalAddress="127.0.0.2"; LocalPort=5555 }; [pscustomobject]@{ LocalAddress="::1"; LocalPort=6666 }; [pscustomobject]@{ LocalAddress="::"; LocalPort=7777 }; [pscustomobject]@{ LocalAddress="0.0.0.0"; LocalPort=8888 } } }',
+    `Add-Type -Language CSharp -TypeDefinition @"
+using System.Collections.Generic;
+namespace VibeUsage {
+  public sealed class ProcessInfoSnapshot { public string OwnerSid; public string ImagePath; public long CreationFileTime; }
+  public static class AntigravityProcProbe {
+    public static List<int> PortsRead = new List<int>();
+    public static string CurrentSid;
+    public static string FixtureExe;
+    public static ProcessInfoSnapshot InspectProcess(int pid) {
+      return new ProcessInfoSnapshot { OwnerSid = pid == 200 ? CurrentSid : "S-1-0-0", ImagePath = FixtureExe, CreationFileTime = 12345 };
+    }
+    public static int[] GetLoopbackPortsForPid(int pid) {
+      PortsRead.Add(pid);
+      return pid == 100 ? new int[] { 9999 } : new int[] { 3333, 8888 };
+    }
+  }
+}
+"@`,
+    '[VibeUsage.AntigravityProcProbe]::CurrentSid = $global:fixtureSid',
+    '[VibeUsage.AntigravityProcProbe]::FixtureExe = $global:fixtureExe',
+    "function Get-CimInstance { param($ClassName, $Filter) @( [pscustomobject]@{ ProcessId=100; ExecutablePath=$global:fixtureExe; CreationDate='fixture'; CommandLine='server --csrf_token=fixture-foreign' }, [pscustomobject]@{ ProcessId=200; ExecutablePath=$global:fixtureExe; CreationDate='fixture'; CommandLine='server --csrf_token=fixture-current' }) }",
     `. '${scriptPath}'`,
-    '[pscustomobject]@{ portsRead=@($global:portsRead) } | ConvertTo-Json -Compress'
+    '[pscustomobject]@{ portsRead=@([VibeUsage.AntigravityProcProbe]::PortsRead.ToArray()) } | ConvertTo-Json -Compress'
   ].join('\n');
   const output = await runProcess(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', harness], {
     timeoutMs: 8000
@@ -222,9 +242,22 @@ test('Windows discovery accepts only the hub process of the user-profile agy.exe
   const harness = [
     '$global:fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
     "$global:agy = Join-Path $env:USERPROFILE '.gemini\\bin\\agy.exe'",
-    "function Get-CimInstance { param($ClassName, $Filter) $rows = @( [pscustomobject]@{ ProcessId=1; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=hub-token' }, [pscustomobject]@{ ProcessId=2; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe chat --csrf_token=no-hub' }, [pscustomobject]@{ ProcessId=3; ExecutablePath='C:\\Temp\\agy.exe'; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=other-path' }); if ($Filter -match 'ProcessId = (\\d+)') { $rows | Where-Object { $_.ProcessId -eq [int]$Matches[1] } } else { $rows } }",
-    'function Invoke-CimMethod { param($InputObject, $MethodName) [pscustomobject]@{ ReturnValue=0; Sid=$global:fixtureSid } }',
-    'function Get-NetTCPConnection { param($State, $OwningProcess, $ErrorAction) [pscustomobject]@{ LocalAddress="127.0.0.1"; LocalPort=(5000 + $OwningProcess) } }',
+    `Add-Type -Language CSharp -TypeDefinition @"
+namespace VibeUsage {
+  public sealed class ProcessInfoSnapshot { public string OwnerSid; public string ImagePath; public long CreationFileTime; }
+  public static class AntigravityProcProbe {
+    public static string CurrentSid;
+    public static string AgyPath;
+    public static ProcessInfoSnapshot InspectProcess(int pid) {
+      return new ProcessInfoSnapshot { OwnerSid = CurrentSid, ImagePath = AgyPath + ".12345.old", CreationFileTime = 99999 };
+    }
+    public static int[] GetLoopbackPortsForPid(int pid) { return new int[] { 5000 + pid }; }
+  }
+}
+"@`,
+    '[VibeUsage.AntigravityProcProbe]::CurrentSid = $global:fixtureSid',
+    '[VibeUsage.AntigravityProcProbe]::AgyPath = $global:agy',
+    "function Get-CimInstance { param($ClassName, $Filter) @( [pscustomobject]@{ ProcessId=1; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=hub-token' }, [pscustomobject]@{ ProcessId=2; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe chat --csrf_token=no-hub' }, [pscustomobject]@{ ProcessId=3; ExecutablePath='C:\\Temp\\agy.exe'; CreationDate='f'; CommandLine='agy.exe --hub --csrf_token=other-path' }) }",
     `. '${scriptPath}'`
   ].join('\n');
   const output = await runProcess(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', harness], {

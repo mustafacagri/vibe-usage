@@ -31,7 +31,6 @@ import {
   settleOnce,
   sha256Prefix,
   unpackedPath,
-  USER_AGENT,
   windowsPowerShell,
   type Clock,
   type PostJson,
@@ -39,9 +38,9 @@ import {
 } from './common.ts';
 import { isRegularFile } from './profiles.ts';
 import {
-  discoverSafely,
   providerReading,
   type DiscoveredAccount,
+  type Discovery,
   type FetchResult,
   type ProviderAdapter,
   type ProviderReading,
@@ -538,6 +537,9 @@ const FIRST_NEW_PROFILE = 2;
 const MAX_NEW_PROFILE = 99;
 const PROFILE_NAME = /^[a-zA-Z0-9_-]+$/;
 const COPY_NAME = /(?:^|[-_])(backup|backups|history|old|archive|copy|bak)(?:[-_]|$)/i;
+// cloudcode-pa rejects non-Antigravity User-Agents on consumer accounts with UNSUPPORTED_CLIENT
+// and omits cloudaicompanionProject.
+const ANTIGRAVITY_CLOUD_USER_AGENT = 'antigravity/1.5.14';
 const PLAN_TIERS: Readonly<Record<string, string>> = {
   'free-tier': 'free',
   'standard-tier': 'standard',
@@ -672,7 +674,7 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     if (token.expiryMs !== undefined && isExpired(token.expiryMs, options.clock)) throw new ProviderError('auth_expired');
     const headers = {
       Authorization: `Bearer ${token.accessToken}`,
-      'User-Agent': USER_AGENT,
+      'User-Agent': ANTIGRAVITY_CLOUD_USER_AGENT,
       Accept: MEDIA_TYPE.json
     };
     const loadResponse = await post(QUOTA_ENDPOINTS.antigravityLoadCodeAssist, {
@@ -680,7 +682,7 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
       headers,
       body: {
         ...(token.projectId ? { cloudaicompanionProject: token.projectId } : {}),
-        metadata: { ideType: 'IDE_UNSPECIFIED', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
+        metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' }
       }
     });
     const project =
@@ -742,7 +744,10 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     return { windows, completeness: 'complete' };
   }
 
-  async function fetchLocalAccounts(accounts: readonly Account[], context: RefreshContext): Promise<Map<string, ProviderReading>> {
+  async function fetchLocalAccounts(
+    accounts: readonly Account[],
+    context: RefreshContext
+  ): Promise<{ results: Map<string, ProviderReading>; readings: AntigravityReading[] }> {
     const servers = await discoverServers(context);
     if (!servers.length) throw new ProviderError('app_closed');
     const quotaContext = { ...context, deadline: Math.min(context.deadline, Date.now() + FETCH_BUDGET_MS) };
@@ -759,8 +764,8 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     // An unidentified server could belong to any account; a partial collection is unsafe.
     if (servers.length > 1 && (readings.length !== servers.length || readings.some(reading => !reading.email)))
       throw new ProviderError('local_service_unavailable');
-    return new Map(
-      accounts.map(account => {
+    const results = new Map<string, ProviderReading>(
+      accounts.map((account): [string, ProviderReading] => {
         try {
           return [account.id, providerReading(readingForAccount(account, readings))];
         } catch (error) {
@@ -768,6 +773,16 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
         }
       })
     );
+    return { results, readings };
+  }
+
+  function enrichProfileWithLocal(reading: ProviderReading, localReadings: readonly AntigravityReading[]): ProviderReading {
+    if (reading.kind === 'failed' || !reading.result.signedInAs || !localReadings.length) return reading;
+    const email = normalizeEmail(reading.result.signedInAs);
+    const matching = localReadings.filter(entry => entry.email === email);
+    if (!matching.length) return reading;
+    const windows = mergeWindows([{ windows: reading.result.windows.map(normalizeWindow), email }, ...matching]);
+    return { ...reading, result: { ...reading.result, windows } };
   }
 
   async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
@@ -776,7 +791,11 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     const profileAccounts = accounts.filter(a => Boolean(a.configDir));
     const localAccounts = accounts.filter(a => !a.configDir);
     const results = new Map<string, ProviderReading>();
-    const [profileReadings, localReadings] = await Promise.all([
+    const emptyLocal = (): { results: Map<string, ProviderReading>; readings: AntigravityReading[] } => ({
+      results: new Map(),
+      readings: []
+    });
+    const [profileReadings, localOutcome] = await Promise.all([
       Promise.all(
         profileAccounts.map(async account => {
           const reading = await fetchProfileAccount(account, context).then(providerReading, (error: unknown): ProviderReading => ({
@@ -788,12 +807,15 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
       ),
       localAccounts.length
         ? fetchLocalAccounts(localAccounts, context).catch(
-            (error: unknown) => new Map<string, ProviderReading>(localAccounts.map(a => [a.id, { kind: 'failed', error }]))
+            (error: unknown): { results: Map<string, ProviderReading>; readings: AntigravityReading[] } => ({
+              results: new Map(localAccounts.map(a => [a.id, { kind: 'failed', error }])),
+              readings: []
+            })
           )
-        : Promise.resolve(new Map<string, ProviderReading>())
+        : Promise.resolve(emptyLocal())
     ]);
-    for (const [id, reading] of profileReadings) results.set(id, reading);
-    for (const [id, reading] of localReadings) results.set(id, reading);
+    for (const [id, reading] of profileReadings) results.set(id, enrichProfileWithLocal(reading, localOutcome.readings));
+    for (const [id, reading] of localOutcome.results) results.set(id, reading);
     return results;
   }
 
@@ -801,39 +823,44 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     id: 'antigravity',
     // Finding the servers (PowerShell on Windows), then reading them.
     fetchTimeoutMs,
-    discover: () =>
-      discoverSafely(async () => {
-        const isolated = await discoverIsolatedProfiles();
-        let localEmails: string[] = [];
-        try {
-          const servers = await discoverServers();
-          if (servers.length) {
-            const queries = await resolveServerEmails(servers, read);
-            const emails = fulfilled(queries);
-            // Fail closed: an unidentified server could belong to any account.
-            if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
-            localEmails = [...new Set(emails.filter(email => email !== null))];
-          }
-        } catch (error) {
-          if (!isolated.accounts.length || !(error instanceof ProviderError && error.code === 'app_closed')) throw error;
+    discover: async (): Promise<Discovery> => {
+      const isolated = await discoverIsolatedProfiles().catch(
+        (): { accounts: DiscoveredAccount[]; emails: Set<string>; complete: boolean } => ({
+          accounts: [],
+          emails: new Set(),
+          complete: false
+        })
+      );
+      let localEmails: string[] = [];
+      let localComplete = true;
+      try {
+        const servers = await discoverServers();
+        if (servers.length) {
+          const queries = await resolveServerEmails(servers, read);
+          const emails = fulfilled(queries);
+          // Fail closed: an unidentified server could belong to any account.
+          if (emails.length !== servers.length || emails.some(email => !email)) throw new ProviderError('local_service_unavailable');
+          localEmails = [...new Set(emails.filter(email => email !== null))];
         }
-        const localAccounts: DiscoveredAccount[] = localEmails
-          .filter(email => !isolated.emails.has(normalizeEmail(email)))
-          .map(email => ({
-            id: antigravityAccountId(email),
-            providerId: 'antigravity',
-            label: email.slice(0, MAX_LABEL_LENGTH),
-            email,
-            primary: false,
-            enabled: true
-          }));
-        const all = [...localAccounts, ...isolated.accounts];
-        if (!all.length) throw new ProviderError('app_closed');
-        if (!isolated.complete) throw new ProviderError('local_service_unavailable');
-        const [first] = all;
-        if (first && !all.some(a => a.primary)) first.primary = true;
-        return all;
-      }),
+      } catch (error) {
+        if (!(error instanceof ProviderError && error.code === 'app_closed')) localComplete = false;
+      }
+      const localAccounts: DiscoveredAccount[] = localEmails
+        .filter(email => !isolated.emails.has(normalizeEmail(email)))
+        .map(email => ({
+          id: antigravityAccountId(email),
+          providerId: 'antigravity',
+          label: email.slice(0, MAX_LABEL_LENGTH),
+          email,
+          primary: false,
+          enabled: true
+        }));
+      const all = [...localAccounts, ...isolated.accounts];
+      if (!all.length) return { kind: 'unknown', accounts: [] };
+      const [first] = all;
+      if (first && !all.some(a => a.primary)) first.primary = true;
+      return { kind: localComplete && isolated.complete ? 'complete' : 'unknown', accounts: all };
+    },
     fetchAll,
     async fetch(account: Account, context?: RefreshContext) {
       const reading = (await fetchAll([account], context)).get(account.id);

@@ -237,9 +237,9 @@ test('isolated Antigravity profiles discover, read quota from cloudcode-pa and s
   const dir3 = await createAntigravityProfileFolder(home, async d => !(await isSignedInAntigravityProfile(d)));
   assert.equal(path.basename(dir3), '.antigravity-3');
 
-  const calls: { endpoint: string; body: unknown }[] = [];
+  const calls: { endpoint: string; body: unknown; headers?: Record<string, string> }[] = [];
   const postJson: PostJson = (endpoint, options) => {
-    calls.push({ endpoint, body: options?.body });
+    calls.push({ endpoint, body: options?.body, ...(options?.headers ? { headers: options.headers } : {}) });
     if (endpoint === QUOTA_ENDPOINTS.antigravityLoadCodeAssist)
       return Promise.resolve({ cloudaicompanionProject: 'proj-123', paidTier: { id: 'g1-pro-tier', name: 'Pro' } });
     if (endpoint === QUOTA_ENDPOINTS.antigravityQuotaSummary)
@@ -277,18 +277,52 @@ test('isolated Antigravity profiles discover, read quota from cloudcode-pa and s
     calls.map(c => c.endpoint),
     [QUOTA_ENDPOINTS.antigravityLoadCodeAssist, QUOTA_ENDPOINTS.antigravityQuotaSummary]
   );
+  assert.match(calls[0]?.headers?.['User-Agent'] ?? '', /^antigravity\//);
+  assert.equal((calls[0]?.body as { metadata?: { ideType?: string } } | undefined)?.metadata?.ideType, 'ANTIGRAVITY');
 
-  // Deduplicates a local server running the same e-mail as an isolated profile.
+  // When local server discovery fails transiently, isolated profiles are still returned as unknown (partial) discovery
+  // so pending sign-ins still promote to user accounts without dropping vanished local accounts.
+  const degradedLocal = createAntigravityProvider({
+    home,
+    clock: () => now,
+    postJson,
+    discoverAntigravityServers: () => Promise.reject(new ProviderError('local_service_unavailable'))
+  });
+  const degradedDiscovery = await degradedLocal.discover();
+  assert.ok(!Array.isArray(degradedDiscovery) && degradedDiscovery.kind === 'unknown');
+  assert.equal(degradedDiscovery.accounts.length, 1);
+  assert.equal(degradedDiscovery.accounts[0]?.id, profileAccount.id);
+
+  // Deduplicates a local server running the same e-mail as an isolated profile, and merges extra local quota groups.
   const mixed = createAntigravityProvider({
     home,
     clock: () => now,
     postJson,
     discoverAntigravityServers: () => Promise.resolve([server(501, 'tok', [5101])]),
-    requestLocalJson: () => Promise.resolve(status('work@example.com'))
+    requestLocalJson: (_target, _port, method) =>
+      Promise.resolve(
+        method === 'GetUserStatus'
+          ? status('work@example.com')
+          : {
+              groups: [
+                group('claude-gpt', 'Claude and GPT models', [bucket('3p-weekly', 'weekly', 0.95)]),
+                group('gemini', 'Gemini Models', [bucket('gemini-5h', '5h', 0.65)])
+              ]
+            }
+      )
   });
   const mixedDiscovery = await mixed.discover();
   assert.ok(!Array.isArray(mixedDiscovery) && mixedDiscovery.kind === 'complete');
   assert.equal(mixedDiscovery.accounts.length, 1, 'does not duplicate the same e-mail across local and isolated');
+
+  const mixedReadings = await mixed.fetchAll?.([profileAccount, emailAccount('other@example.com')], {
+    deadline: Date.now() + 30_000,
+    signal: new AbortController().signal
+  });
+  const enriched = mixedReadings?.get(profileAccount.id);
+  assert.ok(enriched && enriched.kind !== 'failed');
+  assert.equal(enriched.result.windows.length, 3, 'merges extra groups from a matching-email local hub');
+  assert.equal(mixedReadings?.get(antigravityAccountId('other@example.com'))?.kind, 'failed');
 
   // Expired access tokens fail fast with auth_expired so background renewal can run.
   const expired = createAntigravityProvider({
