@@ -1,7 +1,8 @@
 # Runs one command-line tool in this (new, visible) console window.
 # Arguments arrive as base64-encoded, NUL-separated UTF-8 so that no shell ever re-parses
-# them (NUL cannot occur inside a process argument). The environment is prepared by the
-# caller. Windows PowerShell 5 compatible.
+# them (NUL cannot occur inside a process argument). Pass environment changes as
+# arguments too, since a terminal tab can start with its own environment.
+# Windows PowerShell 5 compatible.
 #
 # With -Handoff, the tab stays with the session: when the tool exits and the app has written
 # the next command to that file (the session moved to another account), it runs here too.
@@ -10,6 +11,7 @@ param(
     [Parameter(Mandatory = $true)][string]$Executable,
     [string]$Title,
     [string]$ArgumentsBase64,
+    [string]$EnvironmentBase64,
     [string]$Handoff,
     [switch]$NewWindow
 )
@@ -26,7 +28,7 @@ function ConvertTo-ArgumentList([string[]]$Values) {
 # script again in a new, visible console window.
 if ($NewWindow) {
     $relaunch = @('-NoLogo', '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath)
-    foreach ($name in 'WorkingDirectory', 'Executable', 'Title', 'ArgumentsBase64', 'Handoff') {
+    foreach ($name in 'WorkingDirectory', 'Executable', 'Title', 'ArgumentsBase64', 'EnvironmentBase64', 'Handoff') {
         $value = Get-Variable -Name $name -ValueOnly
         if ($value) { $relaunch += "-$name", $value }
     }
@@ -46,6 +48,20 @@ if ($NewWindow) {
         Start-Process -FilePath $powershell -ArgumentList ($quoted -join ' ')
     }
     exit
+}
+function Set-LaunchEnvironment($Changes) {
+    foreach ($name in @($Changes.unset)) {
+        if ($name) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue }
+    }
+    if ($Changes.set) {
+        foreach ($entry in $Changes.set.PSObject.Properties) {
+            Set-Item -LiteralPath "Env:$($entry.Name)" -Value $entry.Value
+        }
+    }
+}
+if ($EnvironmentBase64) {
+    $environmentJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($EnvironmentBase64))
+    Set-LaunchEnvironment ($environmentJson | ConvertFrom-Json)
 }
 while ($true) {
     Set-Location -LiteralPath $WorkingDirectory
@@ -69,8 +85,7 @@ while ($true) {
     # The next command, taken once: the file is removed before it runs.
     $next = Get-Content -LiteralPath $Handoff -Raw -Encoding UTF8 | ConvertFrom-Json
     Remove-Item -LiteralPath $Handoff -Force
-    foreach ($name in @($next.unset)) { if ($name) { Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue } }
-    if ($next.set) { foreach ($entry in $next.set.PSObject.Properties) { Set-Item -LiteralPath "Env:$($entry.Name)" -Value $entry.Value } }
+    Set-LaunchEnvironment $next
     $WorkingDirectory = $next.workingDirectory
     $Executable = $next.executable
     $Title = $next.title

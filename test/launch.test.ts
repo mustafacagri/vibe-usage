@@ -131,7 +131,7 @@ test('Windows terminal launch passes arguments without any shell re-parsing them
     cwd,
     binary: 'C:\\Tools\\claude.exe',
     args,
-    env: { unset: ['CLAUDE_CONFIG_DIR'] },
+    env: { set: { CODEX_HOME: cwd }, unset: ['CLAUDE_CONFIG_DIR'] },
     dataDir,
     platform: 'win32',
     spawnProcess
@@ -142,12 +142,17 @@ test('Windows terminal launch passes arguments without any shell re-parsing them
   assert.equal(psArgs[psArgs.indexOf('-WorkingDirectory') + 1], cwd);
   const encoded = psArgs[psArgs.indexOf('-ArgumentsBase64') + 1] ?? '';
   assert.deepEqual(Buffer.from(encoded, 'base64').toString('utf8').split('\0'), args);
+  const encodedEnvironment = psArgs[psArgs.indexOf('-EnvironmentBase64') + 1] ?? '';
+  assert.deepEqual(
+    JSON.parse(Buffer.from(encodedEnvironment, 'base64').toString('utf8')),
+    environmentChanges({ set: { CODEX_HOME: cwd }, unset: ['CLAUDE_CONFIG_DIR'] })
+  );
   // A detached PowerShell has no console and exits; the hidden one opens the window itself.
   assert.deepEqual(shells, [[false, undefined, true]]);
   assert.equal(psArgs.at(-1), '-NewWindow');
   const names = Object.keys(environments[0] ?? {}).map(name => name.toUpperCase());
   assert.equal(
-    names.some(name => name === 'CLAUDE_CONFIG_DIR' || CREDENTIAL_ENV_KEYS.includes(name)),
+    names.some(name => name === 'CLAUDE_CONFIG_DIR' || (name !== 'CODEX_HOME' && CREDENTIAL_ENV_KEYS.includes(name))),
     false
   );
 });
@@ -155,30 +160,43 @@ test('Windows terminal launch passes arguments without any shell re-parsing them
 // Windows PowerShell's own `& tool @args` does not escape quotes inside an argument: a prompt
 // with quotes (a background command it names) came out as several arguments, some of them
 // options. The script builds the command line itself; the tool gets each argument as sent.
-test('the Windows terminal script hands the tool its arguments exactly', { skip: process.platform !== 'win32' }, async t => {
-  const dir = await tempDir(t, 'vibe-terminal-');
-  const printer = path.join(dir, 'print.js');
-  await fs.writeFile(printer, 'console.log(JSON.stringify(process.argv.slice(2)));\n');
-  const args = [
-    'Tasks: b1 (echo " --dangerously-skip-permissions "). Read.',
-    'npm run "build"',
-    String.raw`a\" b`,
-    'ends with a backslash\\',
-    `it's & $(calc)`,
-    ''
-  ];
-  const script = path.resolve(import.meta.dirname, '../src/launchers/terminal.ps1');
-  const output = execFileSync(
-    'powershell.exe',
-    [
-      ...['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
-      ...['-WorkingDirectory', dir, '-Executable', process.execPath],
-      ...['-ArgumentsBase64', Buffer.from([printer, ...args].join('\0'), 'utf8').toString('base64')]
-    ],
-    { encoding: 'utf8' }
-  );
-  assert.deepEqual(JSON.parse(output.trim().split('\n').at(-1) ?? 'null'), args);
-});
+test(
+  'the Windows terminal script passes exact arguments and selects the profile after entering the tab',
+  { skip: process.platform !== 'win32' },
+  async t => {
+    const dir = await tempDir(t, 'vibe-terminal-');
+    const printer = path.join(dir, 'print.js');
+    await fs.writeFile(
+      printer,
+      `console.log(JSON.stringify({ args: process.argv.slice(2), home: process.env.CODEX_HOME, hasApiKey: Boolean(process.env.OPENAI_API_KEY) }));\n`
+    );
+    const profile = path.join(dir, '.codex-4');
+    const changes = environmentChanges({ set: { CODEX_HOME: profile } });
+    const args = [
+      'Tasks: b1 (echo " --dangerously-skip-permissions "). Read.',
+      'npm run "build"',
+      String.raw`a\" b`,
+      'ends with a backslash\\',
+      `it's & $(calc)`,
+      ''
+    ];
+    const script = path.resolve(import.meta.dirname, '../src/launchers/terminal.ps1');
+    const output = execFileSync(
+      'powershell.exe',
+      [
+        ...['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+        ...['-WorkingDirectory', dir, '-Executable', process.execPath],
+        ...['-ArgumentsBase64', Buffer.from([printer, ...args].join('\0'), 'utf8').toString('base64')],
+        ...['-EnvironmentBase64', Buffer.from(JSON.stringify(changes), 'utf8').toString('base64')]
+      ],
+      {
+        encoding: 'utf8',
+        env: { ...cleanEnvironment(), CODEX_HOME: path.join(dir, '.codex'), OPENAI_API_KEY: 'inherited-override' }
+      }
+    );
+    assert.deepEqual(JSON.parse(output.trim().split('\n').at(-1) ?? 'null'), { args, home: profile, hasApiKey: false });
+  }
+);
 
 test('desktop apps open the project; a missing Windows install is reported', async t => {
   const cwd = await tempDir(t, 'vibe-cwd-');

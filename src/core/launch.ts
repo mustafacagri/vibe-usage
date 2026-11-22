@@ -159,6 +159,8 @@ export async function openInTerminal({
       binary,
       ...(title ? ['-Title', title] : []),
       ...(args.length ? ['-ArgumentsBase64', encodeArguments(args)] : []),
+      '-EnvironmentBase64',
+      Buffer.from(JSON.stringify(changes), 'utf8').toString('base64'),
       ...(handoff ? ['-Handoff', handoff] : []),
       '-NewWindow'
     ];
