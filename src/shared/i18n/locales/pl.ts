@@ -406,6 +406,7 @@ export const pl: Messages = {
   error_antigravity_switch_failed: 'Nie udało się przełączyć aktywnego logowania Antigravity.',
   error_antigravity_no_backup: 'Na tym urządzeniu nie znaleziono kopii zapasowej logowania Antigravity.',
   switchAccountBtn: 'Przełącz na {name}',
+  activeLoginBadge: 'Aktywne logowanie',
   switchAntigravityBtn: 'Przełącz konto',
   switchAntigravityConfirm:
     'Zastąpić aktywne logowanie Antigravity na tym urządzeniu? Bieżące logowanie zostanie najpierw zapisane jako kopia zapasowa, aby można je było później przywrócić. Lokalna usługa agy --hub zostanie uruchomiona ponownie; uruchom ponownie Antigravity IDE, aby zastosować zmianę (działające sesje zachowują poprzednie logowanie w pamięci).',

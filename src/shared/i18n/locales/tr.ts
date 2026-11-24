@@ -393,6 +393,7 @@ export const tr: Messages = {
   error_antigravity_switch_failed: 'Etkin Antigravity oturumu değiştirilemedi.',
   error_antigravity_no_backup: 'Bu cihazda yedeklenmiş bir Antigravity oturumu bulunamadı.',
   switchAccountBtn: '{name} hesabına geç',
+  activeLoginBadge: 'Etkin giriş',
   switchAntigravityBtn: 'Hesabı değiştir',
   switchAntigravityConfirm:
     'Bu cihazdaki etkin Antigravity oturumu değiştirilsin mi? Mevcut oturumunuz daha sonra geri yükleyebilmeniz için önce yedeklenir. Yerel agy --hub servisi yeniden başlatılır; yeni hesabın geçerli olması için Antigravity IDE’yi yeniden başlatın (açık oturumlar önceki girişi bellekte tutar).',

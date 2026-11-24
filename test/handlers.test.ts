@@ -708,6 +708,34 @@ test('switching and restoring the active Antigravity sign-in require explicit co
   assert.equal(declinedCalls, 0);
 });
 
+test('switching to the Antigravity profile the device is already signed in with changes nothing', async t => {
+  const { context, log, home } = await harness(t);
+  const isolated = account({
+    id: 'antigravity:profile-2',
+    providerId: 'antigravity',
+    configDir: path.join(home, '.antigravity-2'),
+    primary: false
+  });
+  const agy: ProviderAdapter = {
+    id: 'antigravity',
+    discover: () => Promise.resolve([isolated]),
+    fetch: () => Promise.resolve({ windows: [{ id: 'w', remainingPercent: 50 }], activeLogin: true })
+  };
+  context.service = await createService({ settingsPath: path.join(context.dataDir, 'settings.json'), providers: [agy] });
+  await context.service.refresh();
+  let switched = 0;
+  context.antigravitySwitch = {
+    switchAccount: () => {
+      switched++;
+      return Promise.resolve({ hubRestarted: true });
+    },
+    restoreBackup: () => Promise.resolve({ hubRestarted: true })
+  };
+  assert.deepEqual(await createHandlers(context).switchAntigravityAccount(isolated.id), { status: 'already_active' });
+  assert.equal(switched, 0, 'the keyring is not rewritten and the hub not restarted');
+  assert.deepEqual(log.dialogs, [], 'nothing to confirm');
+});
+
 test('continuing work onto an isolated Antigravity account asks confirmation before switching the OS login', async t => {
   const { context, log, home } = await harness(t, { confirm: false });
   const isolated = account({

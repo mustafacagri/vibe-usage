@@ -238,6 +238,8 @@ export interface MeasuredAccount extends Account {
   plan?: string;
   // From the latest reading; kept in memory only, never in the settings file.
   signedInAs?: string;
+  // Memory only, like signedInAs: set only when the local service verifiably runs with this account.
+  activeLogin?: true;
   accountKey?: string;
   resetCredits?: number;
   messageCode?: StatusCode;

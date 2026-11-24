@@ -11,6 +11,8 @@ export interface FetchResult {
   plan?: string;
   // The e-mail the account is signed in with, as the tool recorded it on this device.
   signedInAs?: string;
+  // Verified: this account's sign-in is the one the tool's local service is running with now.
+  activeLogin?: true;
   // Opaque provider identity verified by the usage read, independent of display labels.
   accountKey?: string;
   resetCredits?: number;

@@ -546,7 +546,14 @@ function launchButton(
 const canLaunch = (provider: Provider, account: MeasuredAccount): boolean =>
   provider.id === 'claude' && Boolean(account.configDir) && account.status === 'ok';
 const canSwitchAntigravity = (provider: Provider, account: MeasuredAccount): boolean =>
-  provider.id === 'antigravity' && Boolean(account.configDir) && !needsSignIn(account) && account.status !== 'pending';
+  provider.id === 'antigravity' &&
+  Boolean(account.configDir) &&
+  !account.activeLogin &&
+  !needsSignIn(account) &&
+  account.status !== 'pending';
+// The isolated profile this device is signed in with now: there is nothing to switch to.
+const isActiveAntigravity = (provider: Provider, account: MeasuredAccount): boolean =>
+  provider.id === 'antigravity' && Boolean(account.configDir) && account.activeLogin === true;
 const pickerName = (account: Account): string => `${account.primary ? '★ ' : ''}${accountName(account)}`;
 
 function switchAntigravityButton(account: MeasuredAccount): HTMLButtonElement {
@@ -640,6 +647,7 @@ function accountBody(provider: Provider, shown: MeasuredAccount, accounts: reado
   if (message) nodes.push(element('div', 'empty', message));
   nodes.push(...resetControls(shown));
   if (canLaunch(provider, shown)) nodes.push(launchButton(provider, shown));
+  if (isActiveAntigravity(provider, shown)) nodes.push(element('div', 'empty', t('activeLoginBadge')));
   if (canSwitchAntigravity(provider, shown)) nodes.push(switchAntigravityButton(shown));
   if (needsSignIn(shown)) nodes.push(signInButton(provider, shown));
   else if (toolCannotStart(shown)) nodes.push(checkInstallButton());
@@ -688,6 +696,7 @@ function compareActions(provider: Provider, account: MeasuredAccount, accounts: 
     const launch = launchButton(provider, account, t('launchAccountBtn', { name }));
     column.append(launch);
   }
+  if (isActiveAntigravity(provider, account)) column.append(element('div', 'empty', t('activeLoginBadge')));
   if (canSwitchAntigravity(provider, account)) column.append(switchAntigravityButton(account));
   if (needsSignIn(account)) column.append(signInButton(provider, account, t('signInAccountBtn', { name })));
   else if (toolCannotStart(account)) column.append(checkInstallButton());

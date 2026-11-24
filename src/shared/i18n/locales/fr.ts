@@ -407,6 +407,7 @@ export const fr: Messages = {
   error_antigravity_switch_failed: 'Impossible de changer la connexion Antigravity active.',
   error_antigravity_no_backup: 'Aucune sauvegarde de connexion Antigravity n’a été trouvée sur cet appareil.',
   switchAccountBtn: 'Basculer vers {name}',
+  activeLoginBadge: 'Connexion active',
   switchAntigravityBtn: 'Changer de compte',
   switchAntigravityConfirm:
     'Remplacer la connexion Antigravity active sur cet appareil ? Votre connexion actuelle est d’abord sauvegardée afin de pouvoir la restaurer plus tard. Le service local agy --hub va redémarrer ; redémarrez Antigravity IDE pour appliquer (les sessions en cours gardent la connexion précédente en mémoire).',

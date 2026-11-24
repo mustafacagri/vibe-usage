@@ -446,6 +446,8 @@ export async function createService({
     else delete target.accountKey;
     if (result.signedInAs) target.signedInAs = result.signedInAs;
     else delete target.signedInAs;
+    if (result.activeLogin) target.activeLogin = true;
+    else delete target.activeLogin;
     if (result.status === 'no_limits_reported') {
       Object.assign(target, { windows: [], status: 'no_limits_reported', messageCode: 'no_limits_reported', fetchedAt });
       return;
@@ -465,6 +467,8 @@ export async function createService({
   function applyFailure(target: MeasuredAccount, error: unknown, attemptedAt: number): void {
     const code = providerErrorCode(error);
     delete target.resetCredits;
+    // A failed read cannot verify which sign-in is running now.
+    delete target.activeLogin;
     if (target.providerId === 'codex' && (code === 'auth_invalid' || code === 'auth_missing')) {
       delete target.fetchedAt;
       delete target.accountKey;

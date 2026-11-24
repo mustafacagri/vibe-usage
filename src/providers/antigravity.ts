@@ -746,12 +746,13 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
 
   async function fetchLocalAccounts(
     accounts: readonly Account[],
-    context: RefreshContext
+    context: RefreshContext,
+    identify = false
   ): Promise<{ results: Map<string, ProviderReading>; readings: AntigravityReading[] }> {
     const servers = await discoverServers(context);
     if (!servers.length) throw new ProviderError('app_closed');
     const quotaContext = { ...context, deadline: Math.min(context.deadline, Date.now() + FETCH_BUDGET_MS) };
-    const needsEmail = accounts.some(account => Boolean(account.email)) || servers.length > 1 || accounts.length > 1;
+    const needsEmail = identify || accounts.some(account => Boolean(account.email)) || servers.length > 1 || accounts.length > 1;
     // Every PID is queried once. The verified identity partitions this refresh's readings;
     // no credential-bearing cache survives into the next refresh.
     const queries = await Promise.allSettled(servers.map(server => fetchServerWindows(server, read, quotaContext, needsEmail)));
@@ -782,7 +783,8 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     const matching = localReadings.filter(entry => entry.email === email);
     if (!matching.length) return reading;
     const windows = mergeWindows([{ windows: reading.result.windows.map(normalizeWindow), email }, ...matching]);
-    return { ...reading, result: { ...reading.result, windows } };
+    // The local service runs with this very sign-in: it is the active device login.
+    return { ...reading, result: { ...reading.result, windows, activeLogin: true } };
   }
 
   async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
@@ -805,8 +807,9 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
           return [account.id, reading] as const;
         })
       ),
-      localAccounts.length
-        ? fetchLocalAccounts(localAccounts, context).catch(
+      // An isolated profile needs the local service's identity too, to tell whether it is the active login.
+      localAccounts.length || profileAccounts.length
+        ? fetchLocalAccounts(localAccounts, context, profileAccounts.length > 0).catch(
             (error: unknown): { results: Map<string, ProviderReading>; readings: AntigravityReading[] } => ({
               results: new Map(localAccounts.map(a => [a.id, { kind: 'failed', error }])),
               readings: []

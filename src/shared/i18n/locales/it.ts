@@ -410,6 +410,7 @@ export const it: Messages = {
   error_antigravity_switch_failed: 'Impossibile cambiare l’accesso attivo di Antigravity.',
   error_antigravity_no_backup: 'Nessun backup dell’accesso Antigravity trovato su questo dispositivo.',
   switchAccountBtn: 'Passa a {name}',
+  activeLoginBadge: 'Accesso attivo',
   switchAntigravityBtn: 'Cambia account',
   switchAntigravityConfirm:
     'Sostituire l’accesso Antigravity attivo su questo dispositivo? L’accesso attuale viene prima salvato in backup per poterlo ripristinare in seguito. Il servizio locale agy --hub verrà riavviato; riavvia Antigravity IDE per applicare (le sessioni in corso mantengono in memoria l’accesso precedente).',

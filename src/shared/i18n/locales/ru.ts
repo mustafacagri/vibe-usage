@@ -405,6 +405,7 @@ export const ru: Messages = {
   error_antigravity_switch_failed: 'Не удалось переключить активный вход Antigravity.',
   error_antigravity_no_backup: 'На этом устройстве не найдена резервная копия входа Antigravity.',
   switchAccountBtn: 'Переключиться на {name}',
+  activeLoginBadge: 'Активный вход',
   switchAntigravityBtn: 'Переключить аккаунт',
   switchAntigravityConfirm:
     'Заменить активный вход Antigravity на этом устройстве? Текущий вход сначала сохранится в резервную копию, чтобы его можно было вернуть позже. Локальная служба agy --hub перезапустится; перезапустите Antigravity IDE, чтобы применить изменение (открытые сессии сохраняют прежний вход в памяти).',

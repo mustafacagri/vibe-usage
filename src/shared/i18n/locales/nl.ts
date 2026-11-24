@@ -408,6 +408,7 @@ export const nl: Messages = {
   error_antigravity_switch_failed: 'De actieve Antigravity-aanmelding kon niet worden gewisseld.',
   error_antigravity_no_backup: 'Er is geen back-up van een Antigravity-aanmelding op dit apparaat gevonden.',
   switchAccountBtn: 'Overschakelen naar {name}',
+  activeLoginBadge: 'Actieve aanmelding',
   switchAntigravityBtn: 'Account wisselen',
   switchAntigravityConfirm:
     'De actieve Antigravity-aanmelding op dit apparaat vervangen? Je huidige aanmelding wordt eerst als back-up opgeslagen zodat je die later kunt herstellen. De lokale service agy --hub wordt herstart; herstart Antigravity IDE om dit toe te passen (lopende sessies houden de vorige aanmelding in het geheugen).',

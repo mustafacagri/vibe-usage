@@ -332,3 +332,53 @@ test('isolated Antigravity profiles discover, read quota from cloudcode-pa and s
   });
   await assert.rejects(expired.fetch(profileAccount), { code: 'auth_expired' });
 });
+
+test('an isolated profile is marked as the active login only when the local service runs with its sign-in', async t => {
+  const home = await tempDir(t, 'vibe-agy-active-');
+  const dir = await createAntigravityProfileFolder(home, () => Promise.resolve(true));
+  const now = Date.parse('2026-10-20T12:00:00Z');
+  await fs.writeFile(
+    antigravityTokenPath(dir),
+    JSON.stringify({
+      token: { access_token: 'fixture-access-token', refresh_token: 'fixture-refresh-token', expiry: '2026-10-20T13:00:00Z' },
+      id_token_email: 'work@example.com',
+      auth_method: 'consumer'
+    })
+  );
+  const postJson: PostJson = endpoint =>
+    Promise.resolve(
+      endpoint === QUOTA_ENDPOINTS.antigravityLoadCodeAssist
+        ? { cloudaicompanionProject: 'proj-1' }
+        : { groups: [group('gemini', 'Gemini Models', [bucket('gemini-5h', '5h', 0.5)])] }
+    );
+  const profile = antigravityProfile(dir, 'work@example.com');
+  const context = { deadline: Date.now() + 30_000, signal: new AbortController().signal };
+  const localAs = (email: string | null) =>
+    createAntigravityProvider({
+      home,
+      clock: () => now,
+      postJson,
+      discoverAntigravityServers: () => Promise.resolve([server(501, 'tok', [5101])]),
+      requestLocalJson: (_target, _port, method) =>
+        Promise.resolve(
+          method === 'GetUserStatus' ? status(email) : { groups: [group('gemini', 'Gemini Models', [bucket('gemini-5h', '5h', 0.4)])] }
+        )
+    });
+  const activeOf = async (adapter: ReturnType<typeof createAntigravityProvider>) => {
+    const reading = (await adapter.fetchAll?.([profile], context))?.get(profile.id);
+    assert.ok(reading && reading.kind !== 'failed', 'the cloud reading of the profile still succeeds');
+    return reading.result.activeLogin;
+  };
+
+  // Only a profile: the hub is still asked who it is signed in as.
+  assert.equal(await activeOf(localAs('Work@Example.com')), true);
+  assert.equal(await activeOf(localAs('someone-else@example.com')), undefined, 'another login is running');
+  assert.equal(await activeOf(localAs(null)), undefined, 'an unidentified service proves nothing');
+  const closed = createAntigravityProvider({
+    home,
+    clock: () => now,
+    postJson,
+    discoverAntigravityServers: () => Promise.reject(new ProviderError('app_closed'))
+  });
+  assert.equal(await activeOf(closed), undefined, 'no running service, no active login');
+});

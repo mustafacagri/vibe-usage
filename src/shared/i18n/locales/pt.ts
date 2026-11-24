@@ -406,6 +406,7 @@ export const pt: Messages = {
   error_antigravity_switch_failed: 'Não foi possível trocar o login ativo do Antigravity.',
   error_antigravity_no_backup: 'Nenhum backup de login do Antigravity foi encontrado neste dispositivo.',
   switchAccountBtn: 'Trocar para {name}',
+  activeLoginBadge: 'Login ativo',
   switchAntigravityBtn: 'Trocar conta',
   switchAntigravityConfirm:
     'Substituir o login ativo do Antigravity neste dispositivo? Seu login atual é salvo em backup primeiro para você restaurá-lo depois. O serviço local agy --hub será reiniciado; reinicie o Antigravity IDE para aplicar (sessões em execução mantêm o login anterior na memória).',
