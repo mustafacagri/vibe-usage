@@ -408,6 +408,7 @@ export const es: Messages = {
   error_antigravity_switch_failed: 'No se pudo cambiar la sesión activa de Antigravity.',
   error_antigravity_no_backup: 'No se encontró ninguna copia de seguridad de sesión de Antigravity en este dispositivo.',
   switchAccountBtn: 'Cambiar a {name}',
+  activeLoginBadge: 'Sesión activa',
   switchAntigravityBtn: 'Cambiar cuenta',
   switchAntigravityConfirm:
     '¿Reemplazar la sesión activa de Antigravity en este dispositivo? Tu sesión actual se respalda primero para que puedas restaurarla después. El servicio local agy --hub se reiniciará; reinicia Antigravity IDE para aplicar el cambio (las sesiones abiertas conservan la sesión anterior en memoria).',

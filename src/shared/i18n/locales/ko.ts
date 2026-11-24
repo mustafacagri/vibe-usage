@@ -392,6 +392,7 @@ export const ko: Messages = {
   error_antigravity_switch_failed: '활성 Antigravity 로그인을 전환하지 못했습니다.',
   error_antigravity_no_backup: '이 기기에서 백업된 Antigravity 로그인을 찾을 수 없습니다.',
   switchAccountBtn: '{name} 계정으로 전환',
+  activeLoginBadge: '사용 중인 로그인',
   switchAntigravityBtn: '계정 전환',
   switchAntigravityConfirm:
     '이 기기의 활성 Antigravity 로그인을 교체할까요? 나중에 복원할 수 있도록 현재 로그인을 먼저 백업합니다. 로컬 agy --hub 서비스가 다시 시작되며, 변경 사항을 적용하려면 Antigravity IDE를 다시 시작해야 합니다(실행 중인 세션은 이전 로그인을 메모리에 유지합니다).',

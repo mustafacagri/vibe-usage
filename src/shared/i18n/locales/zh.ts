@@ -379,6 +379,7 @@ export const zh: Messages = {
   error_antigravity_switch_failed: '无法切换当前活动的 Antigravity 登录。',
   error_antigravity_no_backup: '在此设备上未找到备份的 Antigravity 登录。',
   switchAccountBtn: '切换到 {name}',
+  activeLoginBadge: '当前登录',
   switchAntigravityBtn: '切换账号',
   switchAntigravityConfirm:
     '替换此设备上当前活动的 Antigravity 登录？系统会先备份当前登录以便稍后恢复。本地 agy --hub 服务将重启；请重启 Antigravity IDE 以生效（正在运行的会话会在内存中保留先前的登录）。',

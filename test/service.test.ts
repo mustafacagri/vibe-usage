@@ -993,3 +993,33 @@ test('a signed-out secondary account does not degrade a healthy provider to stal
   const fourth = (await service.refresh('antigravity')).providers[0];
   assert.equal(fourth?.status, 'stale');
 });
+
+test('the active Antigravity login follows the latest reading and is dropped when a read fails', async t => {
+  let outcome: 'active' | 'inactive' | 'failed' = 'active';
+  const { service, settingsPath } = await start(t, {
+    providers: [
+      adapter(
+        'antigravity',
+        () => [found('antigravity:profile-1', { providerId: 'antigravity', primary: true })],
+        () =>
+          outcome === 'failed'
+            ? Promise.reject(new ProviderError('local_service_unavailable'))
+            : Promise.resolve({
+                windows: [{ id: 'w', remainingPercent: 50 }],
+                ...(outcome === 'active' ? { activeLogin: true as const } : {})
+              })
+      )
+    ]
+  });
+  await service.refresh();
+  assert.equal(measured(service, 'antigravity').activeLogin, true);
+  outcome = 'inactive';
+  await service.refresh();
+  assert.equal(measured(service, 'antigravity').activeLogin, undefined, 'another login took over');
+  outcome = 'active';
+  await service.refresh();
+  outcome = 'failed';
+  await service.refresh();
+  assert.equal(measured(service, 'antigravity').activeLogin, undefined, 'a failed read cannot verify it');
+  assert.equal((await fs.readFile(settingsPath, 'utf8')).includes('activeLogin'), false, 'it is kept in memory only');
+});

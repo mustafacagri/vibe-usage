@@ -376,6 +376,12 @@ export function createHandlers(context: MainContext): Handlers {
       const id = requiredString(accountId);
       const account = enabledAccount('antigravity', id);
       if (!account.configDir) throw new AppError('account_not_found');
+      // The device is already signed in as this profile: rewriting the keyring and restarting the hub would only disturb it.
+      const live = service
+        .snapshot()
+        .providers.find(p => p.id === 'antigravity')
+        ?.accounts.find(a => a.id === account.id);
+      if (live?.activeLogin) return { status: 'already_active' };
       if (!(await context.confirm('switchAntigravityConfirm', 'switchAntigravityBtn'))) return { status: 'canceled' };
       const result = await agySwitch.switchAccount(account);
       await agySwitch.refreshBackup?.();

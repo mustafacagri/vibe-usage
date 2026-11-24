@@ -404,6 +404,7 @@ export const en = {
   error_antigravity_switch_failed: 'Could not switch the active Antigravity sign-in.',
   error_antigravity_no_backup: 'No backed-up Antigravity sign-in was found on this device.',
   switchAccountBtn: 'Switch to {name}',
+  activeLoginBadge: 'Active sign-in',
   switchAntigravityBtn: 'Switch account',
   switchAntigravityConfirm:
     'Replace the active Antigravity sign-in on this device? Your current sign-in is backed up first so you can restore it later. The local agy --hub service will restart; restart Antigravity IDE to apply (running sessions keep the previous sign-in in memory).',

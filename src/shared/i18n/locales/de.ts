@@ -410,6 +410,7 @@ export const de: Messages = {
   error_antigravity_switch_failed: 'Die aktive Antigravity-Anmeldung konnte nicht gewechselt werden.',
   error_antigravity_no_backup: 'Auf diesem Gerät wurde keine gesicherte Antigravity-Anmeldung gefunden.',
   switchAccountBtn: 'Zu {name} wechseln',
+  activeLoginBadge: 'Aktive Anmeldung',
   switchAntigravityBtn: 'Konto wechseln',
   switchAntigravityConfirm:
     'Die aktive Antigravity-Anmeldung auf diesem Gerät ersetzen? Ihre aktuelle Anmeldung wird zuerst gesichert, damit Sie sie später wiederherstellen können. Der lokale Dienst agy --hub wird neu gestartet; starten Sie Antigravity IDE neu, um den Wechsel zu übernehmen (laufende Sitzungen behalten die vorherige Anmeldung im Speicher).',

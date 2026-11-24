@@ -52,6 +52,8 @@ const MAX_PORTS_PER_SERVER = 4;
 const LOCAL_REQUEST_TIMEOUT_MS = 3000;
 const DISCOVERY_BUDGET_MS = 6000;
 const FETCH_BUDGET_MS = 12000;
+// Telling which sign-in the local service runs with is a side question to the quota reads; it never holds them up for longer.
+const HUB_IDENTITY_BUDGET_MS = 6000;
 const WINDOWS_DISCOVERY_TIMEOUT_MS = 12000;
 const MAC_PROCESS_TIMEOUT_MS = 4000;
 const ID_HASH_LENGTH = 24;
@@ -785,6 +787,37 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
     return { ...reading, result: { ...reading.result, windows } };
   }
 
+  function markActiveLogin(reading: ProviderReading, hubEmails: ReadonlySet<string>): ProviderReading {
+    if (reading.kind === 'failed' || !reading.result.signedInAs || !hubEmails.has(normalizeEmail(reading.result.signedInAs)))
+      return reading;
+    // The local service runs with this very sign-in: it is the active device login.
+    return { ...reading, result: { ...reading.result, activeLogin: true } };
+  }
+
+  // The sign-ins the local service runs with now, and nothing else: no quota is read from it and any failure, or a
+  // service that does not answer within a few seconds, only means the active login stays unknown.
+  async function hubSignIns(context: RefreshContext): Promise<ReadonlySet<string>> {
+    const none: ReadonlySet<string> = new Set();
+    let timer: NodeJS.Timeout | undefined;
+    const lookup = (async (): Promise<ReadonlySet<string>> => {
+      const servers = await discoverServers(context);
+      const emails = fulfilled(await resolveServerEmails(servers, read));
+      // Fail closed: an unidentified server could belong to any account.
+      const identified = emails.filter((email): email is string => email !== null);
+      return servers.length && identified.length === servers.length ? new Set(identified.map(normalizeEmail)) : none;
+    })().catch(() => none);
+    const timeout = new Promise<ReadonlySet<string>>(resolve => {
+      timer = setTimeout(() => {
+        resolve(none);
+      }, HUB_IDENTITY_BUDGET_MS);
+    });
+    try {
+      return await Promise.race([lookup, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function fetchAll(accounts: readonly Account[], provided?: RefreshContext): Promise<Map<string, ProviderReading>> {
     const context = provided ?? { deadline: Date.now() + fetchTimeoutMs, signal: new AbortController().signal };
     remainingTimeout(fetchTimeoutMs, context);
@@ -795,7 +828,7 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
       results: new Map(),
       readings: []
     });
-    const [profileReadings, localOutcome] = await Promise.all([
+    const [profileReadings, localOutcome, identified] = await Promise.all([
       Promise.all(
         profileAccounts.map(async account => {
           const reading = await fetchProfileAccount(account, context).then(providerReading, (error: unknown): ProviderReading => ({
@@ -812,9 +845,13 @@ export function createAntigravityProvider(options: AntigravityProviderOptions = 
               readings: []
             })
           )
-        : Promise.resolve(emptyLocal())
+        : Promise.resolve(emptyLocal()),
+      // With local accounts the hub is read anyway; with only isolated profiles it is asked who it is signed in as.
+      localAccounts.length || !profileAccounts.length ? Promise.resolve(null) : hubSignIns(context)
     ]);
-    for (const [id, reading] of profileReadings) results.set(id, enrichProfileWithLocal(reading, localOutcome.readings));
+    const hubEmails = identified ?? new Set(localOutcome.readings.flatMap(reading => (reading.email ? [reading.email] : [])));
+    for (const [id, reading] of profileReadings)
+      results.set(id, markActiveLogin(enrichProfileWithLocal(reading, localOutcome.readings), hubEmails));
     for (const [id, reading] of localOutcome.results) results.set(id, reading);
     return results;
   }

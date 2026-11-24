@@ -397,6 +397,7 @@ export const ja: Messages = {
   error_antigravity_switch_failed: 'アクティブな Antigravity のサインインを切り替えられませんでした。',
   error_antigravity_no_backup: 'このデバイスにバックアップ済みの Antigravity サインインが見つかりませんでした。',
   switchAccountBtn: '{name} に切り替え',
+  activeLoginBadge: '使用中のサインイン',
   switchAntigravityBtn: 'アカウントを切り替え',
   switchAntigravityConfirm:
     'このデバイスのアクティブな Antigravity サインインを置き換えますか？ 後で戻せるよう現在のサインインを先にバックアップします。ローカルの agy --hub が再起動します。反映するには Antigravity IDE を再起動してください（実行中のセッションは前のサインインをメモリに保持します）。',

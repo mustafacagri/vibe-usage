@@ -131,7 +131,7 @@ export interface VibeMethods {
   // Adds an account in a new profile folder and opens the tool's sign-in for it.
   addAccount(providerId: AddableProviderId): Snapshot;
   // Manually switches the active Antigravity OS-keyring sign-in to an isolated profile (backing up the previous login first).
-  switchAntigravityAccount(accountId: string): Canceled | { status: 'switched'; hubRestarted: boolean };
+  switchAntigravityAccount(accountId: string): Canceled | { status: 'switched'; hubRestarted: boolean } | { status: 'already_active' };
   // Restores the backed-up Antigravity OS-keyring sign-in.
   restoreAntigravityAccount(): Canceled | { status: 'restored'; hubRestarted: boolean };
   launchClaude(accountId: string): Canceled | { status: 'launched' };
