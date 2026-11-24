@@ -364,11 +364,17 @@ test('an isolated profile is marked as the active login only when the local serv
           method === 'GetUserStatus' ? status(email) : { groups: [group('gemini', 'Gemini Models', [bucket('gemini-5h', '5h', 0.4)])] }
         )
     });
-  const activeOf = async (adapter: ReturnType<typeof createAntigravityProvider>) => {
+  const readingOf = async (adapter: ReturnType<typeof createAntigravityProvider>) => {
     const reading = (await adapter.fetchAll?.([profile], context))?.get(profile.id);
     assert.ok(reading && reading.kind !== 'failed', 'the cloud reading of the profile still succeeds');
-    return reading.result.activeLogin;
+    // Asking the hub who it is never changes what the profile's quota says: that stays the cloud's 50%.
+    assert.deepEqual(
+      reading.result.windows.map(w => w.remainingPercent),
+      [50]
+    );
+    return reading.result;
   };
+  const activeOf = async (adapter: ReturnType<typeof createAntigravityProvider>) => (await readingOf(adapter)).activeLogin;
 
   // Only a profile: the hub is still asked who it is signed in as.
   assert.equal(await activeOf(localAs('Work@Example.com')), true);
@@ -381,4 +387,12 @@ test('an isolated profile is marked as the active login only when the local serv
     discoverAntigravityServers: () => Promise.reject(new ProviderError('app_closed'))
   });
   assert.equal(await activeOf(closed), undefined, 'no running service, no active login');
+  const broken = createAntigravityProvider({
+    home,
+    clock: () => now,
+    postJson,
+    discoverAntigravityServers: () => Promise.resolve([server(501, 'tok', [5101])]),
+    requestLocalJson: () => Promise.reject(new ProviderError('local_service_unavailable'))
+  });
+  assert.equal(await activeOf(broken), undefined, 'a failing service leaves the profile reading as it was');
 });
