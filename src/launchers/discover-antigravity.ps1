@@ -178,6 +178,7 @@ try {
     $ideRoot = (Join-Path $programs 'Antigravity IDE\resources\app\extensions\antigravity\bin') + '\'
     # Current builds run the language server as `agy.exe --hub`, started by the IDE or the CLI.
     $agyServer = Join-Path $env:USERPROFILE '.gemini\bin\agy.exe'
+    $hubDescriptorDir = Join-Path $env:USERPROFILE '.gemini\antigravity\daemon'
 
     # Query Win32_Process once for CommandLine; owner SID, sockets and PID-reuse checks use native Win32 APIs
     # to avoid multi-second per-process WMI/CIM round-trips.
@@ -213,11 +214,31 @@ try {
             -not $before.ImagePath.StartsWith($expectedDir, [StringComparison]::OrdinalIgnoreCase)) { continue }
         $candidateFound = $true
         $match = [regex]::Match([string]$entry.CommandLine, '(?:^|\s)--csrf_token(?:=|\s+)(?:"([^"\r\n]+)"|([^\s]+))')
-        if (-not $match.Success) { continue }
-        $csrfToken = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
-        if ($csrfToken.Length -gt 512 -or $csrfToken -match '[\x00-\x20\x7f]') { continue }
+        $csrfToken = $null
+        if ($match.Success) {
+            $csrfToken = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+        }
+        # A hub that keeps its CSRF capability off the command line (agy 2.35+) writes it to its own descriptor.
+        $needsDescriptor = $isAgy -and [string]::IsNullOrEmpty($csrfToken)
+        if (-not $needsDescriptor -and ([string]::IsNullOrEmpty($csrfToken) -or $csrfToken.Length -gt 512 -or $csrfToken -match '[\x00-\x20\x7f]')) { continue }
         $ports = @([VibeUsage.AntigravityProcProbe]::GetLoopbackPortsForPid($procPid) | Select-Object -First 4)
         if ($ports.Count -eq 0) { continue }
+        if ($needsDescriptor) {
+            # Only a descriptor naming this exact PID and one of the ports this PID listens on is trusted.
+            $csrfToken = $null
+            foreach ($file in @(Get-ChildItem -LiteralPath $hubDescriptorDir -Filter 'hub_*.json' -File -ErrorAction SilentlyContinue | Select-Object -First 64)) {
+                try {
+                    if ($file.Length -gt 4096) { continue }
+                    $descriptor = Get-Content -LiteralPath $file.FullName -Raw -ErrorAction Stop | ConvertFrom-Json
+                    if ([int]$descriptor.pid -ne $procPid) { continue }
+                    if ($ports -notcontains [int]$descriptor.httpPort -and $ports -notcontains [int]$descriptor.httpsPort) { continue }
+                    $candidate = [string]$descriptor.csrfToken
+                    if ($candidate.Length -gt 0 -and $candidate.Length -le 512 -and $candidate -notmatch '[\x00-\x20\x7f]') { $csrfToken = $candidate; break }
+                } catch { continue }
+            }
+            $descriptor = $null
+            if ([string]::IsNullOrEmpty($csrfToken)) { continue }
+        }
         # Recheck identity after querying sockets so a recycled PID cannot inherit
         # this server's capability. Only this exact process's listening ports pass.
         $after = [VibeUsage.AntigravityProcProbe]::InspectProcess($procPid)
