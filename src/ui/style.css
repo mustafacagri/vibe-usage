@@ -1116,6 +1116,10 @@ dialog header h2 {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--border);
   color: var(--text);
+  /* A long translation wraps instead of overflowing the card. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
 }
 
 .secondary-button:hover {
