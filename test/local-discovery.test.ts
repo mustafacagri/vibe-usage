@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type https from 'node:https';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ProviderError } from '../src/core/errors.ts';
@@ -275,6 +276,55 @@ namespace VibeUsage {
   const [hub] = discovery.servers ?? [];
   assert.deepEqual(hub?.ports, [5001]);
 });
+
+test(
+  'Windows discovery reads a tokenless hub capability only from its own PID- and port-matching descriptor',
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-hub-'));
+    try {
+      const daemon = path.join(home, '.gemini', 'antigravity', 'daemon');
+      await fs.mkdir(daemon, { recursive: true });
+      const write = (name: string, body: object) => fs.writeFile(path.join(daemon, name), JSON.stringify(body));
+      await write('hub_5001.json', { pid: 1, httpPort: 5001, httpsPort: 5005, csrfToken: 'descriptor-token' });
+      // Another PID's file, and a file whose ports this PID does not listen on, must never be used.
+      await write('hub_5002.json', { pid: 2, httpPort: 5002, httpsPort: 5006, csrfToken: 'foreign-pid' });
+      await write('hub_9999.json', { pid: 3, httpPort: 9999, httpsPort: 9998, csrfToken: 'foreign-port' });
+      const scriptPath = DISCOVERY_SCRIPT.replaceAll("'", "''");
+      const harness = [
+        `$env:USERPROFILE = '${home.replaceAll("'", "''")}'`,
+        '$global:fixtureSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value',
+        "$global:agy = Join-Path $env:USERPROFILE '.gemini\\bin\\agy.exe'",
+        `Add-Type -Language CSharp -TypeDefinition @"
+namespace VibeUsage {
+  public sealed class ProcessInfoSnapshot { public string OwnerSid; public string ImagePath; public long CreationFileTime; }
+  public static class AntigravityProcProbe {
+    public static string CurrentSid;
+    public static string AgyPath;
+    public static ProcessInfoSnapshot InspectProcess(int pid) {
+      return new ProcessInfoSnapshot { OwnerSid = CurrentSid, ImagePath = AgyPath, CreationFileTime = 99999 };
+    }
+    public static int[] GetLoopbackPortsForPid(int pid) { return pid == 3 ? new int[] { 7000 } : new int[] { 5000 + pid }; }
+  }
+}
+"@`,
+        '[VibeUsage.AntigravityProcProbe]::CurrentSid = $global:fixtureSid',
+        '[VibeUsage.AntigravityProcProbe]::AgyPath = $global:agy',
+        "function Get-CimInstance { param($ClassName, $Filter) @( [pscustomobject]@{ ProcessId=1; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --hub-port=5001' }, [pscustomobject]@{ ProcessId=3; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --hub-port=7000' }, [pscustomobject]@{ ProcessId=4; ExecutablePath=$global:agy; CreationDate='f'; CommandLine='agy.exe --hub --hub-port=5004' }) }",
+        `. '${scriptPath}'`
+      ].join('\n');
+      const output = await runProcess(windowsPowerShell(), ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', harness], {
+        timeoutMs: 15000
+      });
+      const discovery = JSON.parse(output.trim().split(/\r?\n/).at(-1) ?? '{}') as {
+        servers?: { pid: number; csrfToken: string; ports: number[] }[];
+      };
+      assert.deepEqual(discovery.servers, [{ pid: 1, csrfToken: 'descriptor-token', ports: [5001] }]);
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  }
+);
 
 test('macOS process discovery rejects unrelated servers and binds lsof to the PID', async () => {
   const calls: { binary: string; args: readonly string[] }[] = [];
